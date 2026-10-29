@@ -20,7 +20,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    # NOT 22.04: this O-MVLL build needs GLIBC_2.38, which 22.04 doesn't
+    # have (confirmed via a real failed run: "GLIBC_2.38' not found").
+    # 24.04 ships glibc 2.39.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
