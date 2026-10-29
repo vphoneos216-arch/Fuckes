@@ -72,6 +72,21 @@ LOCAL_CFLAGS   :=
 LOCAL_CFLAGS   += -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_CPPFLAGS += -DVK_USE_PLATFORM_ANDROID_KHR
 
+# [DISABLED] Runtime anti-tamper (debugger/Frida/Xposed/emulator detection,
+# ix_tamper_detected() inside ix_integrity_gate()) + the self-ptrace lock
+# that feeds it. Both were causing the process to SIGKILL itself with zero
+# output on real devices — first via a TracerPid race against its own
+# locker (fixed), then via a second false-positive in this same detection
+# layer (emulator/root-tool/Frida string match firing on a legitimate
+# rooted device). Reliability > this extra layer: the actual security
+# boundary — XChaCha20/XSalsa20 transport encryption + Ed25519+Ed448
+# response signature verification — is completely unaffected by this flag.
+# O-MVLL compiler obfuscation also stays fully active. Re-enable later by
+# removing this define once the detectors are hardened against false
+# positives on real rooted hardware (not just emulators/CI).
+LOCAL_CFLAGS   += -DIX_ANTITAMPER_OFF
+LOCAL_CPPFLAGS += -DIX_ANTITAMPER_OFF
+
 ifeq ($(OPENGL_DRAW), 1)
     LOCAL_CFLAGS   += -DUSE_OPENGL
     LOCAL_CPPFLAGS += -DUSE_OPENGL

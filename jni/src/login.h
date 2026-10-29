@@ -1360,17 +1360,18 @@ static inline LoginResult perform_auth(
 ) {
     LoginResult result;
 
-    // Occupy the ptrace slot BEFORE any other thread exists (fork() after
-    // threads are running is unsafe) and before the integrity gate's own
-    // checks, so a debugger/Frida attach attempt made during this very
-    // function is already blocked, not just detected after the fact.
-    // One-time: perform_auth() can be called more than once in a process
-    // lifetime (retry flows), forking again each time would be wasteful
-    // and pointless (the first lock already holds).
-    {
-        static bool locked = false;
-        if (!locked) { ix_self_debug_lock(); locked = true; }
-    }
+    // [DISABLED, see -DIX_ANTITAMPER_OFF in Android.mk] The self-ptrace
+    // lock caused the process to kill itself on real devices (TracerPid
+    // self-flag race) even after that race was fixed, and it only exists
+    // to feed the now-disabled ix_tamper_detected() path anyway — with
+    // that detection off, occupying the ptrace slot has no consumer and
+    // is pure risk for zero benefit. Left here, commented, for when the
+    // detection layer is hardened and re-enabled:
+    //
+    // {
+    //     static bool locked = false;
+    //     if (!locked) { ix_self_debug_lock(); locked = true; }
+    // }
 
     ix_integrity_gate();
     kd_start_integrity_watchdog();
