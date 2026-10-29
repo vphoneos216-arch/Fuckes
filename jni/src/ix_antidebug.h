@@ -197,7 +197,7 @@ static inline bool ix_fn_hooked(const void* fn) {
 // ============================================================
 #include <sys/system_properties.h>
 
-static inline std::string ix_getprop(const char* name) {
+static inline std::string ix_ad_getprop(const char* name) {
     char buf[PROP_VALUE_MAX] = {0};
     int len = __system_property_get(name, buf);
     return (len > 0) ? std::string(buf, (size_t)len) : std::string();
@@ -205,17 +205,17 @@ static inline std::string ix_getprop(const char* name) {
 
 static inline bool ix_emulator_detected() {
     // Kernel/QEMU hints.
-    if (!ix_getprop("ro.kernel.qemu").empty()) return true;
-    if (!ix_getprop("ro.boot.qemu").empty())    return true;
-    const std::string hw = ix_getprop("ro.hardware");
+    if (!ix_ad_getprop("ro.kernel.qemu").empty()) return true;
+    if (!ix_ad_getprop("ro.boot.qemu").empty())    return true;
+    const std::string hw = ix_ad_getprop("ro.hardware");
     if (hw.find("goldfish") != std::string::npos ||
         hw.find("ranchu")   != std::string::npos ||
         hw.find("cutf")     != std::string::npos)   // cuttlefish
         return true;
     // Common emulator fingerprints (Genymotion / AVD / BlueStacks / Nox).
-    const std::string fp     = ix_getprop("ro.build.fingerprint");
-    const std::string model  = ix_getprop("ro.product.model");
-    const std::string mfr    = ix_getprop("ro.product.manufacturer");
+    const std::string fp     = ix_ad_getprop("ro.build.fingerprint");
+    const std::string model  = ix_ad_getprop("ro.product.model");
+    const std::string mfr    = ix_ad_getprop("ro.product.manufacturer");
     static const char* sig[] = {
         "generic", "vbox", "genymotion", "sdk_gphone", "emulator",
         "Andy", "nox", "ttVM_Hdragon", nullptr
