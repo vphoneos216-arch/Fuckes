@@ -53,6 +53,18 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <atomic>
+
+// ---- PID of our OWN self-lock child (set by ix_self_debug_lock() below).
+// [BUG FIX] ix_self_debug_lock() PTRACE_ATTACHes its own parent on purpose
+// — that legitimately sets this process's TracerPid to the locker child's
+// pid. ix_dbg_tracerpid() must know that specific pid is EXPECTED and not
+// flag it as an attacker debugger, or the process kills itself the instant
+// its own defense mechanism engages (observed on-device: silent SIGKILL,
+// zero output, every single run). Any OTHER nonzero TracerPid (a real
+// debugger/Frida attaching, or replacing/killing our locker and attaching
+// in its place) still trips detection normally.
+static std::atomic<pid_t> g_ix_self_lock_pid{0};
 
 // ---- small helper: read an entire small /proc file into a std::string ----
 static inline std::string ix_read_file(const char* path, size_t cap = 256 * 1024) {
@@ -80,8 +92,29 @@ static inline bool ix_dbg_tracerpid() {
     if (p == std::string::npos) return false;
     size_t i = p + 10;
     while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
-    // nonzero tracer pid = someone is ptrace-ing us
-    return (i < s.size() && s[i] != '0' && s[i] != '\n');
+
+    // Parse the full tracer pid (not just "is the first digit nonzero" —
+    // that happened to work only because single-digit vs multi-digit
+    // didn't matter when any nonzero digit meant "flag it"; now we need
+    // the actual value to compare against our own locker's pid).
+    long tracer = 0;
+    bool any = false;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+        any = true;
+        tracer = tracer * 10 + (s[i] - '0');
+        i++;
+    }
+    if (!any || tracer == 0) return false;
+
+    // [BUG FIX] Our own ix_self_debug_lock() child is EXPECTED to be our
+    // tracer — that's the whole point of it. Only a tracer pid that is
+    // NOT our known locker is a real attacker (or our locker got killed
+    // and something else attached in its place, which is still a
+    // different pid and still correctly flags here).
+    const pid_t known = g_ix_self_lock_pid.load(std::memory_order_relaxed);
+    if (known != 0 && (pid_t)tracer == known) return false;
+
+    return true;
 }
 
 // ============================================================
@@ -271,7 +304,13 @@ static inline void ix_self_debug_lock() {
         }
         _exit(0);
     }
-    // Parent: nothing to do, the child does its work async. Don't wait
+    // Parent: record the locker's pid BEFORE returning, so
+    // ix_dbg_tracerpid() (called right after this, in ix_integrity_gate())
+    // knows to treat that specific tracer pid as expected rather than as
+    // an attacker. [BUG FIX] Without this, our own self-lock made the
+    // process's own tamper check kill it on every single run.
+    g_ix_self_lock_pid.store(child, std::memory_order_relaxed);
+    // Nothing else to do here — the child does its work async. Don't wait
     // on it here (that would race with the child's own waitpid).
 }
 
