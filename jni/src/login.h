@@ -1514,7 +1514,7 @@ static inline LoginResult perform_auth(
         !envelope.contains("sig") ||
         !envelope["payload"].is_string() ||
         !envelope["sig"].is_string()) {
-        result.message = oxorany("Unsigned authentication response.");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
 
@@ -1529,7 +1529,7 @@ static inline LoginResult perform_auth(
     const std::string signedMessage = nonce + "." + payloadB64;
 
     if (!kd_verify_ed25519(signedMessage, signatureB64)) {
-        result.message = oxorany("Server signature verification failed (check ED25519_PUBLIC_KEY_HEX).");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
 
@@ -1542,13 +1542,13 @@ static inline LoginResult perform_auth(
     // not as "field not supported yet".
 #ifdef KD_HAVE_ED448
     if (!envelope.contains("sig2") || !envelope["sig2"].is_string()) {
-        result.message = oxorany("Missing second (Ed448) signature.");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
     {
         const std::string sig2B64 = envelope["sig2"].get<std::string>();
         if (sig2B64.empty() || !kd_verify_ed448(signedMessage, sig2B64)) {
-            result.message = oxorany("Server signature verification failed (check ED448_PUBLIC_KEY_HEX).");
+            result.message = oxorany("Login failed. Please try again.");
             return result;
         }
     }
@@ -1560,13 +1560,13 @@ static inline LoginResult perform_auth(
     // is rejected outright, never silently skipped.
 #ifdef KD_HAVE_MLDSA
     if (!envelope.contains("sig3") || !envelope["sig3"].is_string()) {
-        result.message = oxorany("Missing third (ML-DSA-65) signature.");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
     {
         const std::string sig3B64 = envelope["sig3"].get<std::string>();
         if (sig3B64.empty() || !kd_verify_mldsa65(signedMessage, sig3B64)) {
-            result.message = oxorany("Server signature verification failed (check MLDSA65_PUBLIC_KEY_HEX).");
+            result.message = oxorany("Login failed. Please try again.");
             return result;
         }
     }
@@ -1575,7 +1575,7 @@ static inline LoginResult perform_auth(
     const std::string plain = kd_b64_decode(payloadB64);
 
     if (plain.empty() || plain.size() > KD_MAX_RESPONSE_BYTES) {
-        result.message = oxorany("Invalid signed payload.");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
 
@@ -1584,7 +1584,7 @@ static inline LoginResult perform_auth(
     try {
         payload = json::parse(plain);
     } catch (...) {
-        result.message = oxorany("Malformed signed payload.");
+        result.message = oxorany("Login failed. Please try again.");
         return result;
     }
 

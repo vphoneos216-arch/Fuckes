@@ -397,26 +397,61 @@ jobs:
           ls -la libs/arm64-v8a/ || true
           file libs/arm64-v8a/stranger.sh || true
 
-      - name: UPX packing — DISABLED
+      - name: Pack with UPX (latest upstream release, Android-aware)
         run: |
-          # [DISABLED] UPX-packed PIE executables fail to load on-device:
-          # modern Android's bionic dynamic linker (observed on a real
-          # device, Android with a recent security patch level) performs a
-          # strict ELF section-header sanity check that UPX's compressed
-          # stub does not satisfy — it fails with:
-          #   "<path> has unsupported e_shentsize: 0x0 (expected 0x40)"
-          # UPX's own test suite only validates against glibc/desktop
-          # loaders, not bionic, so this incompatibility doesn't show up
-          # until actual on-device execution. The binary WAS valid and ran
-          # fine pre-UPX (file(1) confirmed a sane PIE ELF) — this is
-          # strictly a packing-stage problem, not a build or signing one.
-          # O-MVLL's compiler-level obfuscation (control-flow flattening,
-          # opaque constants, string encoding, anti-hooking) is unaffected
-          # and remains the primary protection layer; this step is now a
-          # no-op so libs/arm64-v8a/stranger.sh stays the unpacked,
-          # O-MVLL-obfuscated, stripped binary all the way through.
-          echo "UPX packing is disabled — shipping unpacked (O-MVLL-obfuscated, stripped) binary."
-          file libs/arm64-v8a/stranger.sh || true
+          set -e
+          # [RE-ENABLED, per explicit request] A PREVIOUS attempt packed
+          # with Ubuntu's apt "upx-ucl" package and the result crashed
+          # bionic's linker ("has unsupported e_shentsize: 0x0 (expected
+          # 0x40)") — that apt package is an old UPX build with no
+          # Android-specific handling. Upstream UPX added explicit
+          # Android/bionic ELF support in more recent releases, so this
+          # now fetches the latest upx/upx GitHub release directly instead
+          # of the distro package, and — critically — VERIFIES the packed
+          # binary's ELF header is sane (readelf) before keeping it. If
+          # it still isn't, this step falls back to the unpacked binary
+          # automatically rather than shipping something that is known to
+          # fail on-device; the "Show result (final)" step right after
+          # shows which one actually shipped.
+          UPX_VER=$(curl -fsSL https://api.github.com/repos/upx/upx/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          echo "Latest UPX release: $UPX_VER"
+          curl -fL -o /tmp/upx.tar.xz \
+            "https://github.com/upx/upx/releases/download/v${UPX_VER}/upx-${UPX_VER}-amd64_linux.tar.xz"
+          mkdir -p /tmp/upx-extract
+          tar xJf /tmp/upx.tar.xz -C /tmp/upx-extract --strip-components=1
+          UPX_BIN=/tmp/upx-extract/upx
+          "$UPX_BIN" --version | head -3
+
+          cp libs/arm64-v8a/stranger.sh /tmp/stranger_prepack.sh
+          ORIG_SIZE=$(stat -c%s /tmp/stranger_prepack.sh)
+
+          PACK_OK=0
+          if "$UPX_BIN" --best --lzma -o /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh; then
+            file /tmp/stranger_packed.sh
+            # Sanity-check the packed ELF header the same way bionic's
+            # linker does: e_shnum/e_shentsize must either both be 0, or
+            # e_shentsize must equal 64 (sizeof(Elf64_Shdr)). readelf -h
+            # prints both; parse and compare instead of trusting that
+            # "upx ran without error" means "bionic will load this".
+            SHNUM=$(readelf -h /tmp/stranger_packed.sh | awk -F': *' '/Number of section headers/ {print $2}')
+            SHENTSIZE=$(readelf -h /tmp/stranger_packed.sh | awk -F': *' '/Size of section headers/ {print $2}')
+            echo "packed ELF: e_shnum=$SHNUM e_shentsize=$SHENTSIZE"
+            if { [ "$SHNUM" = "0" ] && [ "$SHENTSIZE" = "0" ]; } || [ "$SHENTSIZE" = "64" ]; then
+              PACK_OK=1
+            else
+              echo "::warning::Packed ELF header looks bionic-incompatible (e_shnum=$SHNUM e_shentsize=$SHENTSIZE, expected both-zero or entsize=64) — keeping the unpacked binary instead."
+            fi
+          else
+            echo "::warning::UPX packing command failed — keeping the unpacked binary instead."
+          fi
+
+          if [ "$PACK_OK" = "1" ]; then
+            NEW_SIZE=$(stat -c%s /tmp/stranger_packed.sh)
+            echo "Original: $ORIG_SIZE bytes -> Packed: $NEW_SIZE bytes (header looks bionic-safe)"
+            cp /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh
+          else
+            echo "Shipping the UNPACKED binary (still O-MVLL-obfuscated + stripped) — see warning above for why."
+          fi
 
       - name: Show result (final)
         run: |
