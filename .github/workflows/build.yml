@@ -7,10 +7,12 @@ on:
     branches: [ main, master ]
 
 env:
-  NDK_VERSION: r26d                 # O-MVLL v1.8.0 targets NDK r26d
-  OMVLL_VERSION: v1.8.0
-  OMVLL_ASSET: omvll_ndk_r26d.so    # if this 404s, the step prints the real names
-  PYVER: "3.10.7"                   # Python stdlib O-MVLL needs at runtime
+  # O-MVLL moved to NDK r29 starting with v1.9.0 — the old r26d-targeted
+  # releases (v1.8.0 and earlier) are no longer published anywhere
+  # downloadable (confirmed: GitHub Releases has tags but no attached
+  # binaries for them, and the project's own experimental-build index
+  # only carries v1.10.0+ builds). So this now tracks current O-MVLL.
+  NDK_VERSION: r29
 
 jobs:
   build:
@@ -26,34 +28,41 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
-      - name: Download O-MVLL plugin (auto-discover asset)
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download O-MVLL plugin (latest linux build)
         run: |
           set -e
-          API="https://api.github.com/repos/open-obfuscator/o-mvll/releases/tags/${OMVLL_VERSION}"
-          JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API")
-          echo "=== .so assets available in ${OMVLL_VERSION} ==="
-          echo "$JSON" | grep -o '"name": *"[^"]*\.so"' | sed 's/"name": *//' || true
-          echo "==============================================="
-          # Prefer an asset whose name matches the NDK version; else first .so.
-          URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | grep -i "${NDK_VERSION}" | head -1)
-          [ -z "$URL" ] && URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | grep -i 'ndk' | head -1)
-          [ -z "$URL" ] && URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | head -1)
+          echo "=== fetching build index ==="
+          curl -fsSL "https://open-obfuscator.build38.io/ci/index.html" -o /tmp/index.html
+          # pick the newest *_linux_*.tar.gz link on the page (sorted by the
+          # timestamp embedded in the filename itself — lexicographic sort
+          # works because the timestamp is ISO-8601).
+          URL=$(grep -oE 'https://open-obfuscator\.build38\.io/ci/omvll_v[0-9-]+_linux_[0-9T:-]+\.tar\.gz' /tmp/index.html \
+                | sort | tail -1)
           if [ -z "$URL" ]; then
-            echo "::error::No .so asset found in ${OMVLL_VERSION}. See list above."
+            echo "::error::No linux O-MVLL build found on the index page. Dumping page for inspection:"
+            cat /tmp/index.html
             exit 1
           fi
-          echo "Downloading: $URL"
-          curl -fL -o "$HOME/omvll.so" "$URL"
-          ls -la "$HOME/omvll.so"
+          echo "Using: $URL"
+          curl -fL -o "$HOME/omvll.tar.gz" "$URL"
+          mkdir -p "$HOME/omvll"
+          tar xzf "$HOME/omvll.tar.gz" -C "$HOME/omvll"
+          echo "=== extracted contents ==="
+          find "$HOME/omvll" -maxdepth 3
 
-      - name: Fetch Python stdlib for O-MVLL
-        run: |
-          set -e
-          curl -fLO "https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz"
-          tar xzf "Python-${PYVER}.tgz"
-          echo "OMVLL_PYTHONPATH=${GITHUB_WORKSPACE}/Python-${PYVER}/Lib" >> "$GITHUB_ENV"
+          SO=$(find "$HOME/omvll" -iname "*omvll*.so" | head -1)
+          if [ -z "$SO" ]; then
+            echo "::error::No .so file found inside the downloaded archive."
+            exit 1
+          fi
+          echo "OMVLL_SO=$SO" >> "$GITHUB_ENV"
+
+          PYDIR=$(find "$HOME/omvll" -maxdepth 2 -type d -iname "Python-*" | head -1)
+          if [ -z "$PYDIR" ]; then
+            echo "::error::No bundled Python-3.x stdlib folder found inside the archive."
+            exit 1
+          fi
+          echo "OMVLL_PYTHONPATH=$PYDIR/Lib" >> "$GITHUB_ENV"
 
       - name: Build (ndk-build + O-MVLL)
         env:
@@ -65,10 +74,11 @@ jobs:
           export LD_LIBRARY_PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib:$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH:-}"
           echo "OMVLL_CONFIG=$OMVLL_CONFIG"
           echo "OMVLL_PYTHONPATH=$OMVLL_PYTHONPATH"
+          echo "OMVLL_SO=$OMVLL_SO"
           "$NDK/ndk-build" \
             NDK_PROJECT_PATH=. \
             NDK_APPLICATION_MK=jni/Application.mk \
-            OMVLL_PLUGIN="$HOME/omvll.so" \
+            OMVLL_PLUGIN="$OMVLL_SO" \
             -j"$(nproc)"
 
       - name: Show result
