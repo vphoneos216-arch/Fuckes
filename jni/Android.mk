@@ -288,6 +288,11 @@ ifneq ($(wildcard $(KD_ED448_LIB)),)
 LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
 LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include $(LOCAL_C_INCLUDES)
+# Same force-include as the main module (see its own comment above) —
+# without this, login.h's EVP_* calls resolve to the plain (1.1.0c,
+# Ed448-incapable) bundled libcrypto.a symbol names instead of the
+# kdoss3_-renamed ones, and the linker can't find them.
+LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/include/external/openssl3-ed448/kd_ossl_rename.h
 endif
 ifneq ($(wildcard $(KD_MLDSA_LIB)),)
 LOCAL_CFLAGS   += -DKD_HAVE_MLDSA=1
