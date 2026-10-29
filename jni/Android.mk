@@ -282,7 +282,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := kd_ctl
 
 LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections
-LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections -fno-rtti
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections -fno-rtti -fexceptions
 
 ifneq ($(wildcard $(KD_ED448_LIB)),)
 LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
