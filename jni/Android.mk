@@ -141,6 +141,17 @@ endif
 # =====================================================================
 #  INCLUDES
 # =====================================================================
+# Ed448's new OpenSSL headers MUST be found before the old bundled
+# openssl-android ones for the SAME <openssl/evp.h> name to resolve to
+# the new (Ed448-capable) version, not the 2016 one — clang's -I search
+# is first-match-wins, so this has to be the very first include path.
+# Safe: login.h is the ONLY file in the whole project that includes
+# <openssl/...> directly (grepped and confirmed) — curl's own openssl
+# use is inside its prebuilt .a already, unaffected by header search
+# order here.
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include $(LOCAL_C_INCLUDES)
+endif
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/src/UI
