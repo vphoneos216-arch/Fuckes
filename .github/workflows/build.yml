@@ -244,27 +244,26 @@ jobs:
           ls -la libs/arm64-v8a/ || true
           file libs/arm64-v8a/stranger.sh || true
 
-      - name: Pack with UPX (LZMA, best)
+      - name: UPX packing — DISABLED
         run: |
-          set -e
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq upx-ucl
-          upx --version
-          cp libs/arm64-v8a/stranger.sh /tmp/stranger_prepack.sh
-          ORIG_SIZE=$(stat -c%s /tmp/stranger_prepack.sh)
-          # --best + --lzma = smallest output. Android's bionic linker (not
-          # glibc) runs this, which is a narrower target than desktop Linux —
-          # if UPX's self-extracting stub doesn't run under bionic the packed
-          # binary would be dead weight, so verify the result is still a
-          # sane PIE ELF before keeping it.
-          if upx --best --lzma -o /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh; then
-            file /tmp/stranger_packed.sh
-            NEW_SIZE=$(stat -c%s /tmp/stranger_packed.sh)
-            echo "Original: $ORIG_SIZE bytes -> Packed: $NEW_SIZE bytes"
-            cp /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh
-          else
-            echo "::warning::UPX packing failed (exit $?) — shipping the unpacked (but still O-MVLL-obfuscated) binary instead."
-          fi
+          # [DISABLED] UPX-packed PIE executables fail to load on-device:
+          # modern Android's bionic dynamic linker (observed on a real
+          # device, Android with a recent security patch level) performs a
+          # strict ELF section-header sanity check that UPX's compressed
+          # stub does not satisfy — it fails with:
+          #   "<path> has unsupported e_shentsize: 0x0 (expected 0x40)"
+          # UPX's own test suite only validates against glibc/desktop
+          # loaders, not bionic, so this incompatibility doesn't show up
+          # until actual on-device execution. The binary WAS valid and ran
+          # fine pre-UPX (file(1) confirmed a sane PIE ELF) — this is
+          # strictly a packing-stage problem, not a build or signing one.
+          # O-MVLL's compiler-level obfuscation (control-flow flattening,
+          # opaque constants, string encoding, anti-hooking) is unaffected
+          # and remains the primary protection layer; this step is now a
+          # no-op so libs/arm64-v8a/stranger.sh stays the unpacked,
+          # O-MVLL-obfuscated, stripped binary all the way through.
+          echo "UPX packing is disabled — shipping unpacked (O-MVLL-obfuscated, stripped) binary."
+          file libs/arm64-v8a/stranger.sh || true
 
       - name: Show result (final)
         run: |
