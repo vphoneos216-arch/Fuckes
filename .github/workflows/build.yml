@@ -134,9 +134,29 @@ jobs:
           ls -la libs/arm64-v8a/ || true
           file libs/arm64-v8a/stranger.sh || true
 
-      - name: Upload obfuscated binary
+      - name: Upload obfuscated binary (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: stranger-obfuscated-arm64
           path: libs/arm64-v8a/stranger.sh
           if-no-files-found: error
+
+      - name: Also commit the binary to a dist branch
+        # Actions artifacts live on Azure blob storage, which isn't reachable
+        # from the environment that drives this workflow — so also push the
+        # built binary as a normal git object, which IS reachable (plain
+        # https://github.com/... clone/fetch).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-checkout
+          git -C /tmp/dist-checkout init -q
+          git -C /tmp/dist-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-checkout checkout -q -B dist-builds
+          cp libs/arm64-v8a/stranger.sh /tmp/dist-checkout/stranger.sh
+          git -C /tmp/dist-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-checkout add stranger.sh
+          git -C /tmp/dist-checkout commit -q -m "built binary from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-checkout push -q -f origin dist-builds
