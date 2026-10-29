@@ -1,0 +1,684 @@
+#include "main.h"
+#include "login.h"
+#include <string>
+#include <iomanip>
+#include <map>
+#include <cstdio>
+#include <cstdint>
+#include <algorithm>
+#include <sys/stat.h>
+#include <stdio.h>
+#include <cstring>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <mutex>
+#include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <endian.h>
+#include <sys/socket.h>
+#include <random>
+#include <ctime>
+#include <thread>
+#include <chrono>
+#include <linux/input.h>
+#include <poll.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <termios.h>
+#include <sys/resource.h>
+#include "Scarecrow/hook.h"
+#include "Scarecrow/oxorany_include.h"
+#include "Scarecrow/oxorany.h"
+
+// ==================== GLOBAL AUTHENTICATION OBJECT ====================
+static Authentication g_auth;
+
+// ==================== INCREASE MEMORY LIMIT ====================
+static void increase_memory_limit() {
+    struct rlimit rl;
+    
+    if (getrlimit(RLIMIT_AS, &rl) == 0) {
+        rl.rlim_cur = rl.rlim_max;
+        setrlimit(RLIMIT_AS, &rl);
+    }
+    
+    if (getrlimit(RLIMIT_DATA, &rl) == 0) {
+        rl.rlim_cur = rl.rlim_max;
+        setrlimit(RLIMIT_DATA, &rl);
+    }
+    
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+        rl.rlim_cur = rl.rlim_max;
+        setrlimit(RLIMIT_STACK, &rl);
+    }
+    
+    nice(-10);
+}
+
+// ==================== FORCE STOP FREE FIRE MAX ====================
+static bool ForceStopFreeFire() {
+    bool stopped = false;
+    
+    system("am force-stop com.dts.freefiremax 2>/dev/null");
+    
+    FILE* fp = popen("pidof com.dts.freefiremax 2>/dev/null", "r");
+    if (fp) {
+        char pid_str[32] = {0};
+        if (fgets(pid_str, sizeof(pid_str), fp)) {
+            int pid = atoi(pid_str);
+            if (pid > 0) {
+                char cmd[128];
+                snprintf(cmd, sizeof(cmd), "kill -9 %d 2>/dev/null", pid);
+                system(cmd);
+                stopped = true;
+            }
+        }
+        pclose(fp);
+    }
+    
+    system("pkill -9 com.dts.freefiremax 2>/dev/null");
+    sleep(2);
+    system("pm clear com.dts.freefiremax 2>/dev/null");
+    sleep(1);
+    return stopped;
+}
+
+// ==================== GLOBALS ====================
+static ImVec4 uiGlowColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);  // #ff0000 PURE RED
+static float uiGlowIntensity = 2.0f;
+static float uiBgOpacity = 0.95f;
+static bool g_MenuMinimized = true;
+static bool g_GameIsRunning = false;
+static bool g_GameInitialized = false;
+static int currentTab = 0;
+
+static int volumeUpPressCount = 0;
+static auto lastVolumePressTime = std::chrono::steady_clock::now();
+
+struct SwitchState {
+    float knobPosition = 0.0f;
+    std::chrono::steady_clock::time_point lastUpdate;
+    bool isAnimating = false;
+    bool targetState = false;
+};
+static std::unordered_map<ImGuiID, SwitchState> g_SwitchStates;
+
+// ==================== GAME DETECTION ====================
+bool IsGameInForeground(int pid) {
+    if (pid <= 0) return false;
+    char p[256]; snprintf(p, sizeof(p), "/proc/%d/oom_score_adj", pid);
+    int fd = open(p, O_RDONLY);
+    if (fd < 0) return true;
+    char b[16] = {0}; read(fd, b, sizeof(b)-1); close(fd);
+    return (atoi(b) <= 50);
+}
+
+// ==================== VOLUME KEY ====================
+void VolumeKeyThread() {
+    struct pollfd fds[20]; int nfds = 0;
+    for (int i = 0; i < 20; i++) {
+        char p[32]; snprintf(p, sizeof(p), "/dev/input/event%d", i);
+        int fd = open(p, O_RDONLY | O_NONBLOCK);
+        if (fd >= 0) { fds[nfds].fd = fd; fds[nfds].events = POLLIN; nfds++; }
+    }
+    while (main_thread_flag) {
+        if (nfds == 0) { std::this_thread::sleep_for(std::chrono::seconds(1)); continue; }
+        if (poll(fds, nfds, 200) > 0) {
+            for (int i = 0; i < nfds; i++) {
+                if (fds[i].revents & POLLIN) {
+                    struct input_event ev;
+                    while (read(fds[i].fd, &ev, sizeof(ev)) > 0) {
+                        if (ev.type == EV_KEY && ev.code == 115 && ev.value == 1) {
+                            auto now = std::chrono::steady_clock::now();
+                            auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastVolumePressTime).count();
+                            if (dur < 500) { volumeUpPressCount++; if (volumeUpPressCount == 2) { g_MenuMinimized = !g_MenuMinimized; volumeUpPressCount = 0; } }
+                            else volumeUpPressCount = 1;
+                            lastVolumePressTime = now;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (int i = 0; i < nfds; i++) close(fds[i].fd);
+}
+
+// ==================== DRAW GLOW ====================
+void DrawGlow(ImDrawList* dl, ImVec2 mn, ImVec2 mx, ImVec4 c, float r, float i, int l = 2) {
+    if (i <= 0.05f) return;
+    for (int j = 1; j <= l; ++j) {
+        float a = (i * 0.3f) / (float)j;
+        dl->AddRect(mn, mx, ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, a)), r + (float)j, 0, 1.0f + (float)j);
+    }
+}
+
+void BeginModernPanel(const char* id, const char* title, ImVec2 sz) {
+    ImGui::BeginChild(id, sz, false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoResize);
+    ImVec2 mn = ImGui::GetWindowPos(), mx = ImVec2(mn.x + ImGui::GetWindowWidth(), mn.y + ImGui::GetWindowHeight());
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, IM_COL32(15, 15, 18, 240), 8.0f);
+    DrawGlow(dl, mn, mx, uiGlowColor, 8.0f, uiGlowIntensity * 0.2f, 2);
+    ImGui::SetCursorPos(ImVec2(15, 18));
+    ImGui::TextColored(uiGlowColor, "%s", title);
+    dl->AddLine(ImVec2(mn.x + 10, mn.y + 42), ImVec2(mx.x - 10, mn.y + 42), IM_COL32(40, 40, 45, 255), 1.0f);
+    ImGui::SetCursorPos(ImVec2(15, 58));
+    ImGui::BeginGroup();
+}
+void EndModernPanel() { ImGui::EndGroup(); ImGui::EndChild(); }
+
+bool ModernToggle(const char* label, bool* v) {
+    ImGuiWindow* w = ImGui::GetCurrentWindow();
+    if (w->SkipItems) return false;
+    ImGuiContext& g = *GImGui;
+    const ImGuiID id = w->GetID(label);
+    const ImVec2 ls = ImGui::CalcTextSize(label, NULL, true);
+    float h = ImGui::GetFrameHeight() * 0.85f, wd = h * 1.8f;
+    const ImVec2 pos = w->DC.CursorPos;
+    ImRect bb(pos, ImVec2(pos.x + ImGui::GetWindowWidth() - 30.0f, pos.y + h + g.Style.ItemInnerSpacing.y));
+    ImGui::ItemSize(bb, g.Style.FramePadding.y);
+    if (!ImGui::ItemAdd(bb, id)) return false;
+    auto& st = g_SwitchStates[id];
+    auto now = std::chrono::steady_clock::now();
+    if (st.lastUpdate.time_since_epoch().count() == 0) { st.knobPosition = *v ? 1.0f : 0.0f; st.targetState = *v; st.lastUpdate = now; }
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    if (pressed) { *v = !(*v); st.targetState = *v; st.isAnimating = true; st.lastUpdate = now; ImGui::MarkItemEdited(id); }
+    if (st.isAnimating) {
+        auto el = std::chrono::duration_cast<std::chrono::milliseconds>(now - st.lastUpdate).count();
+        float step = el / 150.0f;
+        if (step >= 1.0f) { st.knobPosition = st.targetState ? 1.0f : 0.0f; st.isAnimating = false; }
+        else { float tgt = st.targetState ? 1.0f : 0.0f; st.knobPosition += (tgt - st.knobPosition) * step;
+            if (st.knobPosition > 1.0f) st.knobPosition = 1.0f; if (st.knobPosition < 0.0f) st.knobPosition = 0.0f; }
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float sx = bb.Max.x - wd - 10.0f;
+    ImVec2 mn(sx, pos.y), mx(sx + wd, pos.y + h);
+    ImU32 bgc;
+    if (st.knobPosition > 0.5f) {
+        float t = (st.knobPosition - 0.5f) * 2.0f;
+        bgc = ImGui::ColorConvertFloat4ToU32(ImVec4(uiGlowColor.x * t + 0.3f * (1.0f - t), uiGlowColor.y * t + 0.3f * (1.0f - t), uiGlowColor.z * t + 0.35f * (1.0f - t), 1.0f));
+    } else bgc = IM_COL32(60, 60, 65, 255);
+    float r = h * 0.5f;
+    dl->AddRectFilled(mn, mx, bgc, r);
+    float ks = h * 0.75f, kp = (h - ks) * 0.5f;
+    float kx = mn.x + kp + (mx.x - mn.x - ks - kp * 2) * st.knobPosition;
+    dl->AddCircleFilled(ImVec2(kx + ks * 0.5f + 1, mn.y + h * 0.5f + 1), ks * 0.5f, IM_COL32(0, 0, 0, 60));
+    dl->AddCircleFilled(ImVec2(kx + ks * 0.5f, mn.y + h * 0.5f), ks * 0.5f, IM_COL32(255, 255, 255, 255));
+    if (hovered && uiGlowIntensity > 0.1f) DrawGlow(dl, mn, mx, uiGlowColor, r, uiGlowIntensity * 0.2f, 1);
+    ImGui::RenderText(ImVec2(pos.x, pos.y + (h - ls.y) * 0.5f), label);
+    return pressed;
+}
+
+bool ModernSlider(const char* label, float* v, float vmin, float vmax, const char* fmt) {
+    ImGuiWindow* w = ImGui::GetCurrentWindow();
+    if (w->SkipItems) return false;
+    ImGui::Text("%s", label);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+    char buf[32]; snprintf(buf, sizeof(buf), fmt, *v);
+    ImGui::TextColored(uiGlowColor, "%s", buf);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, uiGlowColor);
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(uiGlowColor.x + 0.15f, uiGlowColor.y + 0.15f, uiGlowColor.z + 0.15f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 12.0f); ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushID(label); ImGui::SetNextItemWidth(ImGui::GetWindowWidth() - 40);
+    bool ch = ImGui::SliderFloat("##h", v, vmin, vmax, "");
+    if ((ImGui::IsItemHovered() || ImGui::IsItemActive()) && uiGlowIntensity > 0.1f)
+        DrawGlow(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), uiGlowColor, 6.0f, uiGlowIntensity * 0.3f, 1);
+    ImGui::PopID(); ImGui::PopStyleVar(2); ImGui::PopStyleColor(5);
+    ImGui::Dummy(ImVec2(0, 10));
+    return ch;
+}
+
+bool ModernThemeCombo(const char* label, int* v, const char* items) {
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", label);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Header, uiGlowColor);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.3f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.5f));
+    ImGui::PushItemWidth(ImGui::GetWindowWidth() - 45);
+    bool ch = ImGui::Combo(("##" + std::string(label)).c_str(), v, items);
+    ImGui::PopItemWidth(); ImGui::PopStyleColor(8);
+    ImGui::Dummy(ImVec2(0, 5));
+    return ch;
+}
+
+// ==================== RENDER MENU ====================
+void RenderMenu() {
+    if (!g_GameIsRunning || !g_GameInitialized) return;
+
+    if (g_MenuMinimized) {
+        float sw = ImGui::GetIO().DisplaySize.x, sh = ImGui::GetIO().DisplaySize.y;
+        ImGui::SetNextWindowPos(ImVec2(sw / 2 - 130, sh - 50));
+        ImGui::SetNextWindowSize(ImVec2(260, 50));
+        ImGui::Begin(oxorany("##Swipe"), nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetWindowPos();
+        dl->AddRectFilled(ImVec2(p.x + 40, p.y + 20), ImVec2(p.x + 220, p.y + 26), IM_COL32(255, 255, 255, 140), 6.0f);
+        DrawGlow(dl, ImVec2(p.x + 40, p.y + 20), ImVec2(p.x + 220, p.y + 26), ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 6.0f, 0.4f, 2);
+        static ImVec2 ds; static bool dd = false;
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) { ds = ImGui::GetMousePos(); dd = true; }
+        if (dd && ImGui::IsMouseDragging(0)) { if (ds.y - ImGui::GetMousePos().y > 50) { g_MenuMinimized = false; dd = false; } }
+        if (ImGui::IsMouseReleased(0)) dd = false;
+        ImGui::End();
+        return;
+    }
+
+    if (!g_MenuMinimized && ImGui::IsMouseDoubleClicked(0) && !ImGui::GetIO().WantCaptureMouse) { 
+        g_MenuMinimized = true; 
+    }
+
+    ImGuiStyle& st = ImGui::GetStyle();
+    st.WindowRounding = 12.0f; 
+    st.ChildRounding = 8.0f; 
+    st.FrameRounding = 6.0f; 
+    st.PopupRounding = 8.0f;
+    st.ItemSpacing = ImVec2(12, 12);
+    st.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.05f, 0.06f, uiBgOpacity);
+    st.Colors[ImGuiCol_Border] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    ImGui::SetNextWindowSize(ImVec2(1100, 800), ImGuiCond_Once);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(1100, 800), ImVec2(1100, 800));
+    ImGui::Begin(oxorany(" EXTERNAL "), nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+
+    ImVec2 p_min = ImGui::GetWindowPos();
+    ImVec2 p_max = ImVec2(p_min.x + ImGui::GetWindowWidth(), p_min.y + ImGui::GetWindowHeight());
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // Header
+    draw_list->AddRectFilled(p_min, ImVec2(p_max.x, p_min.y + 55), IM_COL32(20, 20, 23, 255), 12.0f, ImDrawFlags_RoundCornersTop);
+    ImGui::SetCursorPos(ImVec2(400, 16));
+    ImGui::TextColored(uiGlowColor, "%s", " EXTERNAL ");
+    draw_list->AddLine(ImVec2(p_min.x, p_min.y + 55), ImVec2(p_max.x, p_min.y + 55), ImGui::ColorConvertFloat4ToU32(uiGlowColor), 1.5f);
+
+    ImGui::SetCursorPosY(55);
+
+    // Left Sidebar
+    ImGui::BeginChild("##Sidebar", ImVec2(230, 0), false);
+    draw_list->AddRectFilled(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + 230, p_max.y), IM_COL32(15, 15, 18, 255), 12.0f, ImDrawFlags_RoundCornersBottomLeft);
+    draw_list->AddLine(ImVec2(ImGui::GetWindowPos().x + 230, p_min.y + 55), ImVec2(ImGui::GetWindowPos().x + 230, p_max.y), IM_COL32(30, 30, 35, 255), 1.0f);
+
+    ImGui::Dummy(ImVec2(0, 30));
+
+    // Tabs
+    const char* tabs[] = { "AIM HACKS", "VISUALS", "ESP CONFIG", "SETTINGS" };
+    
+    for (int i = 0; i < 4; i++) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 12));
+        
+        bool is_active = (currentTab == i);
+        
+        if (is_active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.25f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.35f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.45f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.15f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.25f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+        }
+
+        ImGui::SetCursorPosX(15);
+        
+        if (ImGui::Button(tabs[i], ImVec2(200, 50))) {
+            currentTab = i;
+        }
+        
+        if (is_active) {
+            ImVec2 btn_min = ImGui::GetItemRectMin();
+            ImVec2 btn_max = ImGui::GetItemRectMax();
+            draw_list->AddRectFilled(
+                ImVec2(btn_min.x - 2, btn_min.y + 5),
+                ImVec2(btn_min.x + 3, btn_max.y - 5), 
+                ImGui::ColorConvertFloat4ToU32(uiGlowColor), 3.0f);
+        }
+        
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(2);
+        ImGui::Dummy(ImVec2(0, 8));
+    }
+    
+    ImGui::Dummy(ImVec2(0, 80));
+    
+    // Version info
+    ImVec2 sidebar_size = ImGui::GetWindowSize();
+    ImGui::SetCursorPos(ImVec2(15, sidebar_size.y - 50));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.5f, 1.0f));
+    ImGui::Text("%s", "EXTERNAL");
+    ImGui::PopStyleColor();
+    
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::Dummy(ImVec2(15, 0));
+    ImGui::SameLine();
+    
+    // Content Area
+    ImGui::BeginChild(oxorany("##Content"), ImVec2(0, 0), false);
+    ImGui::Dummy(ImVec2(0, 20));
+
+    // Tab 0: AIM HACKS
+    if (currentTab == 0) {
+        ImGui::Columns(2, "AC", false);
+        
+        BeginModernPanel("##AM", "AIMBOT", ImVec2(ImGui::GetColumnWidth() - 40, 420));     
+        ModernToggle("Aimbot Active", &Aimbot); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Aim Collider (Lock)", &AimLock); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Aim Line", &showAimLine); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Ignore Knocked", &Ignorknock);
+        EndModernPanel();
+        
+        ImGui::Dummy(ImVec2(0, 25));
+        
+        BeginModernPanel("##AT", "TARGETING", ImVec2(ImGui::GetColumnWidth() - 40, 200));
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AIM TARGET");
+        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 50);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_Header, uiGlowColor);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.8f));
+        
+        ImGui::Combo("##BS", &selectedBoneIndex, 
+            "HEAD\0HIP\0CHEST\0ROOT\0LEFT SHOULDER\0RIGHT SHOULDER\0LEFT ANKLE\0RIGHT ANKLE\0LEFT TOE\0RIGHT TOE\0RIGHT FOREARM\0LEFT FOREARM\0RIGHT HAND\0LEFT HAND\0");
+        
+        ImGui::PopStyleColor(7); 
+        ImGui::PopItemWidth();
+        EndModernPanel();
+        
+        ImGui::NextColumn();
+        
+        BeginModernPanel("##AP", "SILENT AIM", ImVec2(ImGui::GetColumnWidth() - 40, 480));
+        ModernToggle("Silent Aim", &AimSilent);
+        ModernSlider("Aim Fov", &AimFov, 0.0f, 360.0f, "%.1f");
+        EndModernPanel();
+        
+        ImGui::Columns(1);
+    }
+    
+    // Tab 1: VISUALS
+    else if (currentTab == 1) {
+        ImGui::Columns(2, "EC", false);
+        
+        BeginModernPanel("##EM", "ESP FUNCTIONS", ImVec2(ImGui::GetColumnWidth() - 40, 650));
+        ModernToggle("Show Lines", &showLine); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Boxes", &showBox); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Health", &showHealth); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Distance", &showDistance); 
+        ImGui::Dummy(ImVec2(0, 12));       
+        ModernToggle("Show 360 Alert", &is3600); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Name", &showName); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Skeleton", &showSkeleton); 
+        ImGui::Dummy(ImVec2(0, 12));
+        ModernToggle("Show Player Count", &showCount);
+        EndModernPanel();
+        
+        ImGui::NextColumn();
+        
+        BeginModernPanel("##EE", "EXTRA ESP", ImVec2(ImGui::GetColumnWidth() - 40, 650));
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Text Size");
+        float ts = (float)textSize;
+        if (ModernSlider("##TS", &ts, 10.0f, 50.0f, "%.0f")) textSize = (int)ts;
+        ImGui::Dummy(ImVec2(0, 25));
+        ModernToggle("Show Head Dot", &showHeadDot);
+        ModernSlider("Head Dot Radius", &showHeadDotRadius, 2.0f, 12.0f, "%.1f");
+        ImGui::Dummy(ImVec2(0, 25));
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Head Dot Color");
+        ImGui::ColorEdit4("##HDC", (float*)&headDotColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+        EndModernPanel();
+        
+        ImGui::Columns(1);
+    }
+    
+    // Tab 2: ESP CONFIG
+    else if (currentTab == 2) {
+        ImGui::Columns(2, "EC2", false);
+        
+        BeginModernPanel("##BC", "ESP BOX STYLE", ImVec2(ImGui::GetColumnWidth() - 40, 650));
+        ModernThemeCombo("Style", &boxStyle, 
+            "Normal\0Filled\0Outline\0Gradient\0Corner\0Glow\0Dashed\0Double\0Rounded\03D\0");
+        ModernThemeCombo("Color Mode", &boxColorMode, 
+            "Static\0Health-Based\0Distance-Based\0Rainbow\0Team-Based\0");
+        ModernSlider("Thickness", &boxThickness, 1.0f, 5.0f, "%.1f");
+        ModernSlider("Rounding", &boxCornerRound, 0.0f, 15.0f, "%.1f");
+        ModernSlider("Glow", &boxGlowIntensity, 0.1f, 1.0f, "%.1f");
+        ModernSlider("Alpha", &boxFillAlpha, 0.0f, 1.0f, "%.2f");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Box Color");
+        ImGui::ColorEdit4("##BCA", (float*)&boxCustomColor, ImGuiColorEditFlags_NoInputs);
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Glow Color");
+        ImGui::ColorEdit4("##GCA", (float*)&boxGlowColor, ImGuiColorEditFlags_NoInputs);
+        EndModernPanel();
+        
+        ImGui::NextColumn();
+        
+        BeginModernPanel("##LHC", "ESP LINE & HEALTH STYLE", ImVec2(ImGui::GetColumnWidth() - 40, 600));
+        ModernThemeCombo("Line Style", &lineStyle, 
+            "Normal\0Dotted\0Dashed\0Thick\0Gradient\0Glowing\0Arrow\0Double\0Neon\0Laser\0");
+        ModernSlider("Line Thick", &lineThickness, 1.0f, 8.0f, "%.1f");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Line Color");
+        ImGui::ColorEdit4("##LCA", (float*)&lineCustomColor, ImGuiColorEditFlags_NoInputs);
+        ImGui::Dummy(ImVec2(0, 25));
+        ModernThemeCombo("Health Style", &healthBarStyle, 
+            "Normal\0Gradient\0Smooth\0Thin\0Thick\0Outline\0Rounded\0Rainbow\0Animated\0Digital\0");
+        ModernSlider("Health Width", &healthBarWidth, 3.0f, 15.0f, "%.1f");
+        ModernToggle("Animated Health", &animateHealthBar);
+        EndModernPanel();
+        
+        ImGui::Columns(1);
+    }
+    
+    // Tab 3: SETTINGS - WITH REAL LIVE LICENSE INFO
+    else if (currentTab == 3) {
+        ImGui::Columns(2, "IC", false);
+        
+        BeginModernPanel("##UI", "UI SETTINGS", ImVec2(ImGui::GetColumnWidth() - 40, 450));
+        ImGui::TextColored(uiGlowColor, "Menu Theme Color");
+        
+        ImGui::ColorEdit4("##GT", (float*)&uiGlowColor, 
+            ImGuiColorEditFlags_AlphaBar | 
+            ImGuiColorEditFlags_NoLabel |
+            ImGuiColorEditFlags_DisplayRGB |
+            ImGuiColorEditFlags_PickerHueBar);
+        
+        ImGui::SameLine();
+        if (ImGui::Button("Reset")) {
+            uiGlowColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+            uiGlowIntensity = 2.0f;
+        }
+        
+        ImGui::Dummy(ImVec2(0, 25));
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Bone Preview");
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_Header, uiGlowColor);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(uiGlowColor.x, uiGlowColor.y, uiGlowColor.z, 0.8f));
+        
+        ImGui::Combo("##BSP", &selectedBoneIndex, 
+            "HEAD\0HIP\0CHEST\0ROOT\0LEFT SHOULDER\0RIGHT SHOULDER\0LEFT ANKLE\0RIGHT ANKLE\0LEFT TOE\0RIGHT TOE\0RIGHT FOREARM\0LEFT FOREARM\0RIGHT HAND\0LEFT HAND\0");
+        
+        ImGui::PopStyleColor(6);
+        ImGui::Dummy(ImVec2(0, 20));
+        ModernSlider("Glow Intensity", &uiGlowIntensity, 0.0f, 5.0f, "%.1f");
+        ModernSlider("Background Opacity", &uiBgOpacity, 0.5f, 1.0f, "%.2f");
+        EndModernPanel();
+        
+        ImGui::NextColumn();
+        
+        BeginModernPanel("##SP", "LICENSE / INFO", ImVec2(ImGui::GetColumnWidth() - 40, 650));
+        ImGui::TextColored(uiGlowColor, "License Information");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 15));
+        
+        // REAL LIVE LICENSE INFO FROM GLOBAL AUTH
+        ImGui::Text("Status: "); ImGui::SameLine();
+        std::string status = g_auth.getStatus();
+        if (status == "ACTIVE") {
+            ImGui::TextColored(ImVec4(0, 1, 0, 1), "%s", status.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s", status.c_str());
+        }
+        
+        ImGui::Dummy(ImVec2(0, 10));
+        ImGui::Text("License Key: "); ImGui::SameLine();
+        std::string maskedKey = g_auth.getLicenseKey();
+        if (maskedKey.length() > 12) {
+            maskedKey = maskedKey.substr(0, 6) + "..." + maskedKey.substr(maskedKey.length() - 6);
+        }
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", maskedKey.c_str());
+        
+        ImGui::Dummy(ImVec2(0, 10));
+        ImGui::Text("Expiry Date: "); ImGui::SameLine();
+        std::string expiry = g_auth.getExpiryDate();
+        if (expiry == "LIFETIME") {
+            ImGui::TextColored(ImVec4(0, 1, 0.5f, 1), "%s", expiry.c_str());
+        } else if (expiry.find("DAYS") != std::string::npos) {
+            ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s", expiry.c_str());
+        } else if (expiry.find("20") != std::string::npos || expiry.find("202") != std::string::npos) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "%s", expiry.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", expiry.c_str());
+        }
+        
+        ImGui::Dummy(ImVec2(0, 10));
+        ImGui::Text("Device ID: "); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", g_auth.getHWID().c_str());
+        
+        std::string msg = g_auth.getAuthMessage();
+        if (!msg.empty() && msg != "Login successful") {
+            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::Text("Message: "); ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 1, 0, 1), "%s", msg.c_str());
+        }
+        
+        ImGui::Dummy(ImVec2(0, 60));
+        
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.05f, 0.05f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.08f, 0.08f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+        
+        if (ImGui::Button("EXIT", ImVec2(ImGui::GetWindowWidth() - 40, 60))) {
+            main_thread_flag = false; 
+            shutdown(); 
+            Touch_Close(); 
+            _exit(0);
+        }
+        
+        ImGui::PopStyleColor(3);
+        EndModernPanel();
+        
+        ImGui::Columns(1);
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+// ==================== MAIN ====================
+int main(int argc, char *argv[]) {
+    // Increase memory limit
+    increase_memory_limit();
+    
+    // AUTHENTICATION SYSTEM
+    Authentication auth;
+    
+    if (!auth.run()) {
+        return 1;
+    }
+    
+    // COPY TO GLOBAL AUTH
+    g_auth = auth;
+    
+    // FORCE STOP GAME BEFORE START
+    ForceStopFreeFire();
+    
+    // INITIALIZE THREADS
+    std::thread(VolumeKeyThread).detach();
+    std::thread(SilentAimThread).detach();
+
+    while (main_thread_flag && !g_GameInitialized) {
+        static int lm = 0;
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        if (ms - lm > 2000) { 
+            printf("%s", oxorany("\n[WAITING] OPEN FF MAX \n")); 
+            lm = ms; 
+        }
+
+        int pid = getProcessID(packageName);
+        if (pid > 0) {
+            game_pid = pid; 
+            sleep(3);
+            lib_base = get_module_base(targetaLibName, PERM_EXEC);
+            lib_base2 = get_module_base(targetaLibName2, PERM_EXEC);
+            if (lib_base != 0) {
+                screen_config();
+                ::abs_ScreenX = (displayInfo.height > displayInfo.width ? displayInfo.height : displayInfo.width);
+                ::abs_ScreenY = (displayInfo.height < displayInfo.width ? displayInfo.height : displayInfo.width);
+                ::native_window_screen_x = ::abs_ScreenX;
+                ::native_window_screen_y = ::abs_ScreenX;
+                if (!initGUI_draw(native_window_screen_x, native_window_screen_y, true)) { 
+                    return -1; 
+                }
+                Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
+                g_GameIsRunning = true; 
+                g_GameInitialized = true;
+            } else { 
+                sleep(2); 
+            }
+        }
+        usleep(100000);
+    }
+
+    while (main_thread_flag && g_GameInitialized) {
+        int pid = getProcessID(packageName);
+        if (pid <= 0) { 
+            printf("%s", oxorany("[X] Game closed!\n")); 
+            break; 
+        }
+        bool fg = IsGameInForeground(pid);
+        drawBegin();
+        {
+            ImGui::SetNextWindowPos(ImVec2(-100, -100));
+            ImGui::SetNextWindowSize(ImVec2(10, 10));
+            ImGui::Begin("##AntiCrash", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::End();
+            if (fg) {
+                RenderMenu();
+                if (g_GameIsRunning && lib_base != 0) {
+                    DrawESP(abs_ScreenX, abs_ScreenY, lib_base);
+                    AimbotMenu(abs_ScreenX, abs_ScreenY, lib_base);
+                }
+            }
+        }
+        drawEnd();
+        usleep(16000);
+    }
+
+    printf("%s", oxorany("Shutting down...\n"));
+    shutdown(); 
+    Touch_Close();
+    return 0;
+}

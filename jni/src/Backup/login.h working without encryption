@@ -1,0 +1,436 @@
+#ifndef LOGIN_H
+#define LOGIN_H
+#include <sys/stat.h>
+#include <cstdio>
+#include <string>
+#include <iostream>
+#include <termios.h>
+#include <unistd.h>
+#include <curl/curl.h>
+#include <json.hpp>
+#include <chrono>
+#include <fstream>
+#include <cstring>
+#include <random>
+#include "Scarecrow/oxorany_include.h"
+#include "Scarecrow/oxorany.h""
+
+
+using json = nlohmann::json;
+
+// ==================== ANSI COLORS ====================
+#define COL_RESET    "\033[0m"
+#define COL_BOLD     "\033[1m"
+#define COL_RED      "\033[38;5;196m"
+#define COL_GREEN    "\033[38;5;46m"
+#define COL_YELLOW   "\033[38;5;226m"
+#define COL_CYAN     "\033[38;5;51m"
+#define COL_MAGENTA  "\033[38;5;135m"
+#define COL_WHITE    "\033[38;5;255m"
+#define COL_GRAY     "\033[38;5;240m"
+#define COL_PURPLE   "\033[38;5;93m"
+#define COL_LBLUE    "\033[38;5;39m"
+#define COL_ORANGE   "\033[38;5;208m"
+
+#define KEY_SAVE_PATH "/data/local/tmp/.sh_key"
+
+// ==================== STRUCTURES ====================
+struct LoginResult {
+    bool success;
+    std::string message;
+};
+
+struct MemoryChunk {
+    char* memory;
+    size_t size;
+};
+
+// ==================== CURL CALLBACK ====================
+static size_t WriteMemoryCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    size_t realsize = size * nmemb;
+    MemoryChunk* mem = (MemoryChunk*)userp;
+    char* ptr = (char*)realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) return 0;
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    return realsize;
+}
+
+// ==================== UI HELPERS ====================
+static void clear_screen() {
+    printf("\033[2J\033[H");
+    fflush(stdout);
+}
+
+static void print_line_char(char fill, const char* color, int width = 60) {
+    printf("%s", color);
+    for (int i = 0; i < width; i++) putchar(fill);
+    printf("%s\n", COL_RESET);
+}
+
+static void print_banner() {
+    clear_screen();
+    printf("\n");
+    print_line_char('=', COL_MAGENTA);
+    printf("%s|%s%*s%s|\n", COL_MAGENTA, COL_RESET, 58, "", COL_MAGENTA);
+    printf("%s|%s", COL_MAGENTA, COL_RESET);
+    const char* t = "PREMIUM CHEATS";
+    int len = strlen(t);
+    int pad = (58 - len) / 2;
+    printf("%s%*s%s%s%*s", COL_BOLD COL_CYAN, pad, "", t, COL_RESET, pad + (len % 2 ? 1 : 0), "");
+    printf("%s|\n", COL_MAGENTA);
+    printf("%s|%s", COL_MAGENTA, COL_RESET);
+    const char* t2 = "Android Mod Menu v4.0";
+    len = strlen(t2);
+    pad = (58 - len) / 2;
+    printf("%s%*s%s%s%*s", COL_LBLUE, pad, "", t2, COL_RESET, pad + (len % 2 ? 1 : 0), "");
+    printf("%s|\n", COL_MAGENTA);
+    printf("%s|%s%*s%s|\n", COL_MAGENTA, COL_RESET, 58, "", COL_MAGENTA);
+    print_line_char('=', COL_MAGENTA);
+    printf("\n");
+}
+
+static void print_section(const char* title) {
+    printf("\n%s%s  %s  %s\n", COL_BOLD, COL_PURPLE, title, COL_RESET);
+    print_line_char('-', COL_GRAY);
+}
+
+static void print_success(const char* msg) {
+    printf("  %s[✓]%s  %s%s%s\n", COL_GREEN, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_error(const char* msg) {
+    printf("  %s[✗]%s  %s%s%s\n", COL_RED, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_warn(const char* msg) {
+    printf("  %s[!]%s  %s%s%s\n", COL_YELLOW, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_info(const char* label, const char* value) {
+    printf("  %s[i]%s  %s%-18s%s  %s%s%s\n", COL_CYAN, COL_RESET, COL_GRAY, label, COL_RESET, COL_WHITE, value, COL_RESET);
+    fflush(stdout);
+}
+
+static std::string get_input(const char* prompt, bool hidden = false) {
+    printf("\n  %s>%s %s%s%s ", COL_MAGENTA, COL_RESET, COL_BOLD, prompt, COL_RESET);
+    fflush(stdout);
+    
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    
+    if (hidden) {
+        newt = oldt;
+        newt.c_lflag &= ~ECHO;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    }
+    
+    char buffer[256];
+    if (fgets(buffer, sizeof(buffer), stdin) == nullptr) buffer[0] = 0;
+    buffer[strcspn(buffer, "\n")] = 0;
+    
+    if (hidden) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        printf("\n");
+    }
+    
+    return std::string(buffer);
+}
+
+// ==================== KEY PERSISTENCE ====================
+static bool save_key(const std::string& key) {
+    FILE* fp = fopen(KEY_SAVE_PATH, "w");
+    if (fp) {
+        fprintf(fp, "%s", key.c_str());
+        fclose(fp);
+        chmod(KEY_SAVE_PATH, 0600);
+        return true;
+    }
+    return false;
+}
+
+static std::string load_saved_key() {
+    FILE* fp = fopen(KEY_SAVE_PATH, "r");
+    if (fp) {
+        char buf[256] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            fclose(fp);
+            buf[strcspn(buf, "\n")] = 0;
+            if (strlen(buf) > 0) return std::string(buf);
+        }
+        fclose(fp);
+    }
+    return "";
+}
+
+static void delete_saved_key() {
+    remove(KEY_SAVE_PATH);
+}
+
+// ==================== HWID ====================
+static std::string get_hwid() {
+    char buffer[128];
+    std::string hwid;
+    
+    FILE* fp = popen("settings get secure android_id 2>/dev/null", "r");
+    if (fp) {
+        if (fgets(buffer, sizeof(buffer), fp)) hwid = buffer;
+        pclose(fp);
+        hwid.erase(hwid.find_last_not_of(" \n\r\t") + 1);
+    }
+    
+    if (hwid.empty() || hwid == "null") {
+        fp = popen("getprop ro.serialno 2>/dev/null", "r");
+        if (fp) {
+            if (fgets(buffer, sizeof(buffer), fp)) hwid = buffer;
+            pclose(fp);
+            hwid.erase(hwid.find_last_not_of(" \n\r\t") + 1);
+        }
+    }
+    
+    if (hwid.empty() || hwid == "null") hwid = "unknown_device";
+    
+    unsigned long hash = 5381;
+    for (char c : hwid) hash = ((hash << 5) + hash) + (unsigned char)c;
+    
+    char result[32];
+    snprintf(result, sizeof(result), "%016lx", hash);
+    return std::string(result);
+}
+
+// ==================== VPN CHECK ====================
+static bool check_vpn() {
+    const char* vpn_prefixes[] = {"tun", "ppp", "wg", "tap", "ipsec", "vpn", "openvpn", nullptr};
+    
+    FILE* fp = fopen("/proc/net/dev", "r");
+    if (fp) {
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            char* colon = strchr(line, ':');
+            if (!colon) continue;
+            
+            char iface[64] = {0};
+            char* start = line;
+            while (*start == ' ') start++;
+            size_t name_len = (size_t)(colon - start);
+            if (name_len >= sizeof(iface)) name_len = sizeof(iface) - 1;
+            strncpy(iface, start, name_len);
+            iface[name_len] = 0;
+            
+            for (int i = 0; vpn_prefixes[i]; i++) {
+                if (strncmp(iface, vpn_prefixes[i], strlen(vpn_prefixes[i])) == 0) {
+                    unsigned long long rx_bytes = 0;
+                    sscanf(colon + 1, "%llu", &rx_bytes);
+                    if (rx_bytes > 0) {
+                        fclose(fp);
+                        return true;
+                    }
+                }
+            }
+        }
+        fclose(fp);
+    }
+    return false;
+}
+
+// ==================== CRYPTO ====================
+static std::string xor_decrypt(const std::string& data, const std::string& key) {
+    std::string result = data;
+    for (size_t i = 0; i < result.size(); i++)
+        result[i] ^= key[i % key.size()];
+    return result;
+}
+
+static std::string derive_key(const std::string& pub_key) {
+    std::string key = pub_key;
+    for (char& c : key)
+        c = (char)(((c * 7) ^ 0x55) % 256);
+    return key;
+}
+
+// ==================== LOGIN FUNCTION ====================
+static LoginResult perform_login(const std::string& key, const std::string& hwid) {
+    LoginResult result;
+    result.success = false;
+    result.message = "";
+    
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        result.message = "CURL init failed";
+        return result;
+    }
+    
+    MemoryChunk chunk;
+    chunk.memory = (char*)malloc(1);
+    chunk.size = 0;
+    
+    // CHANGE: Use form-urlencoded (same as working curl command)
+    std::string postData = "game=FreeFire&user_key=" + key + "&serial=" + hwid;
+    
+    curl_easy_setopt(curl, CURLOPT_URL, "https://strangercheats.site/connect");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+    
+    // CHANGE: Content-Type header
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    if (res == CURLE_OK && chunk.memory && chunk.size > 0) {
+        try {
+            json response = json::parse(chunk.memory);
+            
+            if (response.contains("status") && response["status"] == true) {
+                result.success = true;
+                result.message = "Login successful";
+            } else {
+                result.message = response.contains("reason") ? 
+                    response["reason"].get<std::string>() : "Authentication failed";
+            }
+        } catch (const std::exception& e) {
+            result.message = "Parse error";
+        }
+    } else {
+        result.message = "Connection error";
+    }
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(chunk.memory);
+    
+    return result;
+}
+
+// ==================== AUTHENTICATION CLASS ====================
+class Authentication {
+private:
+    bool authenticated;
+    std::string hwid;
+    std::string auth_message;
+    
+public:
+    Authentication() : authenticated(false) {}
+    
+    bool isAuthenticated() const { return authenticated; }
+    std::string getHWID() const { return hwid; }
+    std::string getAuthMessage() const { return auth_message; }
+    
+    bool run() {
+        print_banner();
+        
+        // VPN Check
+        print_section("Security Check");
+        printf("  %s[*]%s  Scanning network interfaces...\n", COL_YELLOW, COL_RESET);
+        fflush(stdout);
+        usleep(600000);
+        
+        if (check_vpn()) {
+            print_error("VPN/Proxy detected");
+            print_warn("Disable VPN and restart");
+            printf("\n");
+            print_line_char('=', COL_RED);
+            sleep(3);
+            return false;
+        }
+        print_success("Clean connection - No VPN");
+        
+        // Device Info
+        print_section("Device");
+        hwid = get_hwid();
+        print_info("Hardware ID", hwid.c_str());
+        
+        // Authentication
+        print_section("Authentication");
+        
+        int attempts = 0;
+        
+        // Try saved key
+        std::string saved_key = load_saved_key();
+        if (!saved_key.empty()) {
+            std::string masked = saved_key;
+            if (saved_key.length() > 8) {
+                masked = saved_key.substr(0, 4) + "..." + saved_key.substr(saved_key.length() - 4);
+            }
+            print_info("Saved key", masked.c_str());
+            printf("  %s[*]%s  Verifying saved key...\n", COL_YELLOW, COL_RESET);
+            fflush(stdout);
+            usleep(500000);
+            
+            LoginResult res = perform_login(saved_key, hwid);
+            if (res.success) {
+                authenticated = true;
+                auth_message = res.message;
+                print_success(auth_message.c_str());
+                print_info("Status", "Valid (cached)");
+                return true;
+            } else {
+                auth_message = res.message;
+                print_warn("Saved key invalid/expired");
+                delete_saved_key();
+                usleep(300000);
+            }
+        }
+        
+        // Manual entry
+        while (!authenticated && attempts < 3) {
+            if (attempts > 0) {
+                printf("\n  %s[!]%s  Attempt %d/3 failed\n", COL_RED, COL_RESET, attempts);
+            }
+            
+            printf("\n");
+            print_line_char('-', COL_GRAY);
+            
+            std::string key = get_input("Enter license key", true);
+            
+            if (key.empty()) {
+                print_error("Key cannot be empty");
+                attempts++;
+                continue;
+            }
+            
+            printf("  %s[*]%s  Verifying...\n", COL_YELLOW, COL_RESET);
+            fflush(stdout);
+            usleep(400000);
+            
+            LoginResult res = perform_login(key, hwid);
+            if (res.success) {
+                authenticated = true;
+                auth_message = res.message;
+                printf("\n");
+                print_success(auth_message.c_str());
+                save_key(key);
+                print_info("Key cached", KEY_SAVE_PATH);
+                return true;
+            } else {
+                auth_message = res.message;
+                print_error(auth_message.c_str());
+                attempts++;
+            }
+        }
+        
+        if (!authenticated) {
+            printf("\n");
+            print_error("Max attempts reached - Access denied");
+            printf("\n");
+            print_line_char('=', COL_RED);
+            sleep(4);
+            return false;
+        }
+        
+        return true;
+    }
+};
+
+#endif // LOGIN_H

@@ -1,0 +1,577 @@
+#ifndef LOGIN_H
+#define LOGIN_H
+#include <sys/stat.h>
+#include <cstdio>
+#include <string>
+#include <iostream>
+#include <termios.h>
+#include <unistd.h>
+#include <curl/curl.h>
+#include <json.hpp>
+#include <chrono>
+#include <fstream>
+#include <cstring>
+#include <random>
+#include <ctime>
+#include "Scarecrow/oxorany_include.h"
+#include "Scarecrow/oxorany.h"
+
+using json = nlohmann::json;
+
+// ==================== ANSI COLORS ====================
+#define COL_RESET    oxorany("\033[0m")
+#define COL_BOLD     oxorany("\033[1m")
+#define COL_RED      oxorany("\033[38;5;196m")
+#define COL_GREEN    oxorany("\033[38;5;46m")
+#define COL_YELLOW   oxorany("\033[38;5;226m")
+#define COL_CYAN     oxorany("\033[38;5;51m")
+#define COL_MAGENTA  oxorany("\033[38;5;135m")
+#define COL_WHITE    oxorany("\033[38;5;255m")
+#define COL_GRAY     oxorany("\033[38;5;240m")
+#define COL_PURPLE   oxorany("\033[38;5;93m")
+#define COL_LBLUE    oxorany("\033[38;5;39m")
+#define COL_ORANGE   oxorany("\033[38;5;208m")
+
+// ==================== OBFUSCATED PATHS ====================
+#define KEY_SAVE_PATH oxorany("/data/local/tmp/.sh_key")
+#define KEY_EXPIRY_PATH oxorany("/data/local/tmp/.sh_expiry")
+#define API_URL oxorany("https://strangercheats.site/connect")
+#define CONTENT_TYPE oxorany("Content-Type: application/x-www-form-urlencoded")
+
+// ==================== STRUCTURES ====================
+struct LoginResult {
+    bool success;
+    std::string message;
+    std::string expiry_date;
+    std::string license_key;
+    std::string status;
+};
+
+struct MemoryChunk {
+    char* memory;
+    size_t size;
+};
+
+// ==================== CURL CALLBACK ====================
+static size_t WriteMemoryCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    size_t realsize = size * nmemb;
+    MemoryChunk* mem = (MemoryChunk*)userp;
+    char* ptr = (char*)realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) return 0;
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    return realsize;
+}
+
+// ==================== UI HELPERS ====================
+static void clear_screen() {
+    printf(oxorany("\033[2J\033[H"));
+    fflush(stdout);
+}
+
+static void print_line_char(char fill, const char* color, int width = 60) {
+    printf("%s", color);
+    for (int i = 0; i < width; i++) putchar(fill);
+    printf("%s\n", COL_RESET);
+}
+
+static void print_banner() {
+    clear_screen();
+    printf("\n");
+    print_line_char('=', COL_MAGENTA);
+    printf(oxorany("%s|%s%*s%s|\n"), COL_MAGENTA, COL_RESET, 58, "", COL_MAGENTA);
+    printf(oxorany("%s|%s"), COL_MAGENTA, COL_RESET);
+    
+    printf(oxorany("%s%s%*s%s%s%*s"), COL_BOLD, COL_CYAN, 
+           (58 - strlen(oxorany("PREMIUM CHEATS"))) / 2, "", 
+           oxorany("PREMIUM CHEATS"), COL_RESET, 
+           ((58 - strlen(oxorany("PREMIUM CHEATS"))) / 2) + (strlen(oxorany("PREMIUM CHEATS")) % 2 ? 1 : 0), "");
+    
+    printf(oxorany("%s|\n"), COL_MAGENTA);
+    printf(oxorany("%s|%s"), COL_MAGENTA, COL_RESET);
+    
+    printf(oxorany("%s%*s%s%s%*s"), COL_LBLUE, 
+           (58 - strlen(oxorany("Android Mod Menu v4.0"))) / 2, "",
+           oxorany("Android Mod Menu v4.0"), COL_RESET,
+           ((58 - strlen(oxorany("Android Mod Menu v4.0"))) / 2) + (strlen(oxorany("Android Mod Menu v4.0")) % 2 ? 1 : 0), "");
+    
+    printf(oxorany("%s|\n"), COL_MAGENTA);
+    printf(oxorany("%s|%s%*s%s|\n"), COL_MAGENTA, COL_RESET, 58, "", COL_MAGENTA);
+    print_line_char('=', COL_MAGENTA);
+    printf("\n");
+}
+
+static void print_section(const char* title) {
+    printf(oxorany("\n%s%s  %s  %s\n"), COL_BOLD, COL_PURPLE, title, COL_RESET);
+    print_line_char('-', COL_GRAY);
+}
+
+static void print_success(const char* msg) {
+    printf(oxorany("  %s[✓]%s  %s%s%s\n"), COL_GREEN, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_error(const char* msg) {
+    printf(oxorany("  %s[✗]%s  %s%s%s\n"), COL_RED, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_warn(const char* msg) {
+    printf(oxorany("  %s[!]%s  %s%s%s\n"), COL_YELLOW, COL_RESET, COL_WHITE, msg, COL_RESET);
+    fflush(stdout);
+}
+
+static void print_info(const char* label, const char* value) {
+    printf(oxorany("  %s[i]%s  %s%-18s%s  %s%s%s\n"), COL_CYAN, COL_RESET, COL_GRAY, label, COL_RESET, COL_WHITE, value, COL_RESET);
+    fflush(stdout);
+}
+
+static std::string get_input(const char* prompt, bool hidden = false) {
+    printf(oxorany("\n  %s>%s %s%s%s "), COL_MAGENTA, COL_RESET, COL_BOLD, prompt, COL_RESET);
+    fflush(stdout);
+    
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    
+    if (hidden) {
+        newt = oldt;
+        newt.c_lflag &= ~ECHO;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    }
+    
+    char buffer[256];
+    if (fgets(buffer, sizeof(buffer), stdin) == nullptr) buffer[0] = 0;
+    buffer[strcspn(buffer, "\n")] = 0;
+    
+    if (hidden) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        printf("\n");
+    }
+    
+    return std::string(buffer);
+}
+
+// ==================== KEY PERSISTENCE ====================
+static bool save_key(const std::string& key) {
+    FILE* fp = fopen(KEY_SAVE_PATH, "w");
+    if (fp) {
+        fprintf(fp, "%s", key.c_str());
+        fclose(fp);
+        chmod(KEY_SAVE_PATH, 0600);
+        return true;
+    }
+    return false;
+}
+
+static bool save_expiry(const std::string& expiry) {
+    FILE* fp = fopen(KEY_EXPIRY_PATH, "w");
+    if (fp) {
+        fprintf(fp, "%s", expiry.c_str());
+        fclose(fp);
+        return true;
+    }
+    return false;
+}
+
+static std::string load_saved_key() {
+    FILE* fp = fopen(KEY_SAVE_PATH, "r");
+    if (fp) {
+        char buf[256] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            fclose(fp);
+            buf[strcspn(buf, "\n")] = 0;
+            if (strlen(buf) > 0) return std::string(buf);
+        }
+        fclose(fp);
+    }
+    return "";
+}
+
+static void delete_saved_key() {
+    remove(KEY_SAVE_PATH);
+    remove(KEY_EXPIRY_PATH);
+}
+
+// ==================== HWID ====================
+static std::string get_hwid() {
+    char buffer[128];
+    std::string hwid;
+    
+    FILE* fp = popen(oxorany("settings get secure android_id 2>/dev/null"), "r");
+    if (fp) {
+        if (fgets(buffer, sizeof(buffer), fp)) hwid = buffer;
+        pclose(fp);
+        hwid.erase(hwid.find_last_not_of(oxorany(" \n\r\t")) + 1);
+    }
+    
+    if (hwid.empty() || hwid == oxorany("null")) {
+        fp = popen(oxorany("getprop ro.serialno 2>/dev/null"), "r");
+        if (fp) {
+            if (fgets(buffer, sizeof(buffer), fp)) hwid = buffer;
+            pclose(fp);
+            hwid.erase(hwid.find_last_not_of(oxorany(" \n\r\t")) + 1);
+        }
+    }
+    
+    if (hwid.empty() || hwid == oxorany("null")) hwid = oxorany("unknown_device");
+    
+    unsigned long hash = 5381;
+    for (char c : hwid) hash = ((hash << 5) + hash) + (unsigned char)c;
+    
+    char result[32];
+    snprintf(result, sizeof(result), oxorany("%016lx"), hash);
+    return std::string(result);
+}
+
+// ==================== VPN CHECK ====================
+static bool is_vpn_interface(const char* iface) {
+    const char* vpn_prefixes[] = {
+        "tun", "tap", "ppp", "wg", "ipsec", 
+        "vpn", "openvpn", "utun", "tun0", "tun1",
+        "tun2", "tun3", "tun4", "tun5", "tuntap",
+        nullptr
+    };
+    
+    for (int i = 0; vpn_prefixes[i]; i++) {
+        if (strncmp(iface, vpn_prefixes[i], strlen(vpn_prefixes[i])) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool check_vpn() {
+    FILE* fp = fopen("/proc/net/dev", "r");
+    if (!fp) return false;
+    
+    char line[512];
+    bool has_active_vpn = false;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        char* colon = strchr(line, ':');
+        if (!colon) continue;
+        
+        char iface[64] = {0};
+        char* start = line;
+        while (*start == ' ') start++;
+        size_t name_len = (size_t)(colon - start);
+        if (name_len >= sizeof(iface)) name_len = sizeof(iface) - 1;
+        strncpy(iface, start, name_len);
+        iface[name_len] = 0;
+        
+        if (strcmp(iface, "lo") == 0) continue;
+        
+        unsigned long long rx_bytes = 0;
+        unsigned long long tx_bytes = 0;
+        sscanf(colon + 1, "%llu %*u %*u %*u %*u %*u %*u %*u %llu", &rx_bytes, &tx_bytes);
+        
+        if (rx_bytes == 0 && tx_bytes == 0) continue;
+        
+        if (strncmp(iface, "wlan", 4) == 0 || strncmp(iface, "eth", 3) == 0 || 
+            strncmp(iface, "rmnet", 5) == 0 || strncmp(iface, "ccmni", 5) == 0 || 
+            strncmp(iface, "cdc_", 4) == 0) {
+            continue;
+        }
+        
+        if (is_vpn_interface(iface)) {
+            if (rx_bytes > 5000 || tx_bytes > 5000) {
+                has_active_vpn = true;
+                break;
+            }
+        }
+    }
+    fclose(fp);
+    return has_active_vpn;
+}
+
+// ==================== FORMAT EXPIRY DATE ====================
+static std::string format_date(const std::string& date_str) {
+    if (date_str.empty()) return "N/A";
+    
+    // Agar already formatted hai toh wapas kar do
+    if (date_str.find("-") == std::string::npos && 
+        date_str.find("/") == std::string::npos &&
+        date_str != "LIFETIME") {
+        return date_str;
+    }
+    
+    // Lifetime check
+    if (date_str == "LIFETIME" || date_str == "lifetime" || date_str == "PERMANENT" || date_str == "0" || date_str == "-1") {
+        return "LIFETIME";
+    }
+    
+    // Try to parse YYYY-MM-DD
+    struct tm tm = {0};
+    if (strptime(date_str.c_str(), "%Y-%m-%d", &tm) != nullptr) {
+        char formatted[32];
+        strftime(formatted, sizeof(formatted), "%d %b %Y", &tm);
+        return std::string(formatted);
+    }
+    
+    // Try DD-MM-YYYY
+    if (strptime(date_str.c_str(), "%d-%m-%Y", &tm) != nullptr) {
+        char formatted[32];
+        strftime(formatted, sizeof(formatted), "%d %b %Y", &tm);
+        return std::string(formatted);
+    }
+    
+    // Try MM/DD/YYYY
+    if (strptime(date_str.c_str(), "%m/%d/%Y", &tm) != nullptr) {
+        char formatted[32];
+        strftime(formatted, sizeof(formatted), "%d %b %Y", &tm);
+        return std::string(formatted);
+    }
+    
+    return date_str;
+}
+
+// ==================== LOGIN FUNCTION ====================
+static LoginResult perform_login(const std::string& key, const std::string& hwid) {
+    LoginResult result;
+    result.success = false;
+    result.message = "";
+    result.expiry_date = "N/A";
+    result.license_key = key;
+    result.status = "INACTIVE";
+    
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        result.message = oxorany("CURL init failed");
+        return result;
+    }
+    
+    MemoryChunk chunk;
+    chunk.memory = (char*)malloc(1);
+    chunk.size = 0;
+    
+    std::string postData = std::string(oxorany("game=")) + 
+                           std::string(oxorany("FreeFire")) + 
+                           std::string(oxorany("&user_key=")) + key + 
+                           std::string(oxorany("&serial=")) + hwid;
+    
+    curl_easy_setopt(curl, CURLOPT_URL, API_URL);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+    
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, CONTENT_TYPE);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    if (res == CURLE_OK && chunk.memory && chunk.size > 0) {
+        try {
+            json response = json::parse(chunk.memory);
+            
+            if (response.contains(oxorany("status")) && response[oxorany("status")] == true) {
+                result.success = true;
+                result.message = oxorany("Login successful");
+                result.status = "ACTIVE";
+                
+                // Parse expiry date from server
+                std::string raw_expiry = "";
+                
+                if (response.contains("expiry") && !response["expiry"].is_null()) {
+                    raw_expiry = response["expiry"].get<std::string>();
+                }
+                else if (response.contains("expiry_date") && !response["expiry_date"].is_null()) {
+                    raw_expiry = response["expiry_date"].get<std::string>();
+                }
+                else if (response.contains("expire_date") && !response["expire_date"].is_null()) {
+                    raw_expiry = response["expire_date"].get<std::string>();
+                }
+                else if (response.contains("valid_until") && !response["valid_until"].is_null()) {
+                    raw_expiry = response["valid_until"].get<std::string>();
+                }
+                else if (response.contains("days_left") && !response["days_left"].is_null()) {
+                    int days = response["days_left"].get<int>();
+                    if (days == 0 || days == -1) {
+                        raw_expiry = "LIFETIME";
+                    } else {
+                        // Calculate date from days
+                        time_t now = time(nullptr);
+                        time_t expiry_time = now + (days * 86400);
+                        struct tm* tm_info = localtime(&expiry_time);
+                        char buf[32];
+                        strftime(buf, sizeof(buf), "%d %b %Y", tm_info);
+                        raw_expiry = buf;
+                    }
+                }
+                
+                // Format the expiry date nicely
+                result.expiry_date = format_date(raw_expiry);
+                
+                // Save expiry
+                save_expiry(result.expiry_date);
+                
+            } else {
+                result.message = response.contains(oxorany("reason")) ? 
+                    response[oxorany("reason")].get<std::string>() : oxorany("Authentication failed");
+                result.status = "INACTIVE";
+                result.expiry_date = "EXPIRED";
+            }
+        } catch (const std::exception& e) {
+            result.message = oxorany("Parse error");
+            result.expiry_date = "UNKNOWN";
+        }
+    } else {
+        result.message = oxorany("Connection error");
+        result.expiry_date = "N/A";
+    }
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(chunk.memory);
+    
+    return result;
+}
+
+// ==================== AUTHENTICATION CLASS ====================
+class Authentication {
+private:
+    bool authenticated;
+    std::string hwid;
+    std::string auth_message;
+    std::string expiry_date;
+    std::string license_key;
+    std::string status;
+    
+public:
+    Authentication() : authenticated(false) {
+        expiry_date = "N/A";
+        status = "INACTIVE";
+    }
+    
+    bool isAuthenticated() const { return authenticated; }
+    std::string getHWID() const { return hwid; }
+    std::string getAuthMessage() const { return auth_message; }
+    std::string getExpiryDate() const { return expiry_date; }
+    std::string getLicenseKey() const { return license_key; }
+    std::string getStatus() const { return status; }
+    
+    bool run() {
+        print_banner();
+        
+        // VPN Check
+        print_section(oxorany("Security Check"));
+        printf(oxorany("  %s[*]%s  Analyzing network configuration...\n"), COL_YELLOW, COL_RESET);
+        fflush(stdout);
+        usleep(600000);
+        
+        bool vpn_detected = check_vpn();
+        
+        if (vpn_detected) {
+            print_error(oxorany("VPN/Proxy detected"));
+            print_warn(oxorany("Please disable VPN/Proxy and restart"));
+            printf(oxorany("\n  %s[!]%s  Note: Some carrier networks may trigger false positives\n"), COL_YELLOW, COL_RESET);
+            printf("\n");
+            print_line_char('=', COL_RED);
+            sleep(4);
+            return false;
+        }
+        print_success(oxorany("No VPN/Proxy detected - Connection secure"));
+        
+        // Device Info
+        print_section(oxorany("Device"));
+        hwid = get_hwid();
+        print_info(oxorany("Hardware ID"), hwid.c_str());
+        
+        // Authentication
+        print_section(oxorany("Authentication"));
+        
+        int attempts = 0;
+        
+        // Try saved key
+        std::string saved_key = load_saved_key();
+        if (!saved_key.empty()) {
+            std::string masked = saved_key;
+            if (saved_key.length() > 8) {
+                masked = saved_key.substr(0, 4) + oxorany("...") + saved_key.substr(saved_key.length() - 4);
+            }
+            print_info(oxorany("Saved key"), masked.c_str());
+            printf(oxorany("  %s[*]%s  Verifying saved key...\n"), COL_YELLOW, COL_RESET);
+            fflush(stdout);
+            usleep(500000);
+            
+            LoginResult res = perform_login(saved_key, hwid);
+            if (res.success) {
+                authenticated = true;
+                auth_message = res.message;
+                expiry_date = res.expiry_date;
+                license_key = saved_key;
+                status = res.status;
+                
+                print_success(auth_message.c_str());
+                print_info(oxorany("Status"), status.c_str());
+                print_info(oxorany("Expiry"), expiry_date.c_str());
+                return true;
+            } else {
+                auth_message = res.message;
+                print_warn(oxorany("Saved key invalid/expired"));
+                delete_saved_key();
+                usleep(300000);
+            }
+        }
+        
+        // Manual entry
+        while (!authenticated && attempts < 3) {
+            if (attempts > 0) {
+                printf(oxorany("\n  %s[!]%s  Attempt %d/3 failed\n"), COL_RED, COL_RESET, attempts);
+            }
+            
+            printf("\n");
+            print_line_char('-', COL_GRAY);
+            
+            std::string key = get_input(oxorany("Enter license key"), true);
+            
+            if (key.empty()) {
+                print_error(oxorany("Key cannot be empty"));
+                attempts++;
+                continue;
+            }
+            
+            printf(oxorany("  %s[*]%s  Verifying...\n"), COL_YELLOW, COL_RESET);
+            fflush(stdout);
+            usleep(400000);
+            
+            LoginResult res = perform_login(key, hwid);
+            if (res.success) {
+                authenticated = true;
+                auth_message = res.message;
+                expiry_date = res.expiry_date;
+                license_key = key;
+                status = res.status;
+                
+                printf("\n");
+                print_success(auth_message.c_str());
+                print_info(oxorany("Status"), status.c_str());
+                print_info(oxorany("Expiry"), expiry_date.c_str());
+                save_key(key);
+                return true;
+            } else {
+                auth_message = res.message;
+                print_error(auth_message.c_str());
+                attempts++;
+            }
+        }
+        
+        if (!authenticated) {
+            printf("\n");
+            print_error(oxorany("Max attempts reached - Access denied"));
+            printf("\n");
+            print_line_char('=', COL_RED);
+            sleep(4);
+            return false;
+        }
+        
+        return true;
+    }
+};
+
+#endif // LOGIN_H
