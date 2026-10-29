@@ -15,13 +15,30 @@ import omvll
 from functools import cache
 
 # Substrings matched against each function's (demangled) name.
+# Expanded pass: every function that touches the key, the crypto, the
+# session, or anti-tamper state — not just the entry points. Flattening
+# only perform_auth() left its callees (kd_open_secret, kd_seal_request,
+# etc.) readable in Ghidra, which still reconstructs most of the flow from
+# the untouched half. Obfuscating the whole call chain removes that.
 AUTH_FUNCS = [
+    # entry points
     "perform_auth", "perform_login", "perform_hwid_auth",
+    # redundant auth-state (the actual value a patch would target)
     "kd_get_kernel_ok", "kd_set_kernel_ok", "kd_auth_cookie_init",
+    # integrity / anti-tamper gate + the new self-debug lock + emulator check
     "ix_integrity_gate", "ix_tamper_detected", "ix_ic_die",
+    "ix_dbg_tracerpid", "ix_frida_present", "ix_frida_in_maps",
+    "ix_frida_thread_names", "ix_frida_default_port", "ix_hookfw_present",
+    "ix_fn_hooked", "ix_self_debug_lock", "ix_emulator_detected",
+    "ix_ic_url_sane", "ix_ic_pub_sane",
+    # crypto / transport (the wire format a cracker reverses to forge requests)
     "kd_open_secret", "kd_verify_ed25519", "kd_open_response",
     "kd_seal_request", "kd_auth_post", "kd_derive_subkeys",
-    "kd_client_integrity_matches",
+    "kd_client_integrity_matches", "kd_wipe_server_secret",
+    "kd_hex_decode_any", "kd_hex_decode",
+    # local key storage (what an attacker dumps to clone a license)
+    "kd_load_or_create_master_key", "kd_save_key", "kd_key_format_ok",
+    "kd_sha256_file",
 ]
 
 def _is_target(func) -> bool:
