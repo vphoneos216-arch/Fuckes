@@ -12,12 +12,6 @@
 <div id="intro">
   <div class="intro-mark">
     <svg viewBox="0 0 120 140" class="mark-svg">
-      <defs>
-        <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#ff3b53"/>
-          <stop offset="1" stop-color="#8f0a20"/>
-        </linearGradient>
-      </defs>
       <path class="mark-outline" d="M60 6 C30 6 14 30 14 62 C14 100 34 132 60 134
                C86 132 106 100 106 62 C106 30 90 6 60 6 Z"/>
       <line class="mark-split" x1="60" y1="8" x2="60" y2="132"/>
@@ -28,94 +22,176 @@
     </svg>
   </div>
   <div class="intro-name"><span>IN</span><em>V</em><span>ISIBLE</span><em>X</em></div>
-  <div class="intro-sub">LOADER</div>
+  <div class="intro-sub">PRECISION BEYOND LIMITS</div>
   <div class="intro-bar"><div class="intro-bar-fill"></div></div>
 </div>
 
-<div class="app" id="app">
-
-  <header class="brandrow">
-    <svg viewBox="0 0 120 140" class="mark-svg small">
+<!-- ===================== LOGIN ===================== -->
+<section id="view-login">
+  <div class="login-art" aria-hidden="true">
+    <div class="art-grid"></div>
+    <div class="art-glow"></div>
+  </div>
+  <div class="login-content">
+    <svg viewBox="0 0 120 140" class="mark-svg login-mark">
       <path class="mark-outline" d="M60 6 C30 6 14 30 14 62 C14 100 34 132 60 134
                C86 132 106 100 106 62 C106 30 90 6 60 6 Z"/>
       <line class="mark-split" x1="60" y1="8" x2="60" y2="132"/>
       <circle class="mark-eye" cx="40" cy="58" r="5"/>
       <circle class="mark-eye" cx="80" cy="58" r="5"/>
     </svg>
-    <div>
-      <div class="brandname">IN<span class="x">V</span>ISIBLE<span class="x">X</span></div>
-      <div class="tagline">Bella Ciao · Loader</div>
-    </div>
-  </header>
-  <div class="scanline"></div>
+    <div class="brandname big"><span>IN</span><em>V</em><span>ISIBLE</span><em>X</em></div>
+    <div class="tagline">Precision Beyond Limits</div>
 
-  <!-- ===================== LOGIN ===================== -->
-  <section id="view-login">
-    <div class="hero">
-      <div class="count">PLAN · AUTHORIZE</div>
-      <h1>Enter your key</h1>
-      <p class="hero-sub">Verified once here, re-checked again the instant the target app opens.</p>
-    </div>
-    <div class="card redline">
+    <div class="card redline login-card">
+      <div class="login-card-title">Access Required</div>
+      <p class="login-card-sub">Enter your license key to continue</p>
       <label for="keyInput">License key</label>
       <input id="keyInput" type="text" placeholder="X-XXXXXXXX" autocapitalize="characters" autocomplete="off" inputmode="text">
+      <button class="btn btn-primary" id="loginBtn">
+        <span class="btn-label">Authenticate</span>
+        <span class="btn-arrow">→</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
+      <p class="msg" id="loginMsg"></p>
     </div>
-    <button class="btn btn-primary" id="loginBtn">
-      <span class="btn-label">Unlock</span>
-      <span class="btn-spinner" aria-hidden="true"></span>
-    </button>
-    <p class="msg" id="loginMsg"></p>
-  </section>
+    <div class="login-footer">SECURE &nbsp;·&nbsp; PRIVATE &nbsp;·&nbsp; COMPILED</div>
+  </div>
+</section>
 
-  <!-- ===================== HOME ===================== -->
-  <section id="view-home">
+<!-- ===================== APP SHELL ===================== -->
+<div class="shell hidden" id="shell">
 
-    <div class="topbar">
-      <span class="pill" id="connPill">…</span>
-      <button class="link-btn" id="logoutBtn">Switch key</button>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <svg viewBox="0 0 120 140" class="mark-svg tiny">
+        <path class="mark-outline" d="M60 6 C30 6 14 30 14 62 C14 100 34 132 60 134
+                 C86 132 106 100 106 62 C106 30 90 6 60 6 Z"/>
+        <line class="mark-split" x1="60" y1="8" x2="60" y2="132"/>
+      </svg>
+      <span class="topbar-name">IN<b>X</b></span>
+    </div>
+    <div class="topbar-right">
+      <span class="clock" id="clock">--:--</span>
+      <span class="avatar-dot" id="avatarDot"></span>
+    </div>
+  </header>
+
+  <!-- ---------------- HOME TAB ---------------- -->
+  <main class="view" id="tab-home">
+    <div class="pagehead">
+      <h1>Home</h1>
+      <p>Command center</p>
     </div>
 
-    <div class="card redline status-card">
-      <div class="status-left">
-        <span class="dot" id="statusDot"></span>
-        <div>
-          <div class="status-title" id="statusTitle">Checking…</div>
-          <div class="status-sub" id="statusSub">&nbsp;</div>
-        </div>
+    <div class="hero-card">
+      <div class="hero-grid" aria-hidden="true"></div>
+      <div class="hero-content">
+        <div class="hero-kicker">CONTROL · PLAN · EXECUTE</div>
+        <div class="hero-sub" id="heroSub">Discipline turns plans into reality.</div>
+        <button class="btn hero-btn" id="toggleBtn">
+          <span id="toggleBtnLabel">Start</span>
+          <span class="btn-arrow">→</span>
+        </button>
       </div>
-      <button class="btn btn-start pill-btn" id="toggleBtn">Start</button>
     </div>
 
-    <div class="card">
-      <div class="row">
+    <div class="chip-row">
+      <div class="chip">
+        <span class="chip-ic ok" id="chipConnDot"></span>
+        <div><div class="chip-label">Interface</div><div class="chip-val" id="chipConn">—</div></div>
+      </div>
+      <div class="chip">
+        <span class="chip-ic ok" id="chipKeyDot"></span>
+        <div><div class="chip-label">License</div><div class="chip-val" id="chipKey">—</div></div>
+      </div>
+      <div class="chip">
+        <span class="chip-ic ok" id="chipRunDot"></span>
+        <div><div class="chip-label">Driver</div><div class="chip-val" id="chipDriver">—</div></div>
+      </div>
+    </div>
+
+    <div class="panel-row">
+      <div class="panel">
+        <div class="panel-title">System overview</div>
+        <div class="kv"><span>Target app</span><b id="ovTarget">None</b></div>
+        <div class="kv"><span>Auto mode</span><b id="ovAuto">Off</b></div>
+        <div class="kv"><span>Control</span><b id="ovControl">Local</b></div>
+        <div class="kv"><span>Status</span><b id="ovStatus">Idle</b></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Driver status</div>
+        <div class="driver-badge">
+          <span class="driver-badge-ic">◈</span>
+          <div>
+            <div class="driver-badge-name" id="dbName">Auto</div>
+            <div class="driver-badge-sub">Compiled · Native</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost sm" id="goDriverBtn">Change driver →</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title-row">
+        <div class="panel-title">Activity log</div>
+        <button class="link-btn" id="clearLogBtn">Clear</button>
+      </div>
+      <ul class="log" id="activityLog"></ul>
+    </div>
+  </main>
+
+  <!-- ---------------- DRIVER TAB ---------------- -->
+  <main class="view hidden" id="tab-driver">
+    <div class="pagehead">
+      <h1>Driver</h1>
+      <p>Select which KPM backend reads/writes memory</p>
+    </div>
+
+    <div class="panel">
+      <div class="driver-list" id="driverList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Menu open mode</div>
+      <p class="panel-sub">How the in-game menu is opened and closed</p>
+      <div class="seg seg-wide">
+        <button class="seg-opt active" id="segBar" data-menu="bar" type="button">Bottom bar</button>
+        <button class="seg-opt" id="segVol" data-menu="vol" type="button">Volume key</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ---------------- SETTINGS TAB ---------------- -->
+  <main class="view hidden" id="tab-settings">
+    <div class="pagehead">
+      <h1>Settings</h1>
+      <p>Targeting, control mode and account</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title-row">
         <div>
-          <div class="row-label">Auto mode</div>
-          <div class="row-sub">Launch when the target app opens, stop when it closes</div>
+          <div class="panel-title">Auto mode</div>
+          <p class="panel-sub">Launch when the target app opens, stop when it closes</p>
         </div>
         <label class="switch">
           <input type="checkbox" id="autoToggle">
           <span class="slider"></span>
         </label>
       </div>
-      <div class="row row-stack">
-        <div class="row-label">Target app</div>
-        <button class="target-box" id="targetBox" type="button">
-          <span class="target-meta">
-            <span class="tname" id="targetName">Not selected</span>
-            <span class="tpkg" id="targetPkg">Tap to choose an app</span>
-          </span>
-          <span class="chev">›</span>
-        </button>
-      </div>
+      <button class="target-box" id="targetBox" type="button">
+        <span class="target-meta">
+          <span class="tname" id="targetName">Not selected</span>
+          <span class="tpkg" id="targetPkg">Tap to choose an app</span>
+        </span>
+        <span class="chev">›</span>
+      </button>
     </div>
 
-    <div class="card">
-      <div class="row">
-        <div>
-          <div class="row-label">Control mode</div>
-          <div class="row-sub">Local = this screen. Remote = control from the web panel.</div>
-        </div>
-      </div>
+    <div class="panel">
+      <div class="panel-title">Remote control</div>
+      <p class="panel-sub">Control this device from another one, over the web panel</p>
       <div class="seg">
         <button class="seg-opt active" id="segLocal" data-mode="local" type="button">Local</button>
         <button class="seg-opt" id="segRemote" data-mode="remote" type="button">Remote</button>
@@ -123,41 +199,28 @@
       <a class="remote-link hidden" id="remoteLink" href="#" target="_blank" rel="noopener">—</a>
     </div>
 
-    <div class="card">
-      <div class="row">
-        <div>
-          <div class="row-label">Driver</div>
-          <div class="row-sub">Select it, then Start — read/write follows this choice</div>
-        </div>
-        <select id="driverSelect">
-          <option value="auto">Auto</option>
-          <option value="qx1">QX1</option>
-          <option value="gt">GT</option>
-          <option value="rt-dev">RT-DEV</option>
-          <option value="rt-proc">RT-PROC</option>
-          <option value="qx2">QX2</option>
-          <option value="tb-kpm">TB-KPM</option>
-          <option value="ditpro">DitPro</option>
-          <option value="kma">KMA</option>
-          <option value="ldk">LDK</option>
-          <option value="paradise">Paradise</option>
-        </select>
+    <div class="panel">
+      <div class="panel-title-row">
+        <div class="panel-title">Account</div>
+        <span class="pill pill-on" id="acctPill">Active</span>
       </div>
-      <div class="row">
-        <div>
-          <div class="row-label">Open menu with</div>
-          <div class="row-sub">Volume button, or tap the on-screen bar</div>
-        </div>
-        <div class="seg seg-sm">
-          <button class="seg-opt active" id="segBar" data-menu="bar" type="button">Bar</button>
-          <button class="seg-opt" id="segVol" data-menu="vol" type="button">Volume</button>
-        </div>
-      </div>
+      <div class="kv"><span>License status</span><b id="acctStatus">Verified</b></div>
+      <div class="kv"><span>Compiled security</span><b>AES · Ed25519 · Ed448 · ML-DSA-65</b></div>
+      <button class="btn btn-stop sm" id="logoutBtn">Logout &amp; switch key</button>
     </div>
+  </main>
 
-    <footer class="footer">INVISIBLEX · LOADER · ENCRYPTED END-TO-END</footer>
-  </section>
-
+  <nav class="tabbar">
+    <button class="tab-btn active" data-tab="home" type="button">
+      <span class="tab-ic">⌂</span><span>Home</span>
+    </button>
+    <button class="tab-btn" data-tab="driver" type="button">
+      <span class="tab-ic">◈</span><span>Driver</span>
+    </button>
+    <button class="tab-btn" data-tab="settings" type="button">
+      <span class="tab-ic">⚙</span><span>Settings</span>
+    </button>
+  </nav>
 </div>
 
 <!-- App picker bottom sheet -->

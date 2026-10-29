@@ -10,6 +10,20 @@
 const KD_CTL = "/data/adb/modules/invisiblex_loader/bin/kd_ctl";
 const REMOTE_PANEL_URL = "https://adminshop.myvipsite.fun/kd/agent_panel.php";
 
+const DRIVERS = [
+  { id: "auto",     name: "Auto",     sub: "Detect automatically" },
+  { id: "qx1",      name: "QX1",      sub: "Kernel-level" },
+  { id: "gt",       name: "GT",       sub: "Kernel-level" },
+  { id: "rt-dev",   name: "RT-DEV",   sub: "/dev read/write" },
+  { id: "rt-proc",  name: "RT-PROC",  sub: "/proc read/write" },
+  { id: "qx2",      name: "QX2",      sub: "Kernel-level" },
+  { id: "tb-kpm",   name: "TB-KPM",   sub: "KernelPatch module" },
+  { id: "ditpro",   name: "DitPro",   sub: "KernelPatch module" },
+  { id: "kma",      name: "KMA-KPM",  sub: "KernelPatch module" },
+  { id: "ldk",      name: "LDK-KPM",  sub: "KernelPatch module" },
+  { id: "paradise", name: "Paradise", sub: "KernelPatch module" },
+];
+
 /* ---------- tiny WebAudio sound effects (no asset files needed) ---------- */
 let audioCtx = null;
 function actx(){
@@ -35,6 +49,8 @@ const sfx = {
   stop:  () => { beep(500, .10, "triangle", .05); setTimeout(() => beep(300, .16, "triangle", .05), 70); },
 };
 
+const $ = (sel) => document.querySelector(sel);
+
 function toast(msg){
   const t = $("#toast");
   t.textContent = msg;
@@ -43,7 +59,30 @@ function toast(msg){
   t._h = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-const $ = (sel) => document.querySelector(sel);
+/* ---------- activity log (local, rolling, last 12 entries) ---------- */
+function logEvent(text){
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem("kd_log") || "[]"); } catch (e) {}
+  log.unshift({ t: text, at: Date.now() });
+  log = log.slice(0, 12);
+  localStorage.setItem("kd_log", JSON.stringify(log));
+  renderLog();
+}
+function renderLog(){
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem("kd_log") || "[]"); } catch (e) {}
+  const el = $("#activityLog");
+  if (!log.length) { el.innerHTML = '<li class="log-empty">No activity yet.</li>'; return; }
+  el.innerHTML = "";
+  log.forEach((e) => {
+    const li = document.createElement("li");
+    const d = new Date(e.at);
+    const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
+    li.innerHTML = `<span class="ldot"></span><span class="ltxt"></span><span class="ltime">${hh}:${mm}</span>`;
+    li.querySelector(".ltxt").textContent = e.t;
+    el.appendChild(li);
+  });
+}
 
 /* ---------- root-WebUI exec bridge (KernelSU / APatch) ---------- */
 function kdHasBridge(){
@@ -62,20 +101,33 @@ async function kd(args){
   return Object.assign({ errno: r.errno, stderr: r.stderr }, j);
 }
 
+/* ---------- clock ---------- */
+function tickClock(){
+  const d = new Date();
+  let h = d.getHours(); const ampm = h >= 12 ? "PM" : "AM"; h = h % 12; if (h === 0) h = 12;
+  const m = String(d.getMinutes()).padStart(2, "0");
+  $("#clock").textContent = `${h}:${m} ${ampm}`;
+}
+
 /* ---------- state ---------- */
 let pollTimer = null;
 let allApps = [];
+let lastStatus = {};
 
 function showLogin(){
-  $("#view-login").style.display = "flex";
-  $("#view-home").style.display = "none";
+  $("#view-login").classList.remove("hidden");
+  $("#shell").classList.add("hidden");
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
-function showHome(){
-  $("#view-login").style.display = "none";
-  $("#view-home").style.display = "flex";
+function showShell(){
+  $("#view-login").classList.add("hidden");
+  $("#shell").classList.remove("hidden");
+  renderDriverList();
+  renderLog();
   refreshStatus();
   loadApps();
+  tickClock();
+  setInterval(tickClock, 15000);
   pollTimer = setInterval(refreshStatus, 4000);
 }
 
@@ -89,7 +141,11 @@ async function doLogin(){
   sfx.tap();
   const input = $("#keyInput");
   const key = input.value.trim().toUpperCase();
-  if (!key) { setMsg("Enter your license key.", "err"); sfx.err(); input.parentElement.classList.add("shake"); setTimeout(() => input.parentElement.classList.remove("shake"), 400); return; }
+  if (!key) {
+    setMsg("Enter your license key.", "err"); sfx.err();
+    const card = $(".login-card"); card.classList.add("shake"); setTimeout(() => card.classList.remove("shake"), 400);
+    return;
+  }
   if (!kdHasBridge()) {
     setMsg("Open this page from the KernelSU/APatch manager app (not a normal browser).", "err");
     sfx.err();
@@ -103,12 +159,12 @@ async function doLogin(){
   if (r.ok) {
     setMsg(""); sfx.ok();
     localStorage.setItem("kd_logged_in", "1");
-    showHome();
+    logEvent("License verified");
+    showShell();
   } else {
     setMsg(r.error || "Login failed. Please try again.", "err");
     sfx.err();
-    const card = document.querySelector("#view-login .card");
-    card.classList.add("shake"); setTimeout(() => card.classList.remove("shake"), 400);
+    const card = $(".login-card"); card.classList.add("shake"); setTimeout(() => card.classList.remove("shake"), 400);
   }
 }
 
@@ -121,59 +177,69 @@ function logout(){
 
 async function refreshStatus(){
   const r = await kd("status");
-  const pill = $("#connPill");
-  if (!kdHasBridge()) {
-    pill.textContent = "NO BRIDGE"; pill.className = "pill pill-off";
-    return;
-  }
-  pill.textContent = "CONNECTED"; pill.className = "pill pill-on";
+  lastStatus = r;
+  const bridgeOk = kdHasBridge();
+  $("#avatarDot").classList.toggle("on", bridgeOk && !!r.running);
 
-  const dot = $("#statusDot"), title = $("#statusTitle"), sub = $("#statusSub");
-  const toggleBtn = $("#toggleBtn"), autoToggle = $("#autoToggle");
+  // ---- chips ----
+  $("#chipConnDot").className = "chip-ic " + (bridgeOk ? "ok" : "bad");
+  $("#chipConn").textContent = bridgeOk ? "Online" : "No bridge";
+  $("#chipKeyDot").className = "chip-ic " + (r.has_saved_key ? "ok" : "bad");
+  $("#chipKey").textContent = r.has_saved_key ? "Active" : "Invalid";
+  $("#chipRunDot").className = "chip-ic " + (r.running ? "ok" : "bad");
+  const driverMeta = DRIVERS.find((d) => d.id === r.driver);
+  $("#chipDriver").textContent = driverMeta ? driverMeta.name : (r.driver || "Auto");
 
-  autoToggle.checked = !!r.watcher_running;
+  // ---- hero ----
+  const toggleBtn = $("#toggleBtn"), toggleLabel = $("#toggleBtnLabel"), heroSub = $("#heroSub");
   toggleBtn.style.display = r.watcher_running ? "none" : "";
-
   if (r.running) {
-    dot.className = "dot live";
-    title.textContent = "Running";
-    sub.textContent = r.watcher_running ? "Launched automatically — target app is open" : "Overlay is live on this device";
-    toggleBtn.textContent = "Stop";
-    toggleBtn.className = "btn btn-stop pill-btn";
+    toggleLabel.textContent = "Stop";
+    heroSub.textContent = r.watcher_running ? "Running — launched automatically for the target app." : "Overlay is live on this device.";
   } else {
-    dot.className = r.watcher_running ? "dot alert" : "dot";
-    title.textContent = r.watcher_running ? "Standing by" : "Stopped";
-    sub.textContent = r.watcher_running
-      ? "Waiting for the target app to open"
-      : (r.has_saved_key ? "Ready to start" : "No saved license — login again");
-    toggleBtn.textContent = "Start";
-    toggleBtn.className = "btn btn-start pill-btn";
+    toggleLabel.textContent = "Start";
+    heroSub.textContent = r.watcher_running ? "Standing by — waiting for the target app to open." : "Discipline turns plans into reality.";
   }
 
-  if (r.driver) $("#driverSelect").value = r.driver;
+  // ---- overview panel ----
+  const found = allApps.find((a) => a.package === r.target_package);
+  $("#ovTarget").textContent = r.target_package ? (found ? found.name : r.target_package) : "None";
+  $("#ovAuto").textContent = r.watcher_running ? "On" : "Off";
+  $("#ovControl").textContent = (localStorage.getItem("kd_mode") || "local") === "remote" ? "Remote" : "Local";
+  $("#ovStatus").textContent = r.running ? "Operational" : (r.watcher_running ? "Standing by" : "Idle");
+
+  $("#dbName").textContent = driverMeta ? driverMeta.name : (r.driver || "Auto");
+
+  // ---- driver tab list state ----
+  document.querySelectorAll(".driver-opt").forEach((el) => {
+    el.classList.toggle("active", el.dataset.id === (r.driver || "auto"));
+  });
+
+  // ---- settings tab ----
+  $("#autoToggle").checked = !!r.watcher_running;
   if (r.menu_open) {
     $("#segBar").classList.toggle("active", r.menu_open === "bar");
     $("#segVol").classList.toggle("active", r.menu_open === "vol");
   }
-
   const tname = $("#targetName"), tpkg = $("#targetPkg");
   if (r.target_package) {
-    const found = allApps.find((a) => a.package === r.target_package);
     tname.textContent = found ? found.name : r.target_package;
     tpkg.textContent = r.target_package;
   } else {
     tname.textContent = "Not selected";
     tpkg.textContent = "Tap to choose an app";
   }
+  $("#acctStatus").textContent = r.has_saved_key ? "Verified" : "Not verified";
 }
 
 async function toggleRun(){
   sfx.tap();
   const btn = $("#toggleBtn");
-  const running = btn.textContent.trim() === "Stop";
+  const running = $("#toggleBtnLabel").textContent.trim() === "Stop";
   btn.disabled = true;
   await kd(running ? "stop" : "start");
   running ? sfx.stop() : sfx.start();
+  logEvent(running ? "Stopped manually" : "Started manually");
   btn.disabled = false;
   refreshStatus();
 }
@@ -190,19 +256,49 @@ async function toggleAuto(on){
     }
     await kd("watch");
     toast("Auto mode on — waiting for the target app");
+    logEvent("Auto mode enabled");
   } else {
     await kd("watch-stop");
     toast("Auto mode off");
+    logEvent("Auto mode disabled");
   }
   refreshStatus();
 }
 
-async function setDriver(name){ sfx.tap(); await kd("set-driver " + name); }
+async function setDriver(id){
+  sfx.tap();
+  await kd("set-driver " + id);
+  const meta = DRIVERS.find((d) => d.id === id);
+  logEvent("Driver set to " + (meta ? meta.name : id));
+  refreshStatus();
+}
 async function setMenu(mode){
   sfx.tap();
   $("#segBar").classList.toggle("active", mode === "bar");
   $("#segVol").classList.toggle("active", mode === "vol");
   await kd("set-menu " + mode);
+  logEvent("Menu-open mode: " + (mode === "bar" ? "Bottom bar" : "Volume key"));
+}
+
+/* ---------- driver tab list ---------- */
+function renderDriverList(){
+  const el = $("#driverList");
+  el.innerHTML = "";
+  DRIVERS.forEach((d) => {
+    const row = document.createElement("div");
+    row.className = "driver-opt";
+    row.dataset.id = d.id;
+    row.innerHTML = `
+      <div>
+        <div class="driver-opt-name"></div>
+        <div class="driver-opt-id"></div>
+      </div>
+      <span class="driver-opt-check"></span>`;
+    row.querySelector(".driver-opt-name").textContent = d.name;
+    row.querySelector(".driver-opt-id").textContent = d.sub;
+    row.addEventListener("click", () => setDriver(d.id));
+    el.appendChild(row);
+  });
 }
 
 /* ---------- app picker ---------- */
@@ -220,14 +316,12 @@ function renderApps(apps){
     const item = document.createElement("div");
     item.className = "app-item";
     item.innerHTML =
-      `<div class="app-ic">${(a.name || "?").charAt(0).toUpperCase()}</div>
-       <div class="app-meta">
-         <div class="n"></div>
-         <div class="p"></div>
-       </div>`;
+      `<div class="app-ic"></div>
+       <div class="app-meta"><div class="n"></div><div class="p"></div></div>`;
+    item.querySelector(".app-ic").textContent = (a.name || "?").charAt(0).toUpperCase();
     item.querySelector(".n").textContent = a.name;
     item.querySelector(".p").textContent = a.package;
-    item.addEventListener("click", () => pickApp(a.package));
+    item.addEventListener("click", () => pickApp(a.package, a.name));
     frag.appendChild(item);
   });
   list.innerHTML = "";
@@ -245,12 +339,13 @@ function openAppPicker(){
   renderApps(allApps);
 }
 function closeAppPicker(){ sfx.tap(); $("#sheetOverlay").classList.remove("open"); }
-async function pickApp(pkg){
+async function pickApp(pkg, name){
   sfx.ok();
   await kd("set-target " + pkg);
   closeAppPicker();
   refreshStatus();
   toast("Target app set");
+  logEvent("Target app: " + (name || pkg));
 }
 
 /* ---------- local / remote mode ---------- */
@@ -267,6 +362,14 @@ function setMode(mode){
     link.classList.add("hidden");
   }
   localStorage.setItem("kd_mode", mode);
+  refreshStatus();
+}
+
+/* ---------- tabs ---------- */
+function switchTab(tab){
+  sfx.tap();
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "tab-" + tab));
 }
 
 /* ---------- wire up events ---------- */
@@ -280,18 +383,26 @@ function bind(){
   $("#sheetClose").addEventListener("click", closeAppPicker);
   $("#sheetOverlay").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeAppPicker(); });
   $("#appSearch").addEventListener("input", (e) => filterApps(e.target.value));
-  $("#driverSelect").addEventListener("change", (e) => setDriver(e.target.value));
+  $("#clearLogBtn").addEventListener("click", () => { localStorage.setItem("kd_log", "[]"); renderLog(); sfx.tap(); });
+  $("#goDriverBtn").addEventListener("click", () => switchTab("driver"));
   document.querySelectorAll(".seg-opt[data-mode]").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
   document.querySelectorAll(".seg-opt[data-menu]").forEach((b) => b.addEventListener("click", () => setMenu(b.dataset.menu)));
+  document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 }
 
 /* ---------- boot ---------- */
 (function init(){
   bind();
   const savedMode = localStorage.getItem("kd_mode") || "local";
-  setMode(savedMode);
+  $("#segLocal").classList.toggle("active", savedMode === "local");
+  $("#segRemote").classList.toggle("active", savedMode === "remote");
+  if (savedMode === "remote") {
+    $("#remoteLink").classList.remove("hidden");
+    $("#remoteLink").href = REMOTE_PANEL_URL;
+    $("#remoteLink").textContent = REMOTE_PANEL_URL;
+  }
   if (localStorage.getItem("kd_logged_in") === "1") {
-    showHome();
+    showShell();
   } else {
     showLogin();
   }
