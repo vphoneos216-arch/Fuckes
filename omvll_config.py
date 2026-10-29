@@ -24,6 +24,11 @@ AUTH_FUNCS = [
     # entry points
     "perform_auth", "perform_login", "perform_hwid_auth",
     "run_silent", "main",
+    # kd_ctl's own process/watcher logic — same obfuscation bar as the
+    # auth path it shares a binary with.
+    "kd_inx_start", "kd_inx_stop", "kd_inx_running",
+    "kd_watch_loop", "kd_watch_start", "kd_watch_stop_impl",
+    "kd_foreground_package", "kd_list_apps", "kd_app_label",
     # redundant auth-state (the actual value a patch would target)
     "kd_get_kernel_ok", "kd_set_kernel_ok", "kd_auth_cookie_init",
     # integrity / anti-tamper gate + the new self-debug lock + emulator check

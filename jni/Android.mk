@@ -70,7 +70,7 @@ include $(CLEAR_VARS)
 
 OPENGL_DRAW = 1
 
-LOCAL_MODULE := stranger.sh
+LOCAL_MODULE := INX.SH
 
 # =====================================================================
 #  BASE FLAGS
@@ -270,7 +270,7 @@ include $(BUILD_EXECUTABLE)
 # =====================================================================
 #  kd_ctl — compiled control/daemon helper for the WebUI module.
 #  Shares login.h's full hybrid-signed (Ed25519+Ed448+ML-DSA-65) auth
-#  path with stranger.sh (same server check, same key-at-rest file),
+#  path with INX.SH (same server check, same key-at-rest file),
 #  but none of the ImGui/Vulkan/KPM-driver code — it only logs in,
 #  writes config.json, and starts/stops the main binary. Deliberately
 #  a SEPARATE native executable, not a shell script: per the project's
