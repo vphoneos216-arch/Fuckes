@@ -19,7 +19,104 @@ permissions:
   issues: write
 
 jobs:
+  # ===================================================================
+  # Builds a PRIVATE, renamed OpenSSL 3.x libcrypto.a for android-arm64,
+  # used ONLY for Ed448 verification. The project's existing bundled
+  # OpenSSL (jni/include/external/openssl-android-arm64-v8a) is 1.1.0c
+  # from 2016 — Ed25519/Ed448 EVP support didn't exist until 1.1.1
+  # (2018), confirmed absent (no NID_ED448 in its headers). Can't just
+  # swap it for a newer one: curl-android was built against that exact
+  # 1.1.0c ABI, and every symbol (EVP_PKEY_free, BIO_new, …) has the
+  # SAME name in any OpenSSL version, so linking two versions statically
+  # in one binary is a "duplicate symbol" linker error. Fix: rename every
+  # global symbol in the NEW library with a kdoss3_ prefix via objcopy,
+  # and ship a matching #define header so our own code's calls get
+  # rewritten to the prefixed names at OUR compile time too. Zero chance
+  # of collision with the old library either side.
+  # ===================================================================
+  build-ed448-lib:
+    runs-on: ubuntu-24.04
+    outputs:
+      built: ${{ steps.build.outcome }}
+    steps:
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Clone OpenSSL (pinned release)
+        run: |
+          set -e
+          git clone --depth 1 --branch openssl-3.3.2 https://github.com/openssl/openssl /tmp/openssl-src
+
+      - name: Configure + build libcrypto for android-arm64
+        id: build
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          export ANDROID_NDK_ROOT="$NDK"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd /tmp/openssl-src
+          ./Configure android-arm64 -D__ANDROID_API__=28 \
+            no-shared no-tests no-apps no-engine no-deprecated
+          make -j"$(nproc)" build_libs
+          ls -la libcrypto.a
+          file libcrypto.a
+
+      - name: Rename every global symbol (kdoss3_ prefix)
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          OBJCOPY="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+          AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          cd /tmp/openssl-src
+
+          mkdir -p /tmp/objs && cd /tmp/objs
+          "$AR" x /tmp/openssl-src/libcrypto.a
+
+          # Collect every globally-DEFINED symbol across all objects (T/D/B/R/W,
+          # uppercase = defined&external in nm's output), unique, non-empty.
+          "$NM" --defined-only -g *.o 2>/dev/null \
+            | awk '{print $3}' | sort -u | grep -v '^$' > /tmp/syms.txt
+          wc -l /tmp/syms.txt
+
+          # objcopy redefine-syms file: "<old> <new>" per line.
+          awk '{print $1, "kdoss3_" $1}' /tmp/syms.txt > /tmp/redefine.txt
+
+          for o in *.o; do
+            "$OBJCOPY" --redefine-syms=/tmp/redefine.txt "$o"
+          done
+
+          "$AR" rcs /tmp/libcrypto_kdoss3.a *.o
+          "$NM" --defined-only -g /tmp/libcrypto_kdoss3.a | grep -c kdoss3_ || true
+
+          # #define <old> kdoss3_<old>  — included BEFORE any <openssl/*.h>
+          # in our own code, so our calls to e.g. EVP_PKEY_new() resolve to
+          # kdoss3_EVP_PKEY_new() and match the renamed archive.
+          awk '{print "#define " $1 " kdoss3_" $1}' /tmp/syms.txt > /tmp/kd_ossl_rename.h
+
+      - name: Package headers + renamed lib
+        run: |
+          set -e
+          mkdir -p /tmp/ed448lib/include
+          cp -r /tmp/openssl-src/include/openssl /tmp/ed448lib/include/openssl
+          cp /tmp/libcrypto_kdoss3.a /tmp/ed448lib/libcrypto_kdoss3.a
+          cp /tmp/kd_ossl_rename.h /tmp/ed448lib/kd_ossl_rename.h
+          cd /tmp/ed448lib && tar czf /tmp/ed448lib.tar.gz .
+          ls -la /tmp/ed448lib.tar.gz
+
+      - name: Upload (consumed by the main build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ed448lib
+          path: /tmp/ed448lib.tar.gz
+          if-no-files-found: error
+
   build:
+    needs: build-ed448-lib
     # NOT 22.04: this O-MVLL build needs GLIBC_2.38, which 22.04 doesn't
     # have (confirmed via a real failed run: "GLIBC_2.38' not found").
     # 24.04 ships glibc 2.39.
@@ -27,6 +124,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Ed448 lib (from build-ed448-lib job)
+        uses: actions/download-artifact@v4
+        with:
+          name: ed448lib
+          path: /tmp/ed448lib-download
+
+      - name: Unpack Ed448 lib into jni/include/external
+        run: |
+          set -e
+          mkdir -p jni/include/external/openssl3-ed448/include
+          tar xzf /tmp/ed448lib-download/ed448lib.tar.gz -C jni/include/external/openssl3-ed448
+          ls -la jni/include/external/openssl3-ed448
 
       - name: Set up Android NDK ${{ env.NDK_VERSION }}
         id: ndk

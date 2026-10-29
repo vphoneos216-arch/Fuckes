@@ -143,6 +143,16 @@ using json = nlohmann::json;
 #define TRANSPORT_SERVER_PK_HEX \
     oxorany("034e65e9b094bb4ccefc0acd53d691b9e88810c5b1f9fdfeed968fd67f25f72b")
 
+// ED448_PUBLIC_KEY_HEX — second, independent signature over the SAME
+// payload as ED25519_PUBLIC_KEY_HEX (hybrid: both must verify). Raw
+// 57-byte Ed448 public key, 114 hex chars. Generated + roundtrip-verified
+// (CLI openssl genpkey/pkeyutl sign+verify) this session. Verification
+// of this one only compiles in when KD_HAVE_ED448 is defined (CI builds
+// only — see Android.mk / build-ed448-lib). On a phone/AIDE build this
+// key is simply unused and Ed25519 alone remains the trust anchor.
+#define ED448_PUBLIC_KEY_HEX \
+    oxorany("a33362a5038b6d0a133adf3cce75ad63350fa8055cee23741883a4c0765848134e7e1ce735e39e164bc7ac17c0a945faf9a8c2cd7f7a15bf00")
+
 #define HWID_FILE_NAME   oxorany(".kd_hwid")
 #define KEY_FILE_NAME    oxorany(".kd_key")
 #define CA_BUNDLE_NAME   oxorany(".kd_cacert.pem")
@@ -1201,6 +1211,55 @@ static inline bool kd_verify_ed25519(
     ) == 0;
 }
 
+// ==================== HYBRID SIGNATURE: ED448 (second, independent) ====================
+// Only compiled in when the CI build produced the private renamed
+// OpenSSL 3.x lib (KD_HAVE_ED448, set by Android.mk — see its comment).
+// Not available on a phone/AIDE build; Ed25519 above remains the trust
+// anchor there. Where it IS available, perform_auth() requires BOTH
+// kd_verify_ed25519() and kd_verify_ed448() to pass — either failing is
+// a rejection (hybrid AND, not OR: breaking one algorithm isn't enough).
+#ifdef KD_HAVE_ED448
+#include <openssl/evp.h>
+
+static inline bool kd_verify_ed448(
+    const std::string& message,
+    const std::string& signatureB64
+) {
+    std::vector<unsigned char> pub;
+    if (!kd_hex_decode_any(ED448_PUBLIC_KEY_HEX, pub))
+        return false;
+    if (pub.size() != 57)   // raw Ed448 public key length
+        return false;
+
+    bool allZero = true;
+    for (unsigned char c : pub) if (c) { allZero = false; break; }
+    if (allZero) return false;   // placeholder public key never verifies
+
+    const std::string signature = kd_b64_decode(signatureB64);
+    if (signature.size() != 114)   // raw Ed448 signature length
+        return false;
+
+    EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key(
+        EVP_PKEY_ED448, nullptr, pub.data(), pub.size());
+    if (!pkey) return false;
+
+    bool ok = false;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (ctx) {
+        if (EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, pkey) == 1) {
+            ok = (EVP_DigestVerify(
+                ctx,
+                reinterpret_cast<const unsigned char*>(signature.data()), signature.size(),
+                reinterpret_cast<const unsigned char*>(message.data()), message.size()
+            ) == 1);
+        }
+        EVP_MD_CTX_free(ctx);
+    }
+    EVP_PKEY_free(pkey);
+    return ok;
+}
+#endif // KD_HAVE_ED448
+
 // ==================== RELEASE INTEGRITY ====================
 static inline bool kd_sha256_file(
     const char* path,
@@ -1413,6 +1472,27 @@ static inline LoginResult perform_auth(
         result.message = oxorany("Server signature verification failed (check ED25519_PUBLIC_KEY_HEX).");
         return result;
     }
+
+    // Hybrid: a second, independent signature (Ed448) over the SAME
+    // message. Only enforced in a CI build (KD_HAVE_ED448) — a phone
+    // build can't verify it (no Ed448-capable OpenSSL available there)
+    // so it's skipped there, leaving Ed25519 as the sole trust anchor.
+    // Where it IS enforced, the server is expected to ALWAYS send "sig2"
+    // now, so a missing field is treated the same as a bad signature,
+    // not as "field not supported yet".
+#ifdef KD_HAVE_ED448
+    if (!envelope.contains("sig2") || !envelope["sig2"].is_string()) {
+        result.message = oxorany("Missing second (Ed448) signature.");
+        return result;
+    }
+    {
+        const std::string sig2B64 = envelope["sig2"].get<std::string>();
+        if (sig2B64.empty() || !kd_verify_ed448(signedMessage, sig2B64)) {
+            result.message = oxorany("Server signature verification failed (check ED448_PUBLIC_KEY_HEX).");
+            return result;
+        }
+    }
+#endif
 
     const std::string plain = kd_b64_decode(payloadB64);
 

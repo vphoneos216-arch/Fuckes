@@ -29,6 +29,23 @@ LOCAL_SRC_FILES := src/Paradise/libparadise_api.a
 include $(PREBUILT_STATIC_LIBRARY)
 
 # =====================================================================
+#  Ed448 crypto — PRIVATE renamed OpenSSL 3.x (kdoss3_ prefixed symbols),
+#  built only in CI (see .github/workflows/build.yml's build-ed448-lib
+#  job). Only present there, never on a phone/AIDE build, so everything
+#  about it is guarded by `wildcard`: a phone build just compiles without
+#  Ed448 verification (Ed25519 still fully protects it) rather than
+#  failing because the file isn't there.
+# =====================================================================
+KD_ED448_LIB := $(LOCAL_PATH)/include/external/openssl3-ed448/libcrypto_kdoss3.a
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+include $(CLEAR_VARS)
+LOCAL_MODULE    := openssl3_ed448
+LOCAL_SRC_FILES := include/external/openssl3-ed448/libcrypto_kdoss3.a
+LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include
+include $(PREBUILT_STATIC_LIBRARY)
+endif
+
+# =====================================================================
 #  MAIN MODULE
 # =====================================================================
 include $(CLEAR_VARS)
@@ -111,6 +128,16 @@ LOCAL_CPPFLAGS += -Wno-error=deprecated-declarations
 LOCAL_CPPFLAGS += -Wno-error=writable-strings
 LOCAL_CPPFLAGS += -Wall
 
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
+LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
+# The rename header must be force-included BEFORE any <openssl/...> header
+# anywhere in the translation unit, so every EVP_* call gets rewritten to
+# kdoss3_EVP_* and matches the renamed archive. -include does that for
+# every source file, with zero per-file #include changes needed.
+LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/include/external/openssl3-ed448/kd_ossl_rename.h
+endif
+
 # =====================================================================
 #  INCLUDES
 # =====================================================================
@@ -167,8 +194,12 @@ LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/l
 LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libssl.a
 LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libcrypto.a
 
-# KPM 8 (KMA) + KPM 9 (LDK) + Paradise + sodium
+# KPM 8 (KMA) + KPM 9 (LDK) + Paradise + sodium (+ Ed448's private OpenSSL,
+# only when build-ed448-lib produced it — see the wildcard guard above)
 LOCAL_STATIC_LIBRARIES := kma_kpm_driver ldg_kpm_driver paradise_driver sodium
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
 
 # =====================================================================
 #  LINKER FLAGS
