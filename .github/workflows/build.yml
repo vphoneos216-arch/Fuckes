@@ -33,14 +33,17 @@ jobs:
           set -e
           echo "=== fetching build index ==="
           curl -fsSL "https://open-obfuscator.build38.io/ci/index.html" -o /tmp/index.html
-          # pick the newest *_linux_*.tar.gz link on the page (sorted by the
-          # timestamp embedded in the filename itself — lexicographic sort
-          # works because the timestamp is ISO-8601).
-          URL=$(grep -oE 'https://open-obfuscator\.build38\.io/ci/omvll_v[0-9-]+_linux_[0-9T:-]+\.tar\.gz' /tmp/index.html \
+          echo "=== raw index.html ==="
+          cat /tmp/index.html
+          echo "======================="
+          # Pull every href/url pointing at a linux .tar.gz, whether the
+          # timestamp's colons are literal or percent-encoded, then decode
+          # %3A -> : and take the lexicographically-last (= newest) one.
+          URL=$(grep -oE '(https://open-obfuscator\.build38\.io)?/?ci/[A-Za-z0-9._%-]*_linux_[A-Za-z0-9._%-]*\.tar\.gz' /tmp/index.html \
+                | sed -e 's/%3A/:/gI' -e 's#^/*ci/#https://open-obfuscator.build38.io/ci/#' \
                 | sort | tail -1)
           if [ -z "$URL" ]; then
-            echo "::error::No linux O-MVLL build found on the index page. Dumping page for inspection:"
-            cat /tmp/index.html
+            echo "::error::No linux O-MVLL build link found on the index page (see raw HTML dumped above)."
             exit 1
           fi
           echo "Using: $URL"
