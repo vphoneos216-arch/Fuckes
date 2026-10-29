@@ -46,6 +46,24 @@ include $(PREBUILT_STATIC_LIBRARY)
 endif
 
 # =====================================================================
+#  ML-DSA-65 (post-quantum, FIPS 204) — liboqs, built only in CI (see
+#  .github/workflows/build.yml's build-mldsa-android-lib job). liboqs'
+#  symbols (OQS_*) don't collide with anything else in the project, so
+#  unlike Ed448 no symbol-renaming is needed — just link it directly.
+#  Same wildcard-guard pattern as Ed448: a phone/AIDE build without this
+#  artifact just compiles without ML-DSA-65 (Ed25519+Ed448 still fully
+#  protect it) instead of failing.
+# =====================================================================
+KD_MLDSA_LIB := $(LOCAL_PATH)/include/external/liboqs-android/lib/liboqs.a
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+include $(CLEAR_VARS)
+LOCAL_MODULE    := oqs_mldsa
+LOCAL_SRC_FILES := include/external/liboqs-android/lib/liboqs.a
+LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/include/external/liboqs-android/include
+include $(PREBUILT_STATIC_LIBRARY)
+endif
+
+# =====================================================================
 #  MAIN MODULE
 # =====================================================================
 include $(CLEAR_VARS)
@@ -153,6 +171,11 @@ LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
 LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/include/external/openssl3-ed448/kd_ossl_rename.h
 endif
 
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_MLDSA=1
+LOCAL_CPPFLAGS += -DKD_HAVE_MLDSA=1
+endif
+
 # =====================================================================
 #  INCLUDES
 # =====================================================================
@@ -225,6 +248,9 @@ LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI
 LOCAL_STATIC_LIBRARIES := kma_kpm_driver ldg_kpm_driver paradise_driver sodium
 ifneq ($(wildcard $(KD_ED448_LIB)),)
 LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_STATIC_LIBRARIES += oqs_mldsa
 endif
 
 # =====================================================================

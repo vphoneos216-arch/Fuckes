@@ -32,7 +32,7 @@ AUTH_FUNCS = [
     "ix_fn_hooked", "ix_self_debug_lock", "ix_emulator_detected",
     "ix_ic_url_sane", "ix_ic_pub_sane",
     # crypto / transport (the wire format a cracker reverses to forge requests)
-    "kd_open_secret", "kd_verify_ed25519", "kd_verify_ed448", "kd_open_response",
+    "kd_open_secret", "kd_verify_ed25519", "kd_verify_ed448", "kd_verify_mldsa65", "kd_open_response",
     "kd_seal_request", "kd_auth_post", "kd_derive_subkeys",
     "kd_client_integrity_matches", "kd_wipe_server_secret",
     "kd_hex_decode_any", "kd_hex_decode",

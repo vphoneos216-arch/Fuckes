@@ -115,8 +115,148 @@ jobs:
           path: /tmp/ed448lib.tar.gz
           if-no-files-found: error
 
+  # ===================================================================
+  # ML-DSA-65 (FIPS 204, post-quantum) — THIRD, independent hybrid
+  # signature leg. Cross-compiles liboqs for android-arm64 (client-side
+  # verification only — the client never holds or needs a private key).
+  # liboqs' OQS_* symbols don't collide with anything else in the
+  # project, so no symbol-renaming is needed here (unlike Ed448).
+  # OQS_USE_OPENSSL=OFF keeps it fully self-contained (liboqs' own
+  # portable implementations), avoiding any entanglement with the
+  # project's existing bundled OpenSSL 1.1.0c. OQS_MINIMAL_BUILD trims
+  # the build to just the one algorithm this project uses, cutting
+  # build time drastically (liboqs enables dozens of KEM+SIG algorithms
+  # by default).
+  # ===================================================================
+  build-mldsa-android-lib:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Clone liboqs (pinned release)
+        run: |
+          set -e
+          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs /tmp/liboqs-src
+
+      - name: Configure + build for android-arm64
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          cmake -S /tmp/liboqs-src -B /tmp/liboqs-build-android \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DOQS_USE_OPENSSL=OFF \
+            -DOQS_BUILD_ONLY_LIB=ON \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" \
+            -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install-android
+          cmake --build /tmp/liboqs-build-android -j"$(nproc)"
+          cmake --install /tmp/liboqs-build-android
+          ls -la /tmp/liboqs-install-android/lib
+          file /tmp/liboqs-install-android/lib/liboqs.a
+
+      - name: Package for the main build job
+        run: |
+          set -e
+          mkdir -p /tmp/liboqs-android-pkg
+          cp -r /tmp/liboqs-install-android/lib /tmp/liboqs-android-pkg/lib
+          cp -r /tmp/liboqs-install-android/include /tmp/liboqs-android-pkg/include
+          cd /tmp/liboqs-android-pkg && tar czf /tmp/liboqs-android.tar.gz .
+          ls -la /tmp/liboqs-android.tar.gz
+
+      - name: Upload (consumed by the main build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: liboqs-android
+          path: /tmp/liboqs-android.tar.gz
+          if-no-files-found: error
+
+  # ===================================================================
+  # Server-side ML-DSA-65 CLI tool — a fully static x86_64-linux binary
+  # (tools/kd_mldsa_tool.c) that the cPanel server calls via shell_exec
+  # (same pattern keydock_connect.php already uses for the Ed448 CLI
+  # openssl calls) to sign each response's "sig3". Static linking means
+  # it doesn't care what glibc version the shared host actually has
+  # (confirmed host: glibc 2.34) — everything it needs is baked in.
+  # Also used ONCE, outside this workflow, to generate the deployment
+  # keypair (run directly in whatever x86_64 Linux environment drives
+  # this repo, since that tool binary runs there too).
+  # ===================================================================
+  build-mldsa-server-tool:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone liboqs (pinned release)
+        run: |
+          set -e
+          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs /tmp/liboqs-src-x64
+
+      - name: Configure + build liboqs for x86_64-linux (static)
+        run: |
+          set -e
+          cmake -S /tmp/liboqs-src-x64 -B /tmp/liboqs-build-x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DOQS_USE_OPENSSL=OFF \
+            -DOQS_BUILD_ONLY_LIB=ON \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" \
+            -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install-x64
+          cmake --build /tmp/liboqs-build-x64 -j"$(nproc)"
+          cmake --install /tmp/liboqs-build-x64
+
+      - name: Build kd_mldsa_tool (fully static)
+        run: |
+          set -e
+          gcc -O2 -static -o /tmp/kd_mldsa_tool tools/kd_mldsa_tool.c \
+            -I/tmp/liboqs-install-x64/include \
+            /tmp/liboqs-install-x64/lib/liboqs.a
+          file /tmp/kd_mldsa_tool
+          ldd /tmp/kd_mldsa_tool || true   # expect "not a dynamic executable"
+          /tmp/kd_mldsa_tool keygen /tmp/selftest_priv.bin /tmp/selftest_pub.bin
+          echo "selftest message" > /tmp/selftest_msg.bin
+          /tmp/kd_mldsa_tool sign /tmp/selftest_priv.bin /tmp/selftest_msg.bin /tmp/selftest_sig.bin
+          ls -la /tmp/selftest_sig.bin
+          echo "self-test OK: keygen + sign both ran successfully"
+
+      - name: Upload (fetched directly, not consumed by the build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kd-mldsa-tool
+          path: /tmp/kd_mldsa_tool
+          if-no-files-found: error
+
+      - name: Also commit the tool to its own dist branch (artifact storage isn't reachable from the driving environment)
+        # A SEPARATE branch from dist-builds (which the main `build` job
+        # force-pushes stranger.sh to): both jobs create a throwaway local
+        # branch from scratch and force-push it, so sharing one branch
+        # name would have the later push silently wipe out the earlier
+        # job's file. dist-tools is this job's own namespace.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-tool-checkout
+          git -C /tmp/dist-tool-checkout init -q
+          git -C /tmp/dist-tool-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-tool-checkout checkout -q -B dist-tools
+          cp /tmp/kd_mldsa_tool /tmp/dist-tool-checkout/kd_mldsa_tool
+          git -C /tmp/dist-tool-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-tool-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-tool-checkout add kd_mldsa_tool
+          git -C /tmp/dist-tool-checkout commit -q -m "kd_mldsa_tool from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-tool-checkout push -q -f origin dist-tools
+
   build:
-    needs: build-ed448-lib
+    needs: [build-ed448-lib, build-mldsa-android-lib]
     # NOT 22.04: this O-MVLL build needs GLIBC_2.38, which 22.04 doesn't
     # have (confirmed via a real failed run: "GLIBC_2.38' not found").
     # 24.04 ships glibc 2.39.
@@ -137,6 +277,19 @@ jobs:
           mkdir -p jni/include/external/openssl3-ed448/include
           tar xzf /tmp/ed448lib-download/ed448lib.tar.gz -C jni/include/external/openssl3-ed448
           ls -la jni/include/external/openssl3-ed448
+
+      - name: Download liboqs (ML-DSA-65) lib (from build-mldsa-android-lib job)
+        uses: actions/download-artifact@v4
+        with:
+          name: liboqs-android
+          path: /tmp/liboqs-android-download
+
+      - name: Unpack liboqs lib into jni/include/external
+        run: |
+          set -e
+          mkdir -p jni/include/external/liboqs-android
+          tar xzf /tmp/liboqs-android-download/liboqs-android.tar.gz -C jni/include/external/liboqs-android
+          ls -la jni/include/external/liboqs-android
 
       - name: Set up Android NDK ${{ env.NDK_VERSION }}
         id: ndk
