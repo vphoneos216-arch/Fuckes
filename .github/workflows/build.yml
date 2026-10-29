@@ -1,0 +1,78 @@
+name: Build Obfuscated (O-MVLL)
+
+# Run manually from the Actions tab, or on every push to main/master.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+env:
+  NDK_VERSION: r26d                 # O-MVLL v1.8.0 targets NDK r26d
+  OMVLL_VERSION: v1.8.0
+  OMVLL_ASSET: omvll_ndk_r26d.so    # if this 404s, the step prints the real names
+  PYVER: "3.10.7"                   # Python stdlib O-MVLL needs at runtime
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Download O-MVLL plugin
+        run: |
+          set -e
+          URL="https://github.com/open-obfuscator/o-mvll/releases/download/${OMVLL_VERSION}/${OMVLL_ASSET}"
+          echo "Trying: $URL"
+          if curl -fL -o "$HOME/${OMVLL_ASSET}" "$URL"; then
+            ls -la "$HOME/${OMVLL_ASSET}"
+          else
+            echo "::warning::Pinned asset not found. Available .so assets for ${OMVLL_VERSION}:"
+            curl -s "https://api.github.com/repos/open-obfuscator/o-mvll/releases/tags/${OMVLL_VERSION}" \
+              | grep -o '"name": *"[^"]*\.so"' || true
+            echo "::error::Update OMVLL_ASSET (top of this workflow) to one of the names printed above, then re-run."
+            exit 1
+          fi
+
+      - name: Fetch Python stdlib for O-MVLL
+        run: |
+          set -e
+          curl -fLO "https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz"
+          tar xzf "Python-${PYVER}.tgz"
+          echo "OMVLL_PYTHONPATH=${GITHUB_WORKSPACE}/Python-${PYVER}/Lib" >> "$GITHUB_ENV"
+
+      - name: Build (ndk-build + O-MVLL)
+        env:
+          OMVLL_CONFIG: ${{ github.workspace }}/omvll_config.py
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          # O-MVLL (a Clang plugin) needs the NDK's libc++ at load time.
+          export LD_LIBRARY_PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib:$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH:-}"
+          echo "OMVLL_CONFIG=$OMVLL_CONFIG"
+          echo "OMVLL_PYTHONPATH=$OMVLL_PYTHONPATH"
+          "$NDK/ndk-build" \
+            NDK_PROJECT_PATH=. \
+            NDK_APPLICATION_MK=jni/Application.mk \
+            OMVLL_PLUGIN="$HOME/${OMVLL_ASSET}" \
+            -j"$(nproc)"
+
+      - name: Show result
+        run: |
+          echo "=== built binary ==="
+          ls -la libs/arm64-v8a/ || true
+          file libs/arm64-v8a/stranger.sh || true
+
+      - name: Upload obfuscated binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: stranger-obfuscated-arm64
+          path: libs/arm64-v8a/stranger.sh
+          if-no-files-found: error

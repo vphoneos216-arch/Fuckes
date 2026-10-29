@@ -93,6 +93,13 @@ LOCAL_CPPFLAGS += -D_FORTIFY_SOURCE=2
 LOCAL_CFLAGS   += -ffunction-sections -fdata-sections
 LOCAL_CPPFLAGS += -ffunction-sections -fdata-sections
 
+# --- extra safe hardening ---
+# -fomit-frame-pointer: drops the frame pointer -> harder stack-walking /
+# function-boundary reconstruction in Ghidra. Safe with C++ exceptions
+# (do NOT add -fno-unwind-tables, that would break try/catch).
+LOCAL_CFLAGS   += -fomit-frame-pointer
+LOCAL_CPPFLAGS += -fomit-frame-pointer
+
 LOCAL_CPPFLAGS += -fexceptions
 LOCAL_CPPFLAGS += -w
 # Tolerate warning-group names this clang may not know, instead of
@@ -172,5 +179,7 @@ LOCAL_LDFLAGS += -s
 LOCAL_LDFLAGS += -Wl,--gc-sections
 LOCAL_LDFLAGS += -pie
 LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+# Hide static libs' (sodium/curl/openssl/KPM) symbols from the dynsym.
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
 
 include $(BUILD_EXECUTABLE)

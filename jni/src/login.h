@@ -104,6 +104,7 @@
 #include "ix_hwid.h"
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
+#include "ix_antidebug.h"   // runtime anti-debug / anti-Frida / anti-hook
 
 using json = nlohmann::json;
 
@@ -1078,6 +1079,17 @@ static inline void ix_integrity_gate() {
 
     if (sodium_init() < 0)
         ix_ic_die();
+
+#ifndef IX_ANTITAMPER_OFF
+    // [ANTI-TAMPER] Detect active instrumentation: a native debugger
+    // (ptrace/TracerPid), Frida (maps/threads/default port), or an
+    // Xposed/Substrate framework. The watchdog runs this gate every ~1.5s,
+    // so a tool attached at ANY point trips it and fail-closes via the
+    // existing kill path. Does NOT flag root (rooted users unaffected).
+    // Build with -DIX_ANTITAMPER_OFF to disable if it ever false-positives.
+    if (ix_tamper_detected())
+        ix_ic_die();
+#endif
 
     // Re-verify the redundant auth-state encoding every time the gate runs.
     // If the process is currently claiming "authorized" but the three
