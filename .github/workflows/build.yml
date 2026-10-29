@@ -128,9 +128,37 @@ jobs:
         if: steps.ndkbuild.outcome == 'failure'
         run: exit 1
 
-      - name: Show result
+      - name: Show result (pre-UPX)
         run: |
           echo "=== built binary ==="
+          ls -la libs/arm64-v8a/ || true
+          file libs/arm64-v8a/stranger.sh || true
+
+      - name: Pack with UPX (LZMA, best)
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq upx-ucl
+          upx --version
+          cp libs/arm64-v8a/stranger.sh /tmp/stranger_prepack.sh
+          ORIG_SIZE=$(stat -c%s /tmp/stranger_prepack.sh)
+          # --best + --lzma = smallest output. Android's bionic linker (not
+          # glibc) runs this, which is a narrower target than desktop Linux —
+          # if UPX's self-extracting stub doesn't run under bionic the packed
+          # binary would be dead weight, so verify the result is still a
+          # sane PIE ELF before keeping it.
+          if upx --best --lzma -o /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh; then
+            file /tmp/stranger_packed.sh
+            NEW_SIZE=$(stat -c%s /tmp/stranger_packed.sh)
+            echo "Original: $ORIG_SIZE bytes -> Packed: $NEW_SIZE bytes"
+            cp /tmp/stranger_packed.sh libs/arm64-v8a/stranger.sh
+          else
+            echo "::warning::UPX packing failed (exit $?) — shipping the unpacked (but still O-MVLL-obfuscated) binary instead."
+          fi
+
+      - name: Show result (final)
+        run: |
+          echo "=== final binary ==="
           ls -la libs/arm64-v8a/ || true
           file libs/arm64-v8a/stranger.sh || true
 
