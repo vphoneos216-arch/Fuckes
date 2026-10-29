@@ -14,6 +14,10 @@ env:
   # only carries v1.10.0+ builds). So this now tracks current O-MVLL.
   NDK_VERSION: r29
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -82,10 +86,12 @@ jobs:
           echo "OMVLL_PYTHONPATH=$PYDIR/Lib" >> "$GITHUB_ENV"
 
       - name: Build (ndk-build + O-MVLL)
+        id: ndkbuild
+        continue-on-error: true
         env:
           OMVLL_CONFIG: ${{ github.workspace }}/omvll_config.py
         run: |
-          set -e
+          set -o pipefail
           NDK="${{ steps.ndk.outputs.ndk-path }}"
           # O-MVLL (a Clang plugin) needs the NDK's libc++ at load time.
           export LD_LIBRARY_PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib:$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH:-}"
@@ -96,7 +102,28 @@ jobs:
             NDK_PROJECT_PATH=. \
             NDK_APPLICATION_MK=jni/Application.mk \
             OMVLL_PLUGIN="$OMVLL_SO" \
-            -j"$(nproc)"
+            V=1 \
+            -j"$(nproc)" 2>&1 | tee /tmp/build.log
+
+      - name: Report build failure as an issue (log isn't otherwise reachable)
+        if: steps.ndkbuild.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Build failed on run ${{ github.run_id }} (commit ${{ github.sha }})."
+            echo
+            echo '```'
+            tail -c 55000 /tmp/build.log
+            echo '```'
+          } > /tmp/build_tail.md
+          gh issue create --repo "${{ github.repository }}" \
+            --title "CI build failure log: run ${{ github.run_id }}" \
+            --body-file /tmp/build_tail.md
+
+      - name: Fail job if the build step failed
+        if: steps.ndkbuild.outcome == 'failure'
+        run: exit 1
 
       - name: Show result
         run: |
