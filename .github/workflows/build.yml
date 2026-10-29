@@ -26,20 +26,27 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
-      - name: Download O-MVLL plugin
+      - name: Download O-MVLL plugin (auto-discover asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          URL="https://github.com/open-obfuscator/o-mvll/releases/download/${OMVLL_VERSION}/${OMVLL_ASSET}"
-          echo "Trying: $URL"
-          if curl -fL -o "$HOME/${OMVLL_ASSET}" "$URL"; then
-            ls -la "$HOME/${OMVLL_ASSET}"
-          else
-            echo "::warning::Pinned asset not found. Available .so assets for ${OMVLL_VERSION}:"
-            curl -s "https://api.github.com/repos/open-obfuscator/o-mvll/releases/tags/${OMVLL_VERSION}" \
-              | grep -o '"name": *"[^"]*\.so"' || true
-            echo "::error::Update OMVLL_ASSET (top of this workflow) to one of the names printed above, then re-run."
+          API="https://api.github.com/repos/open-obfuscator/o-mvll/releases/tags/${OMVLL_VERSION}"
+          JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API")
+          echo "=== .so assets available in ${OMVLL_VERSION} ==="
+          echo "$JSON" | grep -o '"name": *"[^"]*\.so"' | sed 's/"name": *//' || true
+          echo "==============================================="
+          # Prefer an asset whose name matches the NDK version; else first .so.
+          URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | grep -i "${NDK_VERSION}" | head -1)
+          [ -z "$URL" ] && URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | grep -i 'ndk' | head -1)
+          [ -z "$URL" ] && URL=$(echo "$JSON" | grep -o '"browser_download_url": *"[^"]*\.so"' | cut -d'"' -f4 | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error::No .so asset found in ${OMVLL_VERSION}. See list above."
             exit 1
           fi
+          echo "Downloading: $URL"
+          curl -fL -o "$HOME/omvll.so" "$URL"
+          ls -la "$HOME/omvll.so"
 
       - name: Fetch Python stdlib for O-MVLL
         run: |
@@ -61,7 +68,7 @@ jobs:
           "$NDK/ndk-build" \
             NDK_PROJECT_PATH=. \
             NDK_APPLICATION_MK=jni/Application.mk \
-            OMVLL_PLUGIN="$HOME/${OMVLL_ASSET}" \
+            OMVLL_PLUGIN="$HOME/omvll.so" \
             -j"$(nproc)"
 
       - name: Show result
