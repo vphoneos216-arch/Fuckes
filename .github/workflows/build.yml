@@ -15,7 +15,7 @@ env:
   NDK_VERSION: r29
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
