@@ -266,3 +266,67 @@ LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
 LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
 
 include $(BUILD_EXECUTABLE)
+
+# =====================================================================
+#  kd_ctl — compiled control/daemon helper for the WebUI module.
+#  Shares login.h's full hybrid-signed (Ed25519+Ed448+ML-DSA-65) auth
+#  path with stranger.sh (same server check, same key-at-rest file),
+#  but none of the ImGui/Vulkan/KPM-driver code — it only logs in,
+#  writes config.json, and starts/stops the main binary. Deliberately
+#  a SEPARATE native executable, not a shell script: per the project's
+#  own security bar, anything that decides whether the main binary is
+#  allowed to run must be compiled and stripped, not readable text.
+# =====================================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := kd_ctl
+
+LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections -fno-rtti
+
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
+LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include $(LOCAL_C_INCLUDES)
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_MLDSA=1
+LOCAL_CPPFLAGS += -DKD_HAVE_MLDSA=1
+endif
+LOCAL_CFLAGS   += -DIX_ANTITAMPER_OFF
+LOCAL_CPPFLAGS += -DIX_ANTITAMPER_OFF
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/libsodium-android-arm64-v8a/include
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/liboqs-android/include
+endif
+
+LOCAL_SRC_FILES := \
+    src/kd_ctl.cpp \
+    src/Scarecrow/oxorany.cpp
+
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/lib/libcurl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libssl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libcrypto.a
+
+LOCAL_STATIC_LIBRARIES := sodium
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_STATIC_LIBRARIES += oqs_mldsa
+endif
+
+LOCAL_LDLIBS += -llog -lz
+
+LOCAL_LDFLAGS += -s
+LOCAL_LDFLAGS += -Wl,--gc-sections
+LOCAL_LDFLAGS += -pie
+LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
+
+include $(BUILD_EXECUTABLE)

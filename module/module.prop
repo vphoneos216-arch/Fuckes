@@ -1,0 +1,6 @@
+id=invisiblex_loader
+name=InvisibleX Loader
+version=v1.0
+versionCode=1
+author=KeyDock
+description=WebUI control panel for InvisibleX — login, start/stop, driver select

@@ -431,6 +431,7 @@ jobs:
           echo "=== final binary ==="
           ls -la libs/arm64-v8a/ || true
           file libs/arm64-v8a/stranger.sh || true
+          file libs/arm64-v8a/kd_ctl || true
 
       - name: Upload obfuscated binary (Actions artifact)
         uses: actions/upload-artifact@v4
@@ -438,6 +439,54 @@ jobs:
           name: stranger-obfuscated-arm64
           path: libs/arm64-v8a/stranger.sh
           if-no-files-found: error
+
+      # ===================================================================
+      # Package the WebUI module (module.prop + service.sh + config.json +
+      # webroot/index.html + both compiled binaries) into a flashable zip.
+      # Nothing here is a readable control script with real logic in it —
+      # service.sh only fixes permissions/writes a default config; every
+      # actual decision (login check, start/stop, driver write) happens
+      # inside kd_ctl, which is a compiled, stripped native binary sharing
+      # the same hybrid-signed auth path as stranger.sh.
+      # ===================================================================
+      - name: Package invisiblex_loader module.zip
+        run: |
+          set -e
+          rm -rf /tmp/kd-module-pkg
+          mkdir -p /tmp/kd-module-pkg/bin
+          cp module/module.prop  /tmp/kd-module-pkg/module.prop
+          cp module/service.sh   /tmp/kd-module-pkg/service.sh
+          cp -r module/webroot   /tmp/kd-module-pkg/webroot
+          mkdir -p /tmp/kd-module-pkg/config
+          cp module/config/config.json /tmp/kd-module-pkg/config/config.json
+          cp libs/arm64-v8a/stranger.sh /tmp/kd-module-pkg/bin/stranger.sh
+          cp libs/arm64-v8a/kd_ctl      /tmp/kd-module-pkg/bin/kd_ctl
+          chmod 755 /tmp/kd-module-pkg/service.sh /tmp/kd-module-pkg/bin/stranger.sh /tmp/kd-module-pkg/bin/kd_ctl
+          cd /tmp/kd-module-pkg && zip -r -q /tmp/invisiblex_loader.zip . && cd -
+          ls -la /tmp/invisiblex_loader.zip
+
+      - name: Upload module.zip (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: invisiblex_loader-module
+          path: /tmp/invisiblex_loader.zip
+          if-no-files-found: error
+
+      - name: Also commit module.zip to its own dist branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-module-checkout
+          git -C /tmp/dist-module-checkout init -q
+          git -C /tmp/dist-module-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-module-checkout checkout -q -B dist-module
+          cp /tmp/invisiblex_loader.zip /tmp/dist-module-checkout/invisiblex_loader.zip
+          git -C /tmp/dist-module-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-module-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-module-checkout add invisiblex_loader.zip
+          git -C /tmp/dist-module-checkout commit -q -m "module.zip from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-module-checkout push -q -f origin dist-module
 
       - name: Also commit the binary to a dist branch
         # Actions artifacts live on Azure blob storage, which isn't reachable

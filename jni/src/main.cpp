@@ -36,8 +36,10 @@
 static std::string g_MenuOpenMode = "bar";
 
 static void LoadMenuOpenMode() {
-    /* Menu open ONLY via bottom bar (not volume) */
-    g_MenuOpenMode = "bar";
+    // Reads the WebUI module's config.json ("menu_open": "vol"|"bar"),
+    // same file/key the driver choice already comes from — see
+    // ix_driver_init.h's ix_get_menu_open_mode(). Defaults to "bar".
+    g_MenuOpenMode = ix_get_menu_open_mode();
 }
 
 // ── Source UI Assets ─────────────────────────────────────────

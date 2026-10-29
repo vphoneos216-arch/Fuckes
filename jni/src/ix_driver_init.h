@@ -74,6 +74,34 @@ static inline int ix_get_driver_choice() {
     return ix_driver_number(ix_read_driver_raw());
 }
 
+// ── MENU OPEN MODE — same config.json, key "menu_open" ──────────
+// Mirrors ix_get_driver_choice()'s lookup precedence: env var first
+// (IX_MENU_OPEN), then the WebUI module's config.json, defaulting to
+// "bar" (tap-to-open on-screen bar) when neither is set.
+static inline std::string ix_get_menu_open_mode() {
+    if (const char* e = getenv("IX_MENU_OPEN")) {
+        std::string v(e);
+        if (v == "vol" || v == "bar") return v;
+    }
+
+    const char* p = getenv("IX_CONFIG");
+    std::ifstream f(p && *p ? p : IX_CONFIG_PATH);
+    if (!f.good()) return "bar";
+
+    std::string all((std::istreambuf_iterator<char>(f)),
+                    std::istreambuf_iterator<char>());
+    size_t k = all.find("\"menu_open\"");
+    if (k == std::string::npos) return "bar";
+    size_t c = all.find(':', k);
+    if (c == std::string::npos) return "bar";
+    size_t q1 = all.find('"', c);
+    if (q1 == std::string::npos) return "bar";
+    size_t q2 = all.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "bar";
+    std::string v = all.substr(q1 + 1, q2 - q1 - 1);
+    return (v == "vol" || v == "bar") ? v : "bar";
+}
+
 static inline std::string ix_get_selected_driver() {
     int n = ix_get_driver_choice();
     switch (n) {

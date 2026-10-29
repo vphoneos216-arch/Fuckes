@@ -23,6 +23,7 @@ from functools import cache
 AUTH_FUNCS = [
     # entry points
     "perform_auth", "perform_login", "perform_hwid_auth",
+    "run_silent", "main",
     # redundant auth-state (the actual value a patch would target)
     "kd_get_kernel_ok", "kd_set_kernel_ok", "kd_auth_cookie_init",
     # integrity / anti-tamper gate + the new self-debug lock + emulator check
