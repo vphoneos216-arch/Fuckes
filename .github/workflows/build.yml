@@ -28,32 +28,36 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
-      - name: Fetch O-MVLL build index
-        run: |
-          set -e
-          curl -fsSL "https://open-obfuscator.build38.io/ci/index.html" -o /tmp/index.html
-          cp /tmp/index.html "${{ github.workspace }}/omvll_index_debug.html"
-          wc -l /tmp/index.html
-
-      - name: Upload index.html for debugging
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: omvll-index-debug
-          path: omvll_index_debug.html
-          if-no-files-found: warn
-
       - name: Download O-MVLL plugin (latest linux build)
         run: |
           set -e
-          # Pull every href/url pointing at a linux .tar.gz, whether the
-          # timestamp's colons are literal or percent-encoded, then decode
-          # %3A -> : and take the lexicographically-last (= newest) one.
-          URL=$(grep -oE '(https://open-obfuscator\.build38\.io)?/?ci/[A-Za-z0-9._%-]*_linux_[A-Za-z0-9._%-]*\.tar\.gz' /tmp/index.html \
-                | sed -e 's/%3A/:/gI' -e 's#^/*ci/#https://open-obfuscator.build38.io/ci/#' \
-                | sort | tail -1)
+          # open-obfuscator's GitHub Releases no longer carry binary assets
+          # for any version (confirmed: tags exist, "Assets" is empty) — the
+          # only place O-MVLL actually ships linux builds is this public
+          # index. Its index.html is apparently awkward to scrape reliably
+          # from a plain curl (tried, got zero matches twice), so instead we
+          # try a short list of known-good direct links, newest first, and
+          # fall through until one downloads. Confirmed present as of
+          # 2026-10-29 via direct fetch.
+          CANDIDATES=(
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T09:09:16.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-06T09:20:43.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-01T09:30:05.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:51:26.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:41:51.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T10:01:31.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-10-0_linux_2026-09-29T09:26:56.tar.gz"
+          )
+          URL=""
+          for c in "${CANDIDATES[@]}"; do
+            echo "Trying: $c"
+            if curl -fL --head -s -o /dev/null "$c"; then
+              URL="$c"
+              break
+            fi
+          done
           if [ -z "$URL" ]; then
-            echo "::error::No linux O-MVLL build link found on the index page. Check the omvll-index-debug artifact from this run."
+            echo "::error::None of the known O-MVLL build URLs are reachable. The build38.io index may have rotated out all of them — open https://open-obfuscator.build38.io/ci/index.html in a browser, copy the newest *_linux_*.tar.gz link, and add it to CANDIDATES at the top of this workflow step."
             exit 1
           fi
           echo "Using: $URL"
