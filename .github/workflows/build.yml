@@ -28,14 +28,24 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
+      - name: Fetch O-MVLL build index
+        run: |
+          set -e
+          curl -fsSL "https://open-obfuscator.build38.io/ci/index.html" -o /tmp/index.html
+          cp /tmp/index.html "${{ github.workspace }}/omvll_index_debug.html"
+          wc -l /tmp/index.html
+
+      - name: Upload index.html for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omvll-index-debug
+          path: omvll_index_debug.html
+          if-no-files-found: warn
+
       - name: Download O-MVLL plugin (latest linux build)
         run: |
           set -e
-          echo "=== fetching build index ==="
-          curl -fsSL "https://open-obfuscator.build38.io/ci/index.html" -o /tmp/index.html
-          echo "=== raw index.html ==="
-          cat /tmp/index.html
-          echo "======================="
           # Pull every href/url pointing at a linux .tar.gz, whether the
           # timestamp's colons are literal or percent-encoded, then decode
           # %3A -> : and take the lexicographically-last (= newest) one.
@@ -43,7 +53,7 @@ jobs:
                 | sed -e 's/%3A/:/gI' -e 's#^/*ci/#https://open-obfuscator.build38.io/ci/#' \
                 | sort | tail -1)
           if [ -z "$URL" ]; then
-            echo "::error::No linux O-MVLL build link found on the index page (see raw HTML dumped above)."
+            echo "::error::No linux O-MVLL build link found on the index page. Check the omvll-index-debug artifact from this run."
             exit 1
           fi
           echo "Using: $URL"
