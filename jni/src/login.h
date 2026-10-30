@@ -198,22 +198,58 @@ struct KdPrivateUmaskGuard {
 // For production Android deployments, integrate the Android Keystore API
 // (via JNI) to keep the master key in hardware-backed secure storage, and
 // prefer the app's private data directory exclusively.
+// Resolves the ABSOLUTE directory the running binary itself lives in
+// (via /proc/self/exe), so a fallback never depends on the shell's
+// current working directory at launch time. Without this, a bare "."
+// last-resort would save the key under a different real path every
+// time the binary is launched from a different folder (e.g. once from
+// "~" and once from "/data/local/tmp"), making a saved key silently
+// "disappear" even though kd_save_key() succeeded each time - the key
+// was always being written, just to a different file each run.
+static inline std::string kd_exe_dir() {
+    char buf[1024];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    std::string exe(buf);
+    size_t slash = exe.find_last_of('/');
+    if (slash == std::string::npos) return "";
+    return exe.substr(0, slash);
+}
+
 static inline const std::string& kd_writable_dir() {
     static std::string cached;
     if (!cached.empty()) return cached;
 
-    const char* candidates[] = {
+    std::vector<std::string> candidateList = {
         "/data/data/com.mycompany.application/files",
         "/sdcard/Android/data/com.mycompany.application/files",
-        "/data/local/tmp/.kd_store",
-        "/data/local/tmp",
-        "."   // last resort: current working directory
     };
 
-    for (const char* dir : candidates) {
-        mkdir(dir, 0700);
+    // $HOME is set and stable under Termux (and most non-rooted test
+    // environments) regardless of which directory the binary is
+    // launched from - tried before /data/local/tmp (which is often
+    // not writable/chmod-able without root) and before falling back
+    // to the binary's own directory.
+    const char* home = getenv("HOME");
+    if (home && home[0] != '\0') {
+        candidateList.push_back(std::string(home) + "/.kd_store");
+    }
 
-        std::string probe = std::string(dir) + "/.kd_write_test";
+    candidateList.push_back("/data/local/tmp/.kd_store");
+    candidateList.push_back("/data/local/tmp");
+
+    // Last resort: the binary's OWN directory (absolute, stable across
+    // launches) instead of a bare "." (relative to launch-time cwd,
+    // which is NOT stable across launches).
+    std::string exeDir = kd_exe_dir();
+    if (!exeDir.empty()) candidateList.push_back(exeDir);
+    candidateList.push_back(".");
+
+    for (const std::string& dir : candidateList) {
+        mkdir(dir.c_str(), 0700);
+
+        std::string probe = dir + "/.kd_write_test";
         KdPrivateUmaskGuard umaskGuard;
         std::ofstream test(probe, std::ios::trunc);
         if (test.good()) {
