@@ -141,7 +141,7 @@ using json = nlohmann::json;
 // REPLACE with your deployment's X25519 transport public key (64 hex chars).
 // Generate alongside the server config — see keydock_connect.php header.
 #define TRANSPORT_SERVER_PK_HEX \
-    oxorany("034e65e9b094bb4ccefc0acd53d691b9e88810c5b1f9fdfeed968fd67f25f72b")
+    oxorany("11776d4190bed1f57b9e26b01ffaf2d20dfff70fbce9e8c803d48590bde6f90e")
 
 // ED448_PUBLIC_KEY_HEX — second, independent signature over the SAME
 // payload as ED25519_PUBLIC_KEY_HEX (hybrid: both must verify). Raw
