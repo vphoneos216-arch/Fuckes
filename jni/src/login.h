@@ -1412,6 +1412,18 @@ static inline bool kd_client_integrity_matches(
 }
 
 // ==================== CORE AUTHENTICATION ====================
+// [TEMP DIAGNOSTIC] Only fires when the KD_AUTH_DEBUG env var is set to
+// "1" — never in normal use, and never changes result.message (the
+// generic client-facing text is untouched). Prints to stderr only.
+static inline void kd_auth_dbg(const char* where) {
+    static int on = -1;
+    if (on == -1) {
+        const char* v = getenv("KD_AUTH_DEBUG");
+        on = (v && v[0] == '1') ? 1 : 0;
+    }
+    if (on) fprintf(stderr, "[KD_AUTH_DEBUG] fail at: %s\n", where);
+}
+
 static inline LoginResult perform_auth(
     const std::string& mode,
     const std::string& key,
@@ -1514,6 +1526,7 @@ static inline LoginResult perform_auth(
         !envelope.contains("sig") ||
         !envelope["payload"].is_string() ||
         !envelope["sig"].is_string()) {
+        kd_auth_dbg("missing payload/sig fields in envelope");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
@@ -1529,6 +1542,7 @@ static inline LoginResult perform_auth(
     const std::string signedMessage = nonce + "." + payloadB64;
 
     if (!kd_verify_ed25519(signedMessage, signatureB64)) {
+        kd_auth_dbg("ed25519 verify failed");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
@@ -1542,12 +1556,14 @@ static inline LoginResult perform_auth(
     // not as "field not supported yet".
 #ifdef KD_HAVE_ED448
     if (!envelope.contains("sig2") || !envelope["sig2"].is_string()) {
+        kd_auth_dbg("sig2 (ed448) field missing");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
     {
         const std::string sig2B64 = envelope["sig2"].get<std::string>();
         if (sig2B64.empty() || !kd_verify_ed448(signedMessage, sig2B64)) {
+            kd_auth_dbg("ed448 verify failed");
             result.message = oxorany("Login failed. Please try again.");
             return result;
         }
@@ -1560,12 +1576,14 @@ static inline LoginResult perform_auth(
     // is rejected outright, never silently skipped.
 #ifdef KD_HAVE_MLDSA
     if (!envelope.contains("sig3") || !envelope["sig3"].is_string()) {
+        kd_auth_dbg("sig3 (mldsa65) field missing");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
     {
         const std::string sig3B64 = envelope["sig3"].get<std::string>();
         if (sig3B64.empty() || !kd_verify_mldsa65(signedMessage, sig3B64)) {
+            kd_auth_dbg("mldsa65 verify failed");
             result.message = oxorany("Login failed. Please try again.");
             return result;
         }
@@ -1575,6 +1593,7 @@ static inline LoginResult perform_auth(
     const std::string plain = kd_b64_decode(payloadB64);
 
     if (plain.empty() || plain.size() > KD_MAX_RESPONSE_BYTES) {
+        kd_auth_dbg("decoded payload empty or too large");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
@@ -1584,6 +1603,7 @@ static inline LoginResult perform_auth(
     try {
         payload = json::parse(plain);
     } catch (...) {
+        kd_auth_dbg("payload json parse failed");
         result.message = oxorany("Login failed. Please try again.");
         return result;
     }
