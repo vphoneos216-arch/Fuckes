@@ -51,10 +51,31 @@ jobs:
           gradle-version: '8.4'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        id: debug_build
+        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build-debug.log
 
       - name: Build release APK (unsigned)
-        run: gradle assembleRelease --no-daemon
+        id: release_build
+        run: gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build-release.log
+
+      - name: Push build logs to ci-logs branch on failure
+        if: failure()
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/ci-logs-checkout
+          git -C /tmp/ci-logs-checkout init -q
+          git -C /tmp/ci-logs-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/ci-logs-checkout checkout -q -B ci-logs
+          cp /tmp/build-debug.log /tmp/ci-logs-checkout/build-debug.log 2>/dev/null || true
+          cp /tmp/build-release.log /tmp/ci-logs-checkout/build-release.log 2>/dev/null || true
+          git -C /tmp/ci-logs-checkout config user.name "github-actions[bot]"
+          git -C /tmp/ci-logs-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/ci-logs-checkout add -A
+          git -C /tmp/ci-logs-checkout commit -q -m "build logs from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/ci-logs-checkout push -q -f origin ci-logs
 
       - name: Locate APKs
         id: apks
