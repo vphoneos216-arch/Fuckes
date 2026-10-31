@@ -80,14 +80,23 @@ jobs:
       - name: Locate APKs
         id: apks
         run: |
-          set -e
-          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n1)
-          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n1)
+          echo "--- full apk output tree ---"
+          find app/build/outputs/apk -type f 2>&1 || true
+          DEBUG_APK=$(find app/build/outputs/apk -iname "*debug*.apk" | head -n1)
+          RELEASE_APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -n1)
           echo "debug_apk=$DEBUG_APK" >> "$GITHUB_OUTPUT"
           echo "release_apk=$RELEASE_APK" >> "$GITHUB_OUTPUT"
-          ls -la "$DEBUG_APK" "$RELEASE_APK"
+          echo "DEBUG_APK=[$DEBUG_APK]"
+          echo "RELEASE_APK=[$RELEASE_APK]"
+          test -n "$DEBUG_APK" && ls -la "$DEBUG_APK"
+          test -n "$RELEASE_APK" && ls -la "$RELEASE_APK"
+          if [ -z "$DEBUG_APK" ] && [ -z "$RELEASE_APK" ]; then
+            echo "No APKs found at all — failing."
+            exit 1
+          fi
 
       - name: Upload debug APK artifact
+        if: steps.apks.outputs.debug_apk != ''
         uses: actions/upload-artifact@v4
         with:
           name: InvisibleX-debug
@@ -95,6 +104,7 @@ jobs:
           retention-days: 30
 
       - name: Upload release APK artifact (unsigned)
+        if: steps.apks.outputs.release_apk != ''
         uses: actions/upload-artifact@v4
         with:
           name: InvisibleX-release-unsigned
