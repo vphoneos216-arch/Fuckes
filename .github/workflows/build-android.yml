@@ -86,8 +86,11 @@ jobs:
         run: |
           echo "--- full apk output tree ---"
           find app/build/outputs/apk -type f 2>&1 || true
-          DEBUG_APK=$(find app/build/outputs/apk -iname "*debug*.apk" | head -n1)
-          RELEASE_APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -n1)
+          # Custom outputFileName in build.gradle (InvisibleX-<version>.apk)
+          # strips "debug"/"release" from the filename itself, so match by
+          # the debug/release output SUBDIRECTORY, not the filename.
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n1)
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n1)
           echo "debug_apk=$DEBUG_APK" >> "$GITHUB_OUTPUT"
           echo "release_apk=$RELEASE_APK" >> "$GITHUB_OUTPUT"
           echo "DEBUG_APK=[$DEBUG_APK]"
