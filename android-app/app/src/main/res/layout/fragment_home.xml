@@ -11,89 +11,104 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="28dp"
+        android:paddingBottom="32dp">
 
-        <!-- Header -->
-        <TextView
-            android:layout_width="wrap_content"
+        <!-- Header row -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="HOME"
-            android:textSize="11sp"
-            android:textColor="@color/red_primary"
-            android:textStyle="bold"
-            android:letterSpacing="0.2"
-            android:layout_marginBottom="4dp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="24dp">
 
-        <TextView
-            android:id="@+id/tv_welcome"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="InvisibleX"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:layout_marginBottom="20dp" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-        <!-- Status card -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="DASHBOARD"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_label"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.20"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/tv_welcome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="InvisibleX"
+                    android:textSize="26sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="sans-serif-medium" />
+            </LinearLayout>
+
+            <!-- Status pill -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_status_pill"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp">
+
+                <View
+                    android:id="@+id/dot_auth"
+                    android:layout_width="7dp"
+                    android:layout_height="7dp"
+                    android:background="@drawable/dot_status"
+                    android:layout_marginEnd="7dp" />
+
+                <TextView
+                    android:id="@+id/tv_auth_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Active"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/status_ok"
+                    android:fontFamily="sans-serif-medium" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Session status card -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="14dp"
             app:cardElevation="0dp"
             app:strokeColor="@color/stroke_dim"
             app:strokeWidth="1dp"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="14dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="SESSION STATUS"
+                    android:text="SESSION"
                     android:textSize="10sp"
-                    android:textColor="@color/red_primary"
+                    android:textColor="@color/text_label"
                     android:textStyle="bold"
-                    android:letterSpacing="0.15"
-                    android:layout_marginBottom="10dp" />
-
-                <!-- Auth status row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-
-                    <View
-                        android:id="@+id/dot_auth"
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/dot_status"
-                        android:layout_marginEnd="10dp" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Authentication"
-                        android:textSize="13sp"
-                        android:textColor="@color/text_secondary" />
-
-                    <TextView
-                        android:id="@+id/tv_auth_status"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Valid"
-                        android:textSize="13sp"
-                        android:textColor="@color/status_ok"
-                        android:textStyle="bold" />
-                </LinearLayout>
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.18"
+                    android:layout_marginBottom="14dp" />
 
                 <!-- Expiry row -->
                 <LinearLayout
@@ -101,13 +116,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-
-                    <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/dot_status_dim"
-                        android:layout_marginEnd="10dp" />
+                    android:layout_marginBottom="10dp">
 
                     <TextView
                         android:layout_width="0dp"
@@ -115,7 +124,8 @@
                         android:layout_weight="1"
                         android:text="Expires"
                         android:textSize="13sp"
-                        android:textColor="@color/text_secondary" />
+                        android:textColor="@color/text_secondary"
+                        android:fontFamily="sans-serif" />
 
                     <TextView
                         android:id="@+id/tv_expiry_home"
@@ -123,29 +133,32 @@
                         android:layout_height="wrap_content"
                         android:text="—"
                         android:textSize="13sp"
-                        android:textColor="@color/text_primary" />
+                        android:textColor="@color/text_primary"
+                        android:fontFamily="sans-serif-medium" />
                 </LinearLayout>
 
-                <!-- Key name row -->
+                <!-- Divider -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginBottom="10dp" />
+
+                <!-- Key row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
-                    <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/dot_status_dim"
-                        android:layout_marginEnd="10dp" />
-
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Key"
+                        android:text="License"
                         android:textSize="13sp"
-                        android:textColor="@color/text_secondary" />
+                        android:textColor="@color/text_secondary"
+                        android:fontFamily="sans-serif" />
 
                     <TextView
                         android:id="@+id/tv_key_name"
@@ -166,26 +179,27 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="14dp"
             app:cardElevation="0dp"
             app:strokeColor="@color/stroke_dim"
             app:strokeWidth="1dp"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="14dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="QUICK SETTINGS TILE"
                     android:textSize="10sp"
-                    android:textColor="@color/red_primary"
+                    android:textColor="@color/text_label"
                     android:textStyle="bold"
-                    android:letterSpacing="0.15"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.18"
                     android:layout_marginBottom="6dp" />
 
                 <TextView
@@ -194,87 +208,94 @@
                     android:text="@string/tile_hint"
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
+                    android:fontFamily="sans-serif"
+                    android:lineSpacingExtra="2dp"
                     android:layout_marginBottom="14dp" />
 
                 <Button
                     android:id="@+id/btn_add_tile"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="50dp"
                     android:text="@string/btn_add_tile"
                     android:background="@drawable/bg_button_red"
                     android:textColor="@color/text_primary"
                     android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
                     android:letterSpacing="0.08"
                     android:textSize="13sp" />
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- App visibility card -->
+        <!-- App Visibility card -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_visibility"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="14dp"
             app:cardElevation="0dp"
             app:strokeColor="@color/stroke_dim"
             app:strokeWidth="1dp"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="14dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="APP VISIBILITY"
+                    android:text="APP STEALTH"
                     android:textSize="10sp"
-                    android:textColor="@color/red_primary"
+                    android:textColor="@color/text_label"
                     android:textStyle="bold"
-                    android:letterSpacing="0.15"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.18"
                     android:layout_marginBottom="6dp" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Hide this app from the home screen launcher. Use the tile to re-open."
+                    android:text="Conceal this app from the launcher. Use the quick tile or a shortcut to re-open."
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
+                    android:fontFamily="sans-serif"
+                    android:lineSpacingExtra="2dp"
                     android:layout_marginBottom="14dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:weightSum="2">
+                    android:orientation="horizontal">
 
                     <Button
                         android:id="@+id/btn_hide_app"
                         android:layout_width="0dp"
-                        android:layout_height="48dp"
+                        android:layout_height="50dp"
                         android:layout_weight="1"
                         android:text="@string/btn_hide_app"
                         android:background="@drawable/bg_button_red"
                         android:textColor="@color/text_primary"
                         android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium"
                         android:textSize="12sp"
-                        android:layout_marginEnd="6dp" />
+                        android:layout_marginEnd="8dp" />
 
                     <Button
                         android:id="@+id/btn_show_app"
                         android:layout_width="0dp"
-                        android:layout_height="48dp"
+                        android:layout_height="50dp"
                         android:layout_weight="1"
                         android:text="@string/btn_show_app"
                         android:background="@drawable/bg_button_outline"
-                        android:textColor="@color/red_primary"
+                        android:textColor="@color/red_accent"
                         android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium"
                         android:textSize="12sp"
-                        android:layout_marginStart="6dp" />
+                        android:layout_marginStart="8dp" />
 
                 </LinearLayout>
 
@@ -285,15 +306,15 @@
         <Button
             android:id="@+id/btn_logout"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="50dp"
             android:text="@string/logout"
-            android:background="@drawable/bg_button_outline"
-            android:textColor="@color/red_primary"
+            android:background="@drawable/bg_button_ghost"
+            android:textColor="@color/text_secondary"
             android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
             android:letterSpacing="0.08"
             android:textSize="13sp"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginTop="8dp" />
 
     </LinearLayout>
 </ScrollView>

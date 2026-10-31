@@ -2,53 +2,139 @@
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="56dp"
+    android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:paddingStart="4dp"
-    android:paddingEnd="4dp"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingEnd="8dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="12dp"
+    android:minHeight="64dp">
 
-    <!-- Radio-style dot -->
+    <!-- Selection dot -->
     <View
         android:id="@+id/dot_selected"
-        android:layout_width="8dp"
-        android:layout_height="8dp"
-        android:background="@drawable/dot_status"
-        android:layout_marginEnd="14dp"
-        android:visibility="invisible" />
+        android:layout_width="7dp"
+        android:layout_height="7dp"
+        android:background="@drawable/dot_status_dim"
+        android:layout_marginEnd="12dp"
+        android:visibility="visible" />
 
+    <!-- Driver info column -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical">
 
+        <!-- File name -->
         <TextView
             android:id="@+id/tv_driver_name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="driver_name.ko"
-            android:textSize="14sp"
+            android:text="driver.ko"
+            android:textSize="13sp"
             android:textColor="@color/text_primary"
-            android:fontFamily="monospace" />
+            android:fontFamily="monospace"
+            android:layout_marginBottom="4dp" />
 
+        <!-- Kernel hint (e.g. "Kernel 5.15" or "KernelSU") -->
         <TextView
             android:id="@+id/tv_driver_info"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text=""
             android:textSize="11sp"
-            android:textColor="@color/text_secondary" />
+            android:textColor="@color/text_secondary"
+            android:fontFamily="sans-serif"
+            android:layout_marginBottom="6dp" />
+
+        <!-- Permission chips row -->
+        <LinearLayout
+            android:id="@+id/row_chips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/chip_read"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:text="READ"
+                android:textSize="9sp"
+                android:textColor="@color/chip_read_text"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:background="@drawable/bg_chip_read"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:gravity="center_vertical"
+                android:layout_marginEnd="5dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/chip_write"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:text="WRITE"
+                android:textSize="9sp"
+                android:textColor="@color/chip_write_text"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:background="@drawable/bg_chip_write"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:gravity="center_vertical"
+                android:layout_marginEnd="5dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/chip_exec"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:text="EXEC"
+                android:textSize="9sp"
+                android:textColor="@color/chip_exec_text"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:background="@drawable/bg_chip_exec"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:gravity="center_vertical"
+                android:layout_marginEnd="5dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/chip_root"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:text="ROOT"
+                android:textSize="9sp"
+                android:textColor="@color/chip_root_text"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:background="@drawable/bg_chip_root"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:gravity="center_vertical"
+                android:visibility="gone" />
+
+        </LinearLayout>
     </LinearLayout>
 
+    <!-- File size -->
     <TextView
         android:id="@+id/tv_driver_item_size"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text=""
         android:textSize="11sp"
-        android:textColor="@color/text_secondary" />
+        android:textColor="@color/text_secondary"
+        android:fontFamily="sans-serif"
+        android:layout_marginStart="8dp" />
 
 </LinearLayout>

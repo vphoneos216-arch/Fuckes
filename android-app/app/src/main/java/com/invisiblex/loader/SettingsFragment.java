@@ -1,6 +1,8 @@
 package com.invisiblex.loader;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -16,17 +18,25 @@ import androidx.fragment.app.Fragment;
 
 import com.invisiblex.loader.databinding.ActivitySettingsBinding;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+
 /**
  * SettingsFragment — embedded in bottom nav.
  *
- * Options:
- *   - Custom logo: gallery picker → save URI to AppPrefs
- *   - App name: editable text → saved to AppPrefs
- *   - Server URL: editable text → saved to AppPrefs
- *   - Package name: display-only with rebuild notice
- *   - Save / Reset buttons
+ * Logo persistence fix (crash fix):
+ *   Android may revoke persistable URI permission across restarts/reboots.
+ *   Storing a content URI in AppPrefs and calling setImageURI() on cold
+ *   start reliably crashes once permission is gone.
+ *   Fix: copy the image bytes to internal storage on pick and store the
+ *   absolute file path instead. File paths under getFilesDir() never need
+ *   URI permission and survive across any number of restarts.
  */
 public class SettingsFragment extends Fragment {
+
+    private static final String LOGO_FILENAME = "custom_logo.png";
 
     private ActivitySettingsBinding binding;
 
@@ -62,11 +72,8 @@ public class SettingsFragment extends Fragment {
         binding.etAppName.setText(AppPrefs.getAppName());
         binding.etServerUrl.setText(AppPrefs.getServerUrl());
 
-        // The login URL is now pinned inside the native auth module
-        // (ix_auth.cpp) alongside its Ed25519/X25519 trust keys — the
-        // whole point of that pinning is that it can't be pointed
-        // elsewhere, so this field is shown for reference only and no
-        // longer changes what the app actually connects to.
+        // Server URL is pinned inside the native auth module (ix_auth.cpp)
+        // alongside its Ed25519/X25519 trust keys — display-only.
         binding.etServerUrl.setEnabled(false);
         binding.etServerUrl.setFocusable(false);
 
@@ -74,17 +81,40 @@ public class SettingsFragment extends Fragment {
         String pkg = requireContext().getPackageName();
         binding.tvCurrentPkg.setText("Current: " + pkg);
 
-        // Load saved custom logo
-        String logoPath = AppPrefs.getCustomLogoPath();
-        if (!logoPath.isEmpty()) {
-            try {
-                binding.ivCustomLogo.setImageURI(Uri.parse(logoPath));
-            } catch (Exception ignored) {}
-        }
+        // Load saved custom logo — use file path, never a content URI
+        loadSavedLogoIntoView();
 
         binding.btnChangeLogo.setOnClickListener(v -> openLogoPicker());
         binding.btnSaveSettings.setOnClickListener(v -> saveSettings());
         binding.btnResetSettings.setOnClickListener(v -> resetSettings());
+    }
+
+    // ── Logo loading ──────────────────────────────────────────
+
+    /**
+     * Load custom logo from internal storage file path.
+     * Content URIs are NOT used — they become invalid after reboot/permission revoke.
+     * Falls back silently to the default icon if the file is missing or unreadable.
+     */
+    private void loadSavedLogoIntoView() {
+        String logoPath = AppPrefs.getCustomLogoPath();
+        if (logoPath.isEmpty()) {
+            binding.ivCustomLogo.setImageResource(R.drawable.ic_app_icon);
+            return;
+        }
+        try {
+            File f = new File(logoPath);
+            if (f.exists() && f.canRead()) {
+                Bitmap bm = BitmapFactory.decodeFile(f.getAbsolutePath());
+                if (bm != null) {
+                    binding.ivCustomLogo.setImageBitmap(bm);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
+        // File gone or unreadable — reset prefs and show default
+        AppPrefs.setCustomLogoPath("");
+        binding.ivCustomLogo.setImageResource(R.drawable.ic_app_icon);
     }
 
     private void openLogoPicker() {
@@ -94,39 +124,57 @@ public class SettingsFragment extends Fragment {
         logoPicker.launch(intent);
     }
 
+    /**
+     * Copy picked image into internal storage as custom_logo.png.
+     * Stores the absolute file path — zero URI permission dependency.
+     */
     private void handleLogoPicked(Uri uri) {
         try {
-            requireContext().getContentResolver().takePersistableUriPermission(
-                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (Exception ignored) {}
+            // Copy bytes to internal storage
+            File logoFile = new File(requireContext().getFilesDir(), LOGO_FILENAME);
+            try (InputStream in  = requireContext().getContentResolver().openInputStream(uri);
+                 OutputStream out = new FileOutputStream(logoFile)) {
+                if (in == null) throw new Exception("Could not open picked image");
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) != -1) out.write(buf, 0, len);
+                out.flush();
+            }
 
-        AppPrefs.setCustomLogoPath(uri.toString());
-        try {
-            binding.ivCustomLogo.setImageURI(uri);
-        } catch (Exception ignored) {}
-        showToast(getString(R.string.logo_updated));
+            // Save path (not content URI) to prefs
+            AppPrefs.setCustomLogoPath(logoFile.getAbsolutePath());
+
+            // Decode and display
+            Bitmap bm = BitmapFactory.decodeFile(logoFile.getAbsolutePath());
+            if (bm != null) binding.ivCustomLogo.setImageBitmap(bm);
+
+            showToast(getString(R.string.logo_updated));
+
+        } catch (Exception e) {
+            showToast("Logo update failed — try again");
+        }
     }
 
-    private void saveSettings() {
-        String appName   = binding.etAppName.getText().toString().trim();
-        String serverUrl = binding.etServerUrl.getText().toString().trim();
+    // ── Settings save / reset ─────────────────────────────────
 
+    private void saveSettings() {
+        String appName = binding.etAppName.getText().toString().trim();
         if (!appName.isEmpty()) {
             AppPrefs.setAppName(appName);
         }
-        if (!serverUrl.isEmpty()) {
-            if (!serverUrl.startsWith("https://")) {
-                showToast(getString(R.string.server_url_https_required));
-                return;
-            }
-            AppPrefs.setServerUrl(serverUrl);
-        }
+        // Server URL field is disabled — nothing to validate/save
         showToast(getString(R.string.settings_saved));
     }
 
     private void resetSettings() {
         AppPrefs.setAppName("InvisibleX");
         AppPrefs.setServerUrl("https://adminshop.myvipsite.fun/keydock_connect.php");
+
+        // Delete copied logo file if it exists
+        String oldPath = AppPrefs.getCustomLogoPath();
+        if (!oldPath.isEmpty()) {
+            try { new File(oldPath).delete(); } catch (Exception ignored) {}
+        }
         AppPrefs.setCustomLogoPath("");
 
         binding.etAppName.setText("InvisibleX");
@@ -136,6 +184,8 @@ public class SettingsFragment extends Fragment {
 
         showToast(getString(R.string.settings_reset_done));
     }
+
+    // ── Helpers ────────────────────────────────────────────────
 
     private void showToast(String msg) {
         if (!isAdded()) return;

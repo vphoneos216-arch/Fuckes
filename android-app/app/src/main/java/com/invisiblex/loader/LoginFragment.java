@@ -1,5 +1,7 @@
 package com.invisiblex.loader;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -9,6 +11,8 @@ import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
+
+import java.io.File;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -51,13 +55,9 @@ public class LoginFragment extends Fragment {
             binding.tvLoginTitle.setText(appName);
         }
 
-        // Load custom logo if set
-        String logoPath = AppPrefs.getCustomLogoPath();
-        if (!logoPath.isEmpty()) {
-            try {
-                binding.ivLogo.setImageURI(android.net.Uri.parse(logoPath));
-            } catch (Exception ignored) {}
-        }
+        // Load custom logo — read from internal storage file path, never a content URI.
+        // Content URIs are revoked after reboot; file paths under filesDir are permanent.
+        loadCustomLogo();
 
         // Input: clear error state on type
         binding.etKey.addTextChangedListener(new TextWatcher() {
@@ -88,6 +88,32 @@ public class LoginFragment extends Fragment {
                 getString(R.string.saved_key_hint, keyName.isEmpty() ? "saved" : keyName));
             binding.tvExpiry.setVisibility(View.VISIBLE);
         }
+    }
+
+    /**
+     * Load custom logo from internal storage path — crash-safe.
+     * Falls back to default icon if the file is missing, corrupt, or path is empty.
+     */
+    private void loadCustomLogo() {
+        String logoPath = AppPrefs.getCustomLogoPath();
+        if (!logoPath.isEmpty()) {
+            try {
+                File f = new File(logoPath);
+                if (f.exists() && f.canRead()) {
+                    Bitmap bm = BitmapFactory.decodeFile(f.getAbsolutePath());
+                    if (bm != null) {
+                        binding.ivLogo.setImageBitmap(bm);
+                        return;
+                    }
+                }
+                // File gone — clear stale path so we don't try again next time
+                AppPrefs.setCustomLogoPath("");
+            } catch (Exception ignored) {
+                AppPrefs.setCustomLogoPath("");
+            }
+        }
+        // Default app icon
+        binding.ivLogo.setImageResource(R.drawable.ic_app_icon);
     }
 
     private void attemptLogin() {
