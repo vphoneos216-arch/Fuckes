@@ -57,8 +57,8 @@ jobs:
         run: |
           set -e
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "ndk;26.1.10909125" "cmake;3.22.1" > /dev/null
-          echo "ndk.dir=$ANDROID_HOME/ndk/26.1.10909125" >> local.properties
+            "ndk;25.1.8937393" "cmake;3.22.1" > /dev/null
+          echo "ndk.dir=$ANDROID_HOME/ndk/25.1.8937393" >> local.properties
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
