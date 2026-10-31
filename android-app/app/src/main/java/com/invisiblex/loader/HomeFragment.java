@@ -98,7 +98,8 @@ public class HomeFragment extends Fragment {
                 sbm.requestAddTileService(
                     new ComponentName(requireContext(), InvisibleXTileService.class),
                     getString(R.string.tile_label),
-                    requireContext().getDrawable(R.drawable.ic_tile),
+                    android.graphics.drawable.Icon.createWithResource(
+                        requireContext(), R.drawable.ic_tile),
                     requireContext().getMainExecutor(),
                     resultCode -> {
                         String msg;
