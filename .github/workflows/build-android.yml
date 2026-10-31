@@ -39,8 +39,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        # ubuntu-24.04 runner images ship with the Android SDK preinstalled
+        # (ANDROID_HOME already set) — no setup-android action needed,
+        # just make sure the licenses are accepted for this SDK version.
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
