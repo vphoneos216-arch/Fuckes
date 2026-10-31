@@ -5,10 +5,8 @@ import android.app.StatusBarManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.res.AssetManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.animation.TranslateAnimation;
@@ -16,15 +14,7 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * LaunchMenuActivity — post-launch overlay menu.
@@ -47,8 +37,7 @@ import java.util.concurrent.Executors;
  */
 public class LaunchMenuActivity extends Activity {
 
-    private static final String TAG       = "IX_LaunchMenu";
-    private static final String ASSET_DIR = "drivers";
+    private static final String TAG = "IX_LaunchMenu";
 
     private ListView        lvDrivers;
     private TextView        tvNoDrivers;
@@ -64,9 +53,8 @@ public class LaunchMenuActivity extends Activity {
     private View            panelMenu;
 
     private DriverAdapter       adapter;
-    private final List<DriverInfo> driverList = new ArrayList<>();
-    private String              selectedDriver;
-    private final ExecutorService executor   = Executors.newSingleThreadExecutor();
+    private final List<DriverInfo> driverList = DriverInfo.wanbaiModes();
+    private DriverInfo          selectedMode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -127,64 +115,37 @@ public class LaunchMenuActivity extends Activity {
     // ── Driver list ───────────────────────────────────────────
 
     private void loadDriverList() {
-        try {
-            AssetManager am = getAssets();
-            String[] files  = am.list(ASSET_DIR);
-            driverList.clear();
-
-            if (files == null || files.length == 0) {
-                showNoDrivers();
-                return;
-            }
-
-            for (String f : files) {
-                if (f.equals(".keep") || f.isEmpty()) continue;
-                long size = 0;
-                try {
-                    InputStream is = am.open(ASSET_DIR + "/" + f);
-                    size = is.available();
-                    is.close();
-                } catch (Exception ignored) {}
-                driverList.add(new DriverInfo(f, size));
-            }
-
-            if (driverList.isEmpty()) {
-                showNoDrivers();
-                return;
-            }
-
-            selectedDriver = AppPrefs.getSelectedDriver();
-            tvNoDrivers.setVisibility(View.GONE);
-            lvDrivers.setVisibility(View.VISIBLE);
-
-            adapter = new DriverAdapter(this, driverList, selectedDriver);
-            lvDrivers.setAdapter(adapter);
-
-            lvDrivers.setOnItemClickListener((parent, v, position, id) -> {
-                DriverInfo info = driverList.get(position);
-                selectedDriver = info.name;
-                AppPrefs.setSelectedDriver(selectedDriver);
-                adapter.setSelected(selectedDriver);
-                adapter.notifyDataSetChanged();
-                btnLoadDriver.setEnabled(true);
-                tvDriverStatus.setVisibility(View.GONE);
-            });
-
-            // Re-select previously saved driver
-            if (selectedDriver != null && !selectedDriver.isEmpty()) {
-                btnLoadDriver.setEnabled(true);
-            }
-
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to list drivers", e);
-            showNoDrivers();
+        String savedValue = AppPrefs.getSelectedDriver();
+        if (savedValue == null || savedValue.isEmpty()) {
+            savedValue = DriverConfig.readCurrentChoice();
         }
+        selectedMode = findByConfigValue(savedValue);
+
+        tvNoDrivers.setVisibility(View.GONE);
+        lvDrivers.setVisibility(View.VISIBLE);
+
+        adapter = new DriverAdapter(this, driverList, selectedMode.configValue);
+        lvDrivers.setAdapter(adapter);
+
+        lvDrivers.setOnItemClickListener((parent, v, position, id) -> {
+            selectedMode = driverList.get(position);
+            AppPrefs.setSelectedDriver(selectedMode.configValue);
+            adapter.setSelected(selectedMode.configValue);
+            adapter.notifyDataSetChanged();
+            btnLoadDriver.setEnabled(true);
+            tvDriverStatus.setVisibility(View.GONE);
+        });
+
+        btnLoadDriver.setEnabled(true);
     }
 
-    private void showNoDrivers() {
-        tvNoDrivers.setVisibility(View.VISIBLE);
-        lvDrivers.setVisibility(View.GONE);
-        btnLoadDriver.setEnabled(false);
+    private DriverInfo findByConfigValue(String value) {
+        if (value != null) {
+            for (DriverInfo info : driverList) {
+                if (info.configValue.equals(value)) return info;
+            }
+        }
+        return driverList.get(0); // AUTO-DETECT
     }
 
     // ── Button actions ────────────────────────────────────────
@@ -202,7 +163,7 @@ public class LaunchMenuActivity extends Activity {
     // ── Driver load — full security gate ─────────────────────
 
     private void attemptLoadDriver() {
-        if (selectedDriver == null || selectedDriver.isEmpty()) {
+        if (selectedMode == null) {
             showDriverStatus("Select a driver first", false);
             return;
         }
@@ -210,69 +171,22 @@ public class LaunchMenuActivity extends Activity {
         btnLoadDriver.setEnabled(false);
         showDriverStatus("Verifying authentication…", null);
 
-        // Security gate — mandatory before every binary/driver operation
+        // Security gate — mandatory before every binary/driver operation.
+        // NEVER bypass this, regardless of how the overlay is reached.
         AuthManager.get().securityGate(this, (authOk, authMsg) -> {
             if (!authOk) {
                 showDriverStatus("Auth failed — " + authMsg, false);
                 btnLoadDriver.setEnabled(true);
                 return;
             }
-            // Auth passed
-            executor.execute(this::extractAndLoadDriver);
+            // Auth passed — write the chosen backend for the next binary launch
+            DriverConfig.applyDriverChoice(selectedMode.configValue, (ok, msg) ->
+                runOnUiThread(() -> {
+                    postDriverStatus(msg, ok);
+                    btnLoadDriver.setEnabled(true);
+                })
+            );
         });
-    }
-
-    private void extractAndLoadDriver() {
-        String name = selectedDriver;
-        if (name == null || name.isEmpty()) return;
-
-        try {
-            File out = extractDriver(name);
-            if (out == null) {
-                postDriverStatus("Extract failed", false);
-                return;
-            }
-
-            out.setExecutable(true, true);
-            Runtime.getRuntime()
-                .exec(new String[]{"chmod", "700", out.getAbsolutePath()})
-                .waitFor();
-
-            // Try insmod first (kernel modules)
-            Process proc = Runtime.getRuntime().exec(
-                new String[]{"su", "-c", "insmod " + out.getAbsolutePath()});
-            int code = proc.waitFor();
-
-            if (code == 0) {
-                postDriverStatus("Driver loaded: " + name, true);
-            } else {
-                // Fallback: direct execute (plain binary drivers)
-                ProcessBuilder pb = new ProcessBuilder(out.getAbsolutePath());
-                pb.redirectErrorStream(true);
-                pb.start();
-                postDriverStatus("Driver executed: " + name, true);
-            }
-        } catch (IOException | InterruptedException e) {
-            Log.e(TAG, "Driver load error", e);
-            postDriverStatus("Load failed: " + e.getMessage(), false);
-        }
-
-        runOnUiThread(() -> btnLoadDriver.setEnabled(true));
-    }
-
-    private File extractDriver(String name) throws IOException {
-        File driversDir = new File(getFilesDir(), "drivers");
-        if (!driversDir.exists()) driversDir.mkdirs();
-
-        File out = new File(driversDir, name);
-        try (InputStream in = getAssets().open(ASSET_DIR + "/" + name);
-             OutputStream os = new FileOutputStream(out)) {
-            byte[] buf = new byte[8192];
-            int len;
-            while ((len = in.read(buf)) != -1) os.write(buf, 0, len);
-            os.flush();
-        }
-        return out;
     }
 
     // ── Tile merge ────────────────────────────────────────────
@@ -372,6 +286,5 @@ public class LaunchMenuActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        executor.shutdown();
     }
 }

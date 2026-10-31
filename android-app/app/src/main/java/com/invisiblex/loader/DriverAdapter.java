@@ -16,26 +16,30 @@ import java.util.List;
  * DriverAdapter — ListView adapter for the driver selection list.
  *
  * Each row shows:
- *   • driver filename (monospace)
- *   • kernel compatibility hint
- *   • permission chips: READ · WRITE · EXEC · ROOT (colored, shown per driver)
- *   • file size
+ *   • backend mode name (monospace)
+ *   • one-line description of how that backend actually works
+ *   • permission chips: READ · WRITE · EXEC · ROOT (colored, shown per mode)
+ *   • config value that gets written to config.json's "driver" key
  *   • selection dot (dim → lit on selection)
+ *
+ * Selection is keyed by DriverInfo.configValue (e.g. "auto", "ditpro"),
+ * not by display name — that's the exact value DriverConfig writes and
+ * the exact value ix_driver_number() in ix_driver_init.h parses back.
  */
 public class DriverAdapter extends ArrayAdapter<DriverInfo> {
 
-    private String selectedDriver;
+    private String selectedConfigValue;
 
     public DriverAdapter(@NonNull Context ctx,
                          @NonNull List<DriverInfo> drivers,
-                         String selectedDriver) {
+                         String selectedConfigValue) {
         super(ctx, 0, drivers);
-        this.selectedDriver = selectedDriver != null ? selectedDriver : "";
+        this.selectedConfigValue = selectedConfigValue != null ? selectedConfigValue : "";
     }
 
-    /** Update the currently selected driver and refresh the list. */
-    public void setSelected(String name) {
-        this.selectedDriver = name != null ? name : "";
+    /** Update the currently selected mode (by configValue) and refresh the list. */
+    public void setSelected(String configValue) {
+        this.selectedConfigValue = configValue != null ? configValue : "";
         notifyDataSetChanged();
     }
 
@@ -56,11 +60,11 @@ public class DriverAdapter extends ArrayAdapter<DriverInfo> {
         if (info == null) return convertView;
 
         holder.name.setText(info.name);
-        holder.size.setText(info.sizeLabel);
-        holder.hint.setText(guessKernelHint(info.name));
+        holder.size.setText(info.configValue);
+        holder.hint.setText(info.hint);
 
         // Selection dot: lit = selected, dim = unselected
-        boolean selected = info.name.equals(selectedDriver);
+        boolean selected = info.configValue.equals(selectedConfigValue);
         holder.dot.setBackground(getContext().getDrawable(
             selected ? R.drawable.dot_status : R.drawable.dot_status_dim));
         convertView.setAlpha(selected ? 1.0f : 0.78f);
@@ -77,23 +81,6 @@ public class DriverAdapter extends ArrayAdapter<DriverInfo> {
 
     private static void setChip(TextView chip, boolean visible) {
         chip.setVisibility(visible ? View.VISIBLE : View.GONE);
-    }
-
-    private String guessKernelHint(String filename) {
-        String lower = filename != null ? filename.toLowerCase() : "";
-        if (lower.contains("4.4"))  return "Kernel 4.4";
-        if (lower.contains("4.9"))  return "Kernel 4.9";
-        if (lower.contains("4.14")) return "Kernel 4.14";
-        if (lower.contains("4.19")) return "Kernel 4.19";
-        if (lower.contains("5.4"))  return "Kernel 5.4";
-        if (lower.contains("5.10") || lower.contains("5_10")) return "Kernel 5.10";
-        if (lower.contains("5.15") || lower.contains("5_15")) return "Kernel 5.15";
-        if (lower.contains("6.1")  || lower.contains("6_1"))  return "Kernel 6.1";
-        if (lower.contains("6.6")  || lower.contains("6_6"))  return "Kernel 6.6";
-        if (lower.contains("ksu")  || lower.contains("kernel-su")) return "KernelSU";
-        if (lower.contains("magisk")) return "Magisk";
-        if (lower.contains("apatch")) return "APatch";
-        return "Select if compatible";
     }
 
     static class ViewHolder {

@@ -140,10 +140,21 @@ public class AuthManager {
      * Re-validates session in background; only calls callback(true) if fully valid.
      */
     public void securityGate(Context ctx, AuthCallback callback) {
-        if (!authValid || authInverted == authValid) {
-            postCallback(callback, false, getString(ctx, R.string.auth_double_check));
-            return;
-        }
+        // NOTE: securityGate must NOT depend on in-memory authValid/authInverted
+        // already being set — those fields live on this process's AuthManager
+        // singleton and reset to their defaults whenever the app process is
+        // freshly started (e.g. a Quick Settings tile tap after the app was
+        // killed in the background). Gating on them here caused every
+        // tile-triggered launch to fail instantly with "Verifying…" → error,
+        // because a brand-new process never had a chance to set authValid=true
+        // before the tile called straight into securityGate().
+        //
+        // securityGate() is the FINAL gate before any driver/binary operation,
+        // so it re-derives truth itself, every time, from durable state
+        // (AppPrefs) plus a mandatory server round-trip — never from stale
+        // process-local flags. This is strictly stronger than before, not
+        // weaker: it still requires both local validity AND a fresh server
+        // confirmation on every single call.
         executor.execute(() -> {
             String savedTok = AppPrefs.getSessionToken();
             String savedKey = AppPrefs.getLicenseKey();
