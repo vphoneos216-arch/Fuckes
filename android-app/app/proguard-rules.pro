@@ -7,6 +7,3 @@
 -keep interface okhttp3.** { *; }
 -keepattributes Signature
 -keepattributes *Annotation*
--obfuscationdictionary proguard-dict.txt
--classobfuscationdictionary proguard-dict.txt
--packageobfuscationdictionary proguard-dict.txt
