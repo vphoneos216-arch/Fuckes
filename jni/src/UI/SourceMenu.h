@@ -83,6 +83,12 @@ static bool     窗口显示状态 = false;
 static ImVec2   窗口原始位置;
 static ImVec2   窗口原始大小;
 
+// ── Open/close animation state ────────────────────────────
+// openAnim: 0.0 = closed, 1.0 = fully open
+// Driven by deltaTime each frame for a smooth ease-in/out feel
+static float    openAnim       = 0.0f;   // current interpolation value
+static bool     prevVisible    = false;  // tracks transitions
+
 // Exact source dimensions
 const float SM_W        = 860.0f;
 const float SM_H        = 560.0f;
@@ -151,13 +157,20 @@ inline void RenderSingleMenuWindow() {
 
     ImGuiIO& io = ImGui::GetIO();
     float deltaTime = io.DeltaTime;
+    if (deltaTime <= 0.0f || deltaTime > 0.1f) deltaTime = 0.016f; // clamp
 
-    /* Animation disabled — instant panel only */
-    (void)deltaTime;
+    /* Smooth open/close animation — ease-in-out */
+    float animTarget = 窗口显示状态 ? 1.0f : 0.0f;
+    float animSpeed  = 8.0f; // higher = faster (reciprocal of ~125 ms half-life)
+    openAnim += (animTarget - openAnim) * (1.0f - expf(-animSpeed * deltaTime));
+    if (openAnim < 0.005f) openAnim = 0.0f;
+    if (openAnim > 0.995f) openAnim = 1.0f;
+    prevVisible = 窗口显示状态;
+
     当前动画 = 动画_无;
     动画进度 = 1.0f;
 
-    if (!窗口显示状态) return;
+    if (openAnim < 0.01f) return; // nothing to draw yet
 
     // ── REAL VISIBLE SCREEN ──────────────────────────────────
     // main.cpp creates the overlay surface as a SQUARE of the long
@@ -190,13 +203,22 @@ inline void RenderSingleMenuWindow() {
     const float PB   = SM_BallSize * fit;        // effective ball size
     const float PR   = 26.0f * fit;              // effective corner radius
 
-    /* ALWAYS full panel — zero ball / open animation */
+    /* Open animation: scale up from 88% + fade in */
+    float easedAnim   = EaseOutBack(openAnim < 1.0f ? openAnim : 1.0f);
+    // clamp EaseOutBack overshoot so size never exceeds actual PW/PH
+    if (easedAnim > 1.0f) easedAnim = 1.0f;
+    float animScale   = 0.88f + 0.12f * easedAnim;   // 88% → 100%
+    float animAlpha   = openAnim;                      // 0 → 1 (linear fade)
+
+    float aPW   = PW   * animScale;
+    float aPH   = PH   * animScale;
+
     ImVec2 screenCenter = ImVec2(scrW * 0.5f, scrH * 0.5f);
-    ImVec2 windowPos    = ImVec2(screenCenter.x - PW * 0.5f, screenCenter.y - PH * 0.5f);
-    ImVec2 windowSize   = ImVec2(PW, PH);
-    float  alpha        = 1.0f;
-    float  rounding     = PR;
-    float  contentAlpha = 1.0f;
+    ImVec2 windowPos    = ImVec2(screenCenter.x - aPW * 0.5f, screenCenter.y - aPH * 0.5f);
+    ImVec2 windowSize   = ImVec2(aPW, aPH);
+    float  alpha        = animAlpha;
+    float  rounding     = PR * animScale;
+    float  contentAlpha = animAlpha;
     窗口原始位置 = windowPos;
     窗口原始大小 = windowSize;
     (void)PB;
@@ -213,7 +235,7 @@ inline void RenderSingleMenuWindow() {
 
     ImGui::SetNextWindowPos(windowPos);
     ImGui::SetNextWindowSize(windowSize);
-    ImGui::SetNextWindowBgAlpha(0.12f * alpha);
+    ImGui::SetNextWindowBgAlpha(0.12f * animAlpha);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, rounding);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
@@ -241,12 +263,22 @@ inline void RenderSingleMenuWindow() {
             ImVec2 barMax = ImVec2(p.x + windowSize.x, p.y + 72 * scale);
             dl->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 0), rounding);
 
-            // Header title
-            float  titleSize = 44.0f * scale;
-            ImVec2 textPos   = ImVec2(p.x + 40 * scale, p.y + 14 * scale);
-            dl->AddText(NULL, titleSize, ImVec2(textPos.x + 2 * scale, textPos.y + 2 * scale),
-                        IM_COL32(0, 0, 0, (int)(50 * uiAlpha)), "InvisibleX");
-            dl->AddText(NULL, titleSize, textPos, COL_TXT_HI((int)(255 * uiAlpha)), "InvisibleX");
+            // Header title — "Invisible" white + "X" red
+            float  titleSize  = 44.0f * scale;
+            ImVec2 textPos    = ImVec2(p.x + 40 * scale, p.y + 14 * scale);
+            const char* titlePart1 = "Invisible";
+            const char* titlePart2 = "X";
+            ImFont* titleFont = ImGui::GetFont();
+            float tw_p1 = titleFont->CalcTextSizeA(titleSize, FLT_MAX, -1.f, titlePart1).x;
+            // Shadow pass (single draw, full string)
+            dl->AddText(NULL, titleSize, ImVec2(textPos.x + 2*scale, textPos.y + 2*scale),
+                        IM_COL32(0,0,0,(int)(60*uiAlpha)), "InvisibleX");
+            // "Invisible" — white
+            dl->AddText(NULL, titleSize, textPos,
+                        COL_TXT_HI((int)(255 * uiAlpha)), titlePart1);
+            // "X" — accent red
+            dl->AddText(NULL, titleSize, ImVec2(textPos.x + tw_p1, textPos.y),
+                        COL_ACCENT((int)(255 * uiAlpha)), titlePart2);
 
             // ── TAB BAR — exact source geometry ──────────────
             if (scale > 0.5f) {
@@ -320,8 +352,29 @@ inline void RenderSingleMenuWindow() {
                         dl->AddImageRounded(g_AvatarTex, scaledP0, scaledP1, ImVec2(0, 0), ImVec2(1, 1),
                                             IM_COL32(255, 255, 255, (int)(255 * uiAlpha)), avatarRounding);
                     } else {
-                        dl->AddText(NULL, 40.0f * scale, ImVec2(avatarCenter.x - 20 * scale, avatarCenter.y - 20 * scale),
-                                    COL_TXT_LOW((int)(255 * uiAlpha)), "?");
+                        // No avatar texture — draw a styled "IX" logo placeholder
+                        // Outer accent ring
+                        float ringR = avatarSize.x * 0.5f * avatarHoverScale * 0.88f;
+                        dl->AddCircle(avatarCenter, ringR, COL_ACCENT((int)(180 * uiAlpha)), 48, 2.0f * scale);
+
+                        // "I" letter (left half)
+                        float fontSize = 64.0f * scale;
+                        ImFont* f = ImGui::GetFont();
+                        float tw_I  = f->CalcTextSizeA(fontSize, FLT_MAX, -1.f, "I").x;
+                        float tw_X  = f->CalcTextSizeA(fontSize, FLT_MAX, -1.f, "X").x;
+                        float totalW = tw_I + tw_X;
+                        float startLx = avatarCenter.x - totalW * 0.5f;
+                        float textY   = avatarCenter.y - fontSize * 0.5f;
+                        // shadow
+                        dl->AddText(NULL, fontSize, ImVec2(startLx + 2*scale, textY + 2*scale),
+                                    IM_COL32(0,0,0,(int)(120*uiAlpha)), "I");
+                        dl->AddText(NULL, fontSize, ImVec2(startLx + tw_I + 2*scale, textY + 2*scale),
+                                    IM_COL32(0,0,0,(int)(120*uiAlpha)), "X");
+                        // "I" white, "X" red
+                        dl->AddText(NULL, fontSize, ImVec2(startLx, textY),
+                                    COL_TXT_HI((int)(255 * uiAlpha)), "I");
+                        dl->AddText(NULL, fontSize, ImVec2(startLx + tw_I, textY),
+                                    COL_ACCENT((int)(255 * uiAlpha)), "X");
                     }
                     dl->AddText(NULL, 30.0f * scale, ImVec2(cardCenter.x - 70 * scale, cardCenter.y + 90 * scale),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Welcome back");
@@ -463,21 +516,18 @@ inline void RenderSingleMenuWindow() {
                     float row    = 48 * scale;
                     float col    = 250 * scale;
 
-                    // Master toggles — Aim Silent / Aim Lock / Aimbot
+                    // Row 0 — Silent Aim + Aimbot (Aim Lock removed)
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
 
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
-                    ImGui::Checkbox1("Aim Lock", &AimLock);
-                    g_Cfg.aimCollider = AimLock;
-
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
                     ImGui::Checkbox1("Aimbot", &Aimbot);
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
+                    // Row 1 — Hardware BT + FOV Circle
+                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
                     ImGui::Checkbox1("Hardware BT", &HardwareBT);
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
+                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
                     ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
 
                     // ── Hardware BT mode: Headshot / Body / Legit ──
@@ -538,22 +588,23 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SliderFloat("FOV Range", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
                     // Sync → hook globals
-                    g_ShowFovOverlay = g_Cfg.showFovCircle;
-                    AimFov           = g_Cfg.aimFovUI;
-                    g_Cfg.aimSilent  = AimSilent;
-                    g_Cfg.aimCollider = AimLock;
-                    BrutalBT         = g_Cfg.brutalBT;
-                    AimLockNew       = false;
-                    /* Aimbot controlled by checkbox */
-                    aimBotBoneIndex  = 0;
-                    showAimLine      = g_Cfg.showAimLine;
-                    chestRate        = g_Cfg.chestRateSave;
+                    g_ShowFovOverlay  = g_Cfg.showFovCircle;
+                    AimFov            = g_Cfg.aimFovUI;
+                    g_Cfg.aimSilent   = AimSilent;
+                    // Aim Lock removed from UI — keep collider off
+                    AimLock           = false;
+                    g_Cfg.aimCollider = false;
+                    AimLockNew        = false;
+                    BrutalBT          = g_Cfg.brutalBT;
+                    aimBotBoneIndex   = 0;
+                    showAimLine       = g_Cfg.showAimLine;
+                    chestRate         = g_Cfg.chestRateSave;
                     if (chestRate < 1) chestRate = 1;
                     if (chestRate > 3) chestRate = 3;
                     /* threads are idempotent (guarded by running flags) */
                     StartSilentAimThread();
+                    StartAimbotThread();      // Aimbot now live — driven by Aimbot bool
                     StartHardwareBTThread();
-                    StartAimLockNewThread();
                 }
 
                     } /* feat gate aim */
