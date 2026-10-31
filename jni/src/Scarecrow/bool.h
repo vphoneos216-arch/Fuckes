@@ -26,7 +26,7 @@ using namespace ImGui;
 uint64_t lib_base = 0;
 uint64_t lib_base2 = 0;
 
-char packageName[] = "com.garena.game.ffi";
+char packageName[] = "com.dts.freefiremax";
 
 bool main_thread_flag = true;
 int abs_ScreenX = 0;
