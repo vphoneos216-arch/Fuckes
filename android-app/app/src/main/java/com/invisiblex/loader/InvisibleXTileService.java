@@ -1,5 +1,6 @@
 package com.invisiblex.loader;
 
+import android.content.Intent;
 import android.graphics.drawable.Icon;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
@@ -66,12 +67,25 @@ public class InvisibleXTileService extends TileService {
                     Log.i(TAG, "Binary result: " + ok + " — " + msg);
                     if (ok) {
                         setTileActive(getString(R.string.tile_running));
+                        // Open post-launch overlay menu
+                        openLaunchMenu();
                     } else {
                         setTileError(getString(R.string.tile_exec_error));
                     }
                 }
             ));
         });
+    }
+
+    /**
+     * Open the post-launch overlay menu via startActivityAndCollapse.
+     * This collapses the quick-settings shade and shows our overlay on top.
+     */
+    @SuppressWarnings("deprecation")
+    private void openLaunchMenu() {
+        Intent intent = new Intent(getApplicationContext(), LaunchMenuActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivityAndCollapse(intent);
     }
 
     @Override

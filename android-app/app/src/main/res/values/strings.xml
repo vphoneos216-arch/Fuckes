@@ -85,6 +85,20 @@
     <string name="nav_driver">Driver</string>
     <string name="nav_settings">Settings</string>
 
+    <!-- Launch menu -->
+    <string name="engine_active">Engine Active</string>
+    <string name="engine_inactive">Auth Required</string>
+    <string name="menu_no_drivers">No drivers in assets/drivers/</string>
+    <string name="menu_load_driver">LOAD DRIVER</string>
+    <string name="menu_merge_tile">MERGE TILE</string>
+    <string name="menu_hide_icon">HIDE ICON</string>
+    <string name="menu_show_icon">SHOW ICON</string>
+    <string name="menu_close">CLOSE</string>
+    <string name="menu_tile_added">Tile added — drag to position it next to another tile</string>
+    <string name="menu_tile_already_added">Tile already added — open Quick Settings edit to reorder</string>
+    <string name="menu_tile_manual">Open Quick Settings, tap edit, then drag InvisibleX tile to position</string>
+    <string name="menu_tile_unavailable">Could not add tile — add manually from Quick Settings edit</string>
+
     <!-- Auth -->
     <string name="auth_double_check">Security check failed</string>
     <string name="session_expired">Session expired — please re-login</string>

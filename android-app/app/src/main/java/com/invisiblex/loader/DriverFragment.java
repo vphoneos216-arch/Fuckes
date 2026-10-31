@@ -1,5 +1,6 @@
 package com.invisiblex.loader;
 
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.util.Log;
@@ -189,12 +190,14 @@ public class DriverFragment extends Fragment {
 
             if (exitCode == 0) {
                 postStatus(getString(R.string.driver_loaded, driverName), true);
+                openLaunchMenu();
             } else {
                 // Try direct execute as fallback (some drivers are executables, not .ko modules)
                 ProcessBuilder pb = new ProcessBuilder(driverFile.getAbsolutePath());
                 pb.redirectErrorStream(true);
                 pb.start();
                 postStatus(getString(R.string.driver_executed, driverName), true);
+                openLaunchMenu();
             }
 
         } catch (IOException | InterruptedException e) {
@@ -221,6 +224,17 @@ public class DriverFragment extends Fragment {
 
         Log.i(TAG, "Driver extracted: " + out.getAbsolutePath());
         return out;
+    }
+
+    // ── Post-launch menu ──────────────────────────────────────
+
+    private void openLaunchMenu() {
+        if (!isAdded()) return;
+        requireActivity().runOnUiThread(() -> {
+            Intent intent = new Intent(requireContext(), LaunchMenuActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent);
+        });
     }
 
     // ── UI helpers ────────────────────────────────────────────

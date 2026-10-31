@@ -48,6 +48,14 @@
             </intent-filter>
         </service>
 
+        <!-- Post-launch overlay menu — shown after engine executes successfully -->
+        <activity
+            android:name=".LaunchMenuActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Transparent"
+            android:windowSoftInputMode="adjustNothing" />
+
         <!-- File provider for sharing extracted binary -->
         <provider
             android:name="androidx.core.content.FileProvider"
