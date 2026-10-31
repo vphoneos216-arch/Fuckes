@@ -123,8 +123,11 @@ public class BinaryExecutor {
                 }
                 // code == 0 — ran and completed (unlikely for a daemon, treat as OK)
             }
-            // Process still running after timeout → daemon launched successfully
-            Log.i(TAG, "Engine running (pid=" + proc.pid() + ")");
+            // Process still running after timeout → daemon launched successfully.
+            // Note: proc here is the "su" wrapper process, not the engine's own
+            // PID, so there's nothing useful to report beyond "still running".
+            Log.i(TAG, "Engine running (launched via su, still alive after "
+                + ENGINE_LAUNCH_TIMEOUT_MS + "ms probe window)");
             postResult(cb, true, "InvisibleX launched");
 
         } catch (InterruptedException e) {
