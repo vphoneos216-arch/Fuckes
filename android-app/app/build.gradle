@@ -12,6 +12,26 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        ndk {
+            // Only arm64-v8a prebuilt libs (libsodium/libcurl/libssl/libcrypto)
+            // are vendored under app/src/main/cpp/external — matches the
+            // main INX.SH binary, which is arm64-only too.
+            abiFilters "arm64-v8a"
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
     }
 
     buildTypes {
@@ -55,6 +75,8 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.security:security-crypto:1.1.0-alpha06'
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'org.json:json:20231013'
+    // Networking + JSON for the login protocol now live natively in
+    // ix_auth.cpp (libcurl + nlohmann/json) — the server only accepts
+    // the double-encrypted wire protocol, so OkHttp/org.json have no
+    // remaining job on the Java side (see NativeAuth / AuthClient).
 }

@@ -73,11 +73,8 @@ public class AuthManager {
      */
     public void login(Context ctx, String licenseKey, AuthCallback callback) {
         executor.execute(() -> {
-            String hwid = AuthClient.getHWID(ctx);
-            String url  = AppPrefs.getServerUrl();
-            AuthClient authClient = new AuthClient(url);
-
-            AuthClient.AuthResult result = authClient.authenticate(licenseKey, hwid);
+            AuthClient authClient = new AuthClient(AppPrefs.getServerUrl());
+            AuthClient.AuthResult result = authClient.authenticate(ctx, licenseKey);
 
             if (result.success) {
                 // Save everything
@@ -117,13 +114,14 @@ public class AuthManager {
                 return;
             }
 
-            // Server-side session validation
-            String hwid = AuthClient.getHWID(ctx);
-            String url  = AppPrefs.getServerUrl();
-            AuthClient authClient = new AuthClient(url);
-
-            boolean serverOk = authClient.validateSession(savedTok, hwid);
-            if (serverOk) {
+            // No separate session-validation endpoint exists server-side —
+            // the only real check is a full re-login with the saved key
+            // (mirrors the binary's own perform_hwid_auth()).
+            AuthClient authClient = new AuthClient(AppPrefs.getServerUrl());
+            AuthClient.AuthResult result = authClient.authenticate(ctx, savedKey);
+            if (result.success) {
+                AppPrefs.saveSession(result.sessionToken, result.sessionExpiresAt);
+                AppPrefs.saveExpiryInfo(result.expiryDate, result.keyName);
                 setAuthState(true, true);
                 postCallback(callback, true,
                     getString(ctx, R.string.login_saved));
@@ -148,16 +146,18 @@ public class AuthManager {
         }
         executor.execute(() -> {
             String savedTok = AppPrefs.getSessionToken();
-            if (savedTok.isEmpty() || !AppPrefs.isSessionValid()) {
+            String savedKey = AppPrefs.getLicenseKey();
+            if (savedTok.isEmpty() || savedKey.isEmpty() || !AppPrefs.isSessionValid()) {
                 setAuthState(false, false);
                 postCallback(callback, false, getString(ctx, R.string.session_expired));
                 return;
             }
-            String hwid = AuthClient.getHWID(ctx);
-            String url  = AppPrefs.getServerUrl();
-            AuthClient authClient = new AuthClient(url);
-            boolean ok = authClient.validateSession(savedTok, hwid);
-            if (ok) {
+            // Final pre-execute gate — same re-login check as above, since
+            // the server has no lighter "just validate" endpoint.
+            AuthClient authClient = new AuthClient(AppPrefs.getServerUrl());
+            AuthClient.AuthResult result = authClient.authenticate(ctx, savedKey);
+            if (result.success) {
+                AppPrefs.saveSession(result.sessionToken, result.sessionExpiresAt);
                 setAuthState(true, true);
                 postCallback(callback, true, "OK");
             } else {

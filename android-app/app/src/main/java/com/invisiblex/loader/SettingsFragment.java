@@ -62,6 +62,14 @@ public class SettingsFragment extends Fragment {
         binding.etAppName.setText(AppPrefs.getAppName());
         binding.etServerUrl.setText(AppPrefs.getServerUrl());
 
+        // The login URL is now pinned inside the native auth module
+        // (ix_auth.cpp) alongside its Ed25519/X25519 trust keys — the
+        // whole point of that pinning is that it can't be pointed
+        // elsewhere, so this field is shown for reference only and no
+        // longer changes what the app actually connects to.
+        binding.etServerUrl.setEnabled(false);
+        binding.etServerUrl.setFocusable(false);
+
         // Show current package name (read-only)
         String pkg = requireContext().getPackageName();
         binding.tvCurrentPkg.setText("Current: " + pkg);

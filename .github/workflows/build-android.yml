@@ -24,14 +24,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch built INX.SH binary from dist-builds branch
+      - name: Fetch built INX.SH engine from dist-builds branch as native lib
+        # "pura native convert" — the engine now ships as jniLibs/arm64-v8a/libINX.so
+        # instead of an assets/INX.SH that had to be extracted + chmod'd at
+        # runtime. Android's own installer extracts/places/executes jniLibs
+        # content, so this is the standard native-packaging path.
         working-directory: .
         run: |
           set -e
           git fetch --depth 1 origin dist-builds
-          git show origin/dist-builds:INX.SH > android-app/app/src/main/assets/INX.SH
-          chmod 755 android-app/app/src/main/assets/INX.SH
-          ls -la android-app/app/src/main/assets/INX.SH
+          mkdir -p android-app/app/src/main/jniLibs/arm64-v8a
+          git show origin/dist-builds:INX.SH > android-app/app/src/main/jniLibs/arm64-v8a/libINX.so
+          chmod 755 android-app/app/src/main/jniLibs/arm64-v8a/libINX.so
+          ls -la android-app/app/src/main/jniLibs/arm64-v8a/libINX.so
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -44,6 +49,16 @@ jobs:
         # (ANDROID_HOME already set) — no setup-android action needed,
         # just make sure the licenses are accepted for this SDK version.
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Ensure Android NDK + CMake are installed
+        # The native auth module (app/src/main/cpp) now needs the NDK and
+        # CMake via Gradle's externalNativeBuild — the preinstalled SDK on
+        # this runner image only guarantees platform/build-tools, not NDK.
+        run: |
+          set -e
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;26.1.10909125" "cmake;3.22.1" > /dev/null
+          echo "ndk.dir=$ANDROID_HOME/ndk/26.1.10909125" >> local.properties
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
