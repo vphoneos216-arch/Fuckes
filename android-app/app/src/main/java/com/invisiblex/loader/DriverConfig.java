@@ -1,9 +1,15 @@
 package com.invisiblex.loader;
 
+import android.content.Context;
+import android.content.res.AssetManager;
 import android.util.Log;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -74,6 +80,80 @@ public final class DriverConfig {
                 msg = "Config write failed: " + e.getMessage();
             }
             callback.onResult(ok, msg);
+        }).start();
+    }
+
+    private static final String ASSET_DIR = "drivers";
+
+    /**
+     * Some backend modes (ditpro, kma, ldk, tb-kpm, paradise) need an actual
+     * kernel module/KPM file inserted before the binary can use them, and
+     * that file MUST match the device's running kernel. This looks in
+     * assets/drivers/ for a file matching "<configValue>_<kernel>.<ext>"
+     * (e.g. "paradise_6.6.ko" on a 6.6 kernel), falling back to a generic
+     * "<configValue>.<ext>" (no kernel suffix) if present, and loads it via
+     * insmod (or direct execute as a fallback) before config.json is
+     * written. If nothing matches, this is NOT an error — several modes
+     * (auto, qx1, gt, rt-dev, rt-proc, qx2) work purely from config.json
+     * with no bundled module at all.
+     *
+     * Call ONLY after AuthManager.securityGate() has already passed.
+     */
+    public static void loadMatchingAsset(Context ctx, String configValue, Callback callback) {
+        new Thread(() -> {
+            try {
+                String kernel = KernelUtil.detect();
+                AssetManager am = ctx.getAssets();
+                String[] files = am.list(ASSET_DIR);
+                if (files == null) files = new String[0];
+
+                String exact = null, generic = null;
+                for (String f : files) {
+                    if (f.isEmpty() || f.equals(".keep") || f.equalsIgnoreCase("README.md")) continue;
+                    if (!kernel.isEmpty() && f.startsWith(configValue + "_" + kernel + ".")) {
+                        exact = f;
+                        break;
+                    }
+                    if (f.startsWith(configValue + ".")) generic = f;
+                }
+
+                String chosen = exact != null ? exact : generic;
+                if (chosen == null) {
+                    callback.onResult(true, "No bundled kernel module for \"" + configValue + "\""
+                        + (kernel.isEmpty() ? "" : " on kernel " + kernel)
+                        + " — config.json alone will drive it");
+                    return;
+                }
+
+                File driversDir = new File(ctx.getFilesDir(), ASSET_DIR);
+                if (!driversDir.exists()) driversDir.mkdirs();
+                File out = new File(driversDir, chosen);
+                try (InputStream in = am.open(ASSET_DIR + "/" + chosen);
+                     OutputStream os = new FileOutputStream(out)) {
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) != -1) os.write(buf, 0, len);
+                }
+                out.setExecutable(true, true);
+                runRoot("chmod 700 " + out.getAbsolutePath());
+
+                RootResult insmod = runRoot("insmod " + out.getAbsolutePath());
+                if (insmod.exitCode == 0) {
+                    callback.onResult(true, "Loaded " + chosen
+                        + (kernel.isEmpty() ? "" : " (kernel " + kernel + ")"));
+                    return;
+                }
+                // Not every bundled file is a .ko module — some are plain
+                // executables. Fall back to direct execute, same pattern
+                // used everywhere else in this app for driver files.
+                runRoot(out.getAbsolutePath() + " >/dev/null 2>&1 &");
+                callback.onResult(true, "Executed " + chosen
+                    + (kernel.isEmpty() ? "" : " (kernel " + kernel + ")"));
+
+            } catch (Exception e) {
+                Log.e(TAG, "loadMatchingAsset failed", e);
+                callback.onResult(false, "Kernel-module load failed: " + e.getMessage());
+            }
         }).start();
     }
 

@@ -128,14 +128,28 @@ public class DriverFragment extends Fragment {
                 showStatus(getString(R.string.auth_required_driver), false);
                 return;
             }
-            // Auth passed — write the backend choice for the next binary launch
-            DriverConfig.applyDriverChoice(selectedMode.configValue, (ok, msg) -> {
-                if (!isAdded()) return;
-                requireActivity().runOnUiThread(() -> {
-                    setLoading(false);
-                    showStatus(msg, ok);
-                    if (ok) openLaunchMenu();
-                });
+            // Auth passed — write the backend choice for the next binary launch,
+            // then load the kernel-matched module for this mode (if one is
+            // bundled in assets/drivers/ for the device's running kernel).
+            String configValue = selectedMode.configValue;
+            DriverConfig.applyDriverChoice(configValue, (configOk, configMsg) -> {
+                if (!configOk) {
+                    if (!isAdded()) return;
+                    requireActivity().runOnUiThread(() -> {
+                        setLoading(false);
+                        showStatus(configMsg, false);
+                    });
+                    return;
+                }
+                DriverConfig.loadMatchingAsset(requireContext().getApplicationContext(),
+                    configValue, (assetOk, assetMsg) -> {
+                        if (!isAdded()) return;
+                        requireActivity().runOnUiThread(() -> {
+                            setLoading(false);
+                            showStatus(assetOk ? assetMsg : configMsg + " — " + assetMsg, assetOk);
+                            if (assetOk) openLaunchMenu();
+                        });
+                    });
             });
         });
     }

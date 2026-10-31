@@ -1,7 +1,9 @@
 package com.invisiblex.loader;
 
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.graphics.drawable.Icon;
+import android.os.Build;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 import android.util.Log;
@@ -80,12 +82,32 @@ public class InvisibleXTileService extends TileService {
     /**
      * Open the post-launch overlay menu via startActivityAndCollapse.
      * This collapses the quick-settings shade and shows our overlay on top.
+     *
+     * CRITICAL Android 14+ bug fix: on targetSdk 34 (this app's target),
+     * the Intent-overload of startActivityAndCollapse() is not just
+     * deprecated — it THROWS UnsupportedOperationException at runtime.
+     * That exception, happening right after the binary had already
+     * launched successfully, is exactly why the tile looked like it
+     * "stopped" with no overlay ever showing: the engine was running
+     * fine, but the overlay launch call itself crashed. Only the
+     * PendingIntent overload is valid on API 34+.
      */
     @SuppressWarnings("deprecation")
     private void openLaunchMenu() {
         Intent intent = new Intent(getApplicationContext(), LaunchMenuActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivityAndCollapse(intent);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            PendingIntent pi = PendingIntent.getActivity(
+                getApplicationContext(),
+                0,
+                intent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            startActivityAndCollapse(pi);
+        } else {
+            // Pre-Android-14: Intent overload is fine (just deprecated, not removed)
+            startActivityAndCollapse(intent);
+        }
     }
 
     @Override

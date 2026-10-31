@@ -179,13 +179,23 @@ public class LaunchMenuActivity extends Activity {
                 btnLoadDriver.setEnabled(true);
                 return;
             }
-            // Auth passed — write the chosen backend for the next binary launch
-            DriverConfig.applyDriverChoice(selectedMode.configValue, (ok, msg) ->
-                runOnUiThread(() -> {
-                    postDriverStatus(msg, ok);
-                    btnLoadDriver.setEnabled(true);
-                })
-            );
+            // Auth passed — write the chosen backend, then load the
+            // kernel-matched module for it (if one is bundled).
+            String configValue = selectedMode.configValue;
+            DriverConfig.applyDriverChoice(configValue, (configOk, configMsg) -> {
+                if (!configOk) {
+                    runOnUiThread(() -> {
+                        postDriverStatus(configMsg, false);
+                        btnLoadDriver.setEnabled(true);
+                    });
+                    return;
+                }
+                DriverConfig.loadMatchingAsset(getApplicationContext(), configValue,
+                    (assetOk, assetMsg) -> runOnUiThread(() -> {
+                        postDriverStatus(assetOk ? assetMsg : configMsg + " — " + assetMsg, assetOk);
+                        btnLoadDriver.setEnabled(true);
+                    }));
+            });
         });
     }
 
