@@ -2,10 +2,15 @@
 <network-security-config>
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">adminshop.myvipsite.fun</domain>
-        <pin-set>
-            <!-- Add your server's certificate pin here -->
-            <!-- sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= -->
-        </pin-set>
+        <!--
+          Certificate pinning intentionally left out: an empty <pin-set>
+          fails Android lint (NetworkSecurityConfig) and a wrong/expired
+          pin would hard-break auth with no way to recover remotely.
+          HTTPS + system trust-anchors below is already enforced.
+          To add real pinning later: put sha256/<base64> hashes of the
+          server's leaf AND a backup cert inside a <pin-set>, then test
+          against the live server before shipping.
+        -->
     </domain-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
