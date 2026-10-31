@@ -14,9 +14,13 @@ import com.invisiblex.loader.databinding.ActivityMainBinding;
  * MainActivity — root activity.
  *
  * Auth gate:
- *   - On start, AuthManager.tryRestoreSession() is called.
- *   - If session restores: show bottom nav + HomeFragment.
- *   - If no valid session: show LoginFragment (bottom nav hidden).
+ *   - On start, a splash spinner shows (no fragment yet) while
+ *     AuthManager.tryRestoreSession() checks the saved license key.
+ *   - If a key was saved from a previous login and the server still
+ *     confirms it: session restores silently, straight to HomeFragment —
+ *     the user never sees the login screen again on this device.
+ *   - Only if there's no saved key, or the server rejects it, does
+ *     LoginFragment ever appear.
  *   - LoginFragment calls onLoginSuccess() here to flip state.
  */
 public class MainActivity extends AppCompatActivity {
@@ -35,10 +39,12 @@ public class MainActivity extends AppCompatActivity {
 
         setupBottomNav();
 
-        // Try to restore session — shows spinner briefly
-        showLogin(); // start with login hidden until session check completes
+        // Splash spinner only — no login flash. Saved key (if any) is
+        // checked silently; only the outcome decides what the user sees.
+        binding.progressSplash.setVisibility(View.VISIBLE);
 
         AuthManager.get().tryRestoreSession(this, (success, message) -> {
+            binding.progressSplash.setVisibility(View.GONE);
             if (success) {
                 onLoginSuccess();
             } else {

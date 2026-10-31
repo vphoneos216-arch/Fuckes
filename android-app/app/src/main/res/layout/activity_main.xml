@@ -41,4 +41,16 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:visibility="gone" />
 
+    <!-- Startup splash — shown while the saved key is auto-verified so the
+         login screen never flashes before a valid saved session resolves -->
+    <ProgressBar
+        android:id="@+id/progress_splash"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:indeterminateTint="@color/red_primary"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
