@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Fetch built INX.SH binary from dist-builds branch
+        working-directory: .
         run: |
           set -e
           git fetch --depth 1 origin dist-builds
