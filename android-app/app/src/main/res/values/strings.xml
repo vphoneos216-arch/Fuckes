@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">InvisibleX</string>
+    <string name="tile_label">InvisibleX</string>
+
+    <!-- Login -->
+    <string name="login_title">InvisibleX</string>
+    <string name="login_subtitle">Enter your license key to continue</string>
+    <string name="hint_key">XXXX-XXXX-XXXX-XXXX</string>
+    <string name="btn_login">AUTHENTICATE</string>
+    <string name="verifying">Verifying…</string>
+    <string name="login_checking">Verifying…</string>
+    <string name="login_success">Access Granted</string>
+    <string name="login_fail">Invalid Key</string>
+    <string name="login_network_err">Network Error — retry</string>
+    <string name="login_saved">Resuming saved session…</string>
+    <string name="enter_license_key">Enter your license key</string>
+    <string name="saved_key_hint">Saved key: %1$s</string>
+
+    <!-- Home -->
+    <string name="home_title">Home</string>
+    <string name="home_welcome">Welcome back</string>
+    <string name="btn_add_tile">Add Quick Settings Tile</string>
+    <string name="btn_hide_app">Hide App Icon</string>
+    <string name="btn_show_app">Show App Icon</string>
+    <string name="execute_success">Binary launched</string>
+    <string name="execute_fail">Launch failed — check driver</string>
+    <string name="tile_hint">Pull down quick settings shade and tap InvisibleX tile to launch</string>
+    <string name="auth_active">Authenticated</string>
+    <string name="auth_inactive">Not Authenticated</string>
+    <string name="expiry_format">Expires: %1$s</string>
+    <string name="key_format">Key: %1$s</string>
+    <string name="tile_added">Tile added to quick settings</string>
+    <string name="tile_already_added">Tile already in quick settings</string>
+    <string name="tile_error">Could not add tile — add manually</string>
+    <string name="tile_manual_hint">Open quick settings, tap edit, and add InvisibleX tile</string>
+    <string name="app_hidden">App icon hidden from launcher</string>
+    <string name="app_shown">App icon visible in launcher</string>
+    <string name="visibility_error">Failed to change visibility — root may be required</string>
+
+    <!-- Tile states -->
+    <string name="tile_verifying">Verifying…</string>
+    <string name="tile_running">Running…</string>
+    <string name="tile_not_auth">Not Authenticated</string>
+    <string name="tile_ready_desc">Tap to launch InvisibleX</string>
+    <string name="tile_exec_error">Launch error</string>
+    <string name="auth_required_tile">Auth required</string>
+
+    <!-- Driver -->
+    <string name="driver_title">Driver</string>
+    <string name="driver_subtitle">Select the driver matching your device kernel</string>
+    <string name="btn_load_driver">Load Driver</string>
+    <string name="driver_none">No drivers in assets/drivers/\n\nAdd .ko or driver files and rebuild APK</string>
+    <string name="driver_loaded">Driver loaded: %1$s</string>
+    <string name="driver_executed">Driver executed: %1$s</string>
+    <string name="driver_fail">Driver load failed</string>
+    <string name="driver_select_hint">Choose the driver matching your device kernel</string>
+    <string name="select_driver_first">Select a driver first</string>
+    <string name="verifying_auth">Verifying authentication…</string>
+    <string name="auth_required_driver">Authentication required — please login first</string>
+    <string name="driver_extract_error">Failed to extract driver</string>
+    <string name="driver_load_error">Driver error: %1$s</string>
+    <string name="driver_list_error">Failed to list drivers</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_app_name">App Name</string>
+    <string name="settings_pkg_name">Package Name</string>
+    <string name="settings_pkg_rebuild">Changing package name requires rebuilding the APK</string>
+    <string name="settings_logo">App Logo</string>
+    <string name="settings_server_url">Auth Server URL</string>
+    <string name="settings_change_logo">Change Logo</string>
+    <string name="settings_reset">Reset to Defaults</string>
+    <string name="settings_save">Save Settings</string>
+    <string name="settings_saved_ok">Settings saved</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="settings_reset_done">Settings reset to defaults</string>
+    <string name="settings_logo_hint">Tap to select image from gallery</string>
+    <string name="logo_updated">Logo updated</string>
+    <string name="server_url_https_required">Server URL must start with https://</string>
+
+    <!-- Nav -->
+    <string name="nav_login">Login</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_driver">Driver</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Auth -->
+    <string name="auth_double_check">Security check failed</string>
+    <string name="session_expired">Session expired — please re-login</string>
+    <string name="logout">Logout</string>
+</resources>

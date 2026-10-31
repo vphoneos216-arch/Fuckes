@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android Studio
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Assets — binary goes here but is NOT committed to repo
+app/src/main/assets/INX.SH
+
+# Keystore
+*.jks
+*.keystore
+
+# ProGuard
+*.map

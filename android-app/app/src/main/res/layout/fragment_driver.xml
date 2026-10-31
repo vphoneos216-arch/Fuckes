@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_black"
+    android:padding="20dp">
+
+    <!-- Section title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="DRIVER"
+        android:textSize="11sp"
+        android:textColor="@color/red_primary"
+        android:textStyle="bold"
+        android:letterSpacing="0.2"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Kernel Driver"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="6dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/driver_select_hint"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Driver list card -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        app:cardBackgroundColor="@color/bg_card"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/stroke_dim"
+        app:strokeWidth="1dp"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AVAILABLE DRIVERS"
+                android:textSize="10sp"
+                android:textColor="@color/red_primary"
+                android:textStyle="bold"
+                android:letterSpacing="0.15"
+                android:layout_marginBottom="10dp" />
+
+            <!-- Empty state -->
+            <TextView
+                android:id="@+id/tv_no_drivers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/driver_none"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:gravity="center"
+                android:padding="24dp"
+                android:visibility="gone" />
+
+            <!-- Driver list -->
+            <ListView
+                android:id="@+id/lv_drivers"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:divider="@color/divider"
+                android:dividerHeight="1dp"
+                android:scrollbars="none"
+                android:listSelector="@drawable/list_selector" />
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Selected driver info -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/card_selected_driver"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:cardBackgroundColor="@color/bg_surface"
+        app:cardCornerRadius="10dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/stroke_dim"
+        app:strokeWidth="1dp"
+        android:visibility="gone"
+        android:layout_marginBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="14dp"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SELECTED"
+                    android:textSize="9sp"
+                    android:textColor="@color/red_primary"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.15" />
+
+                <TextView
+                    android:id="@+id/tv_selected_driver"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="None"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_driver_size"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="11sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Load Driver button -->
+    <Button
+        android:id="@+id/btn_load_driver"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="@string/btn_load_driver"
+        android:background="@drawable/bg_button_red"
+        android:textColor="@color/text_primary"
+        android:textStyle="bold"
+        android:letterSpacing="0.08"
+        android:textSize="14sp"
+        android:enabled="false" />
+
+    <!-- Progress (auth + extraction) -->
+    <ProgressBar
+        android:id="@+id/progress_driver"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:indeterminateTint="@color/red_primary"
+        android:visibility="gone"
+        android:layout_marginTop="6dp" />
+
+    <!-- Status -->
+    <TextView
+        android:id="@+id/tv_driver_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="12sp"
+        android:textColor="@color/status_ok"
+        android:gravity="center"
+        android:layout_marginTop="10dp" />
+
+</LinearLayout>
