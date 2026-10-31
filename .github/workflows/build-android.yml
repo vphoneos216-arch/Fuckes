@@ -117,3 +117,26 @@ jobs:
           name: InvisibleX-release-unsigned
           path: android-app/${{ steps.apks.outputs.release_apk }}
           retention-days: 30
+
+      - name: Also push APKs to dist-android branch
+        # Actions artifacts live on Azure blob storage, which isn't reachable
+        # from the environment that drives this workflow — push the built
+        # APKs as plain git objects too (reachable via normal git fetch),
+        # same pattern as dist-builds for the INX.SH binary.
+        if: steps.apks.outputs.debug_apk != '' || steps.apks.outputs.release_apk != ''
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-android-checkout
+          git -C /tmp/dist-android-checkout init -q
+          git -C /tmp/dist-android-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-android-checkout checkout -q -B dist-android
+          [ -n "${{ steps.apks.outputs.debug_apk }}" ] && cp "android-app/${{ steps.apks.outputs.debug_apk }}" /tmp/dist-android-checkout/InvisibleX-debug.apk || true
+          [ -n "${{ steps.apks.outputs.release_apk }}" ] && cp "android-app/${{ steps.apks.outputs.release_apk }}" /tmp/dist-android-checkout/InvisibleX-release-unsigned.apk || true
+          git -C /tmp/dist-android-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-android-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-android-checkout add -A
+          git -C /tmp/dist-android-checkout commit -q -m "APKs from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-android-checkout push -q -f origin dist-android
