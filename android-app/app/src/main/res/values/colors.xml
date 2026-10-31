@@ -9,6 +9,8 @@
     <!-- ── System chrome ──────────────────────────────────── -->
     <color name="status_bar">#060809</color>
     <color name="nav_bg">#0D1117</color>
+    <color name="nav_selected">#E53935</color>
+    <color name="nav_unselected">#555B66</color>
 
     <!-- ── Background hierarchy ───────────────────────────── -->
     <color name="bg_black">#080B0F</color>
