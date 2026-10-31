@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  activity_launch_menu.xml — Post-launch overlay menu.
+  activity_launch_menu.xml — Money Heist post-launch overlay.
+  Deep void scrim. Panel slides from bottom. Crimson IX branding.
   Shown immediately after InvisibleX binary executes successfully.
-  Semi-transparent dark overlay on top of whatever is behind it.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root_launch_menu"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#CC080B0F">
+    android:background="#D4050709">
 
-    <!-- Dismiss tap-outside area -->
+    <!-- Tap-outside dismiss area -->
     <View
         android:id="@+id/touch_dismiss"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Menu panel — slides up from bottom -->
+    <!-- ── Panel — slides up from bottom ── -->
     <LinearLayout
         android:id="@+id/panel_menu"
         android:layout_width="match_parent"
@@ -25,60 +25,87 @@
         android:layout_gravity="bottom"
         android:orientation="vertical"
         android:background="@drawable/bg_launch_panel"
-        android:paddingTop="12dp"
-        android:paddingBottom="24dp"
+        android:paddingTop="0dp"
+        android:paddingBottom="28dp"
         android:elevation="16dp">
 
-        <!-- Drag handle -->
+        <!-- ── Top red stripe — the heist suit stripe ── -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:background="@color/red_primary"
+            android:layout_marginBottom="0dp" />
+
+        <!-- ── Drag handle ── -->
         <View
             android:layout_width="40dp"
             android:layout_height="4dp"
             android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="20dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="18dp"
             android:background="@drawable/bg_drag_handle" />
 
-        <!-- Header row: engine status + session info -->
+        <!-- ── IX brand header row ── -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:paddingBottom="16dp"
             android:gravity="center_vertical">
 
-            <!-- Status pill -->
+            <!-- Left: IX mark + title -->
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:background="@drawable/bg_status_pill"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="6dp">
+                android:orientation="vertical">
 
-                <View
-                    android:id="@+id/dot_engine_status"
-                    android:layout_width="8dp"
-                    android:layout_height="8dp"
-                    android:background="@drawable/dot_status"
-                    android:layout_marginEnd="8dp" />
-
-                <TextView
-                    android:id="@+id/tv_engine_status"
+                <!-- Status pill: engine active -->
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Engine Active"
-                    android:textColor="@color/status_ok"
-                    android:textSize="12sp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bg_status_pill"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="5dp">
+
+                    <View
+                        android:id="@+id/dot_engine_status"
+                        android:layout_width="7dp"
+                        android:layout_height="7dp"
+                        android:background="@drawable/dot_status"
+                        android:layout_marginEnd="7dp" />
+
+                    <TextView
+                        android:id="@+id/tv_engine_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Engine Active"
+                        android:textColor="@color/status_ok"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:letterSpacing="0.04" />
+                </LinearLayout>
+
+                <!-- INVISIBLE X — heist codename -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="INVISIBLE X"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.04" />
+                    android:letterSpacing="0.06"
+                    android:layout_marginTop="10dp" />
             </LinearLayout>
 
-            <View android:layout_width="0dp" android:layout_height="0dp"
-                android:layout_weight="1" />
-
-            <!-- Saved login info -->
+            <!-- Right: saved session info -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -92,7 +119,8 @@
                     android:text="Key: —"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp"
-                    android:fontFamily="monospace" />
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="3dp" />
 
                 <TextView
                     android:id="@+id/tv_menu_expiry"
@@ -100,29 +128,33 @@
                     android:layout_height="wrap_content"
                     android:text="Expires: —"
                     android:textColor="@color/text_tertiary"
-                    android:textSize="10sp" />
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Section divider -->
+        <!-- ── Divider ── -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="16dp"
-            android:background="@color/divider" />
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="18dp"
+            android:background="@color/stroke_accent" />
 
-        <!-- Section label: DRIVER -->
+        <!-- ── DRIVER section label ── -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:paddingBottom="8dp"
             android:text="DRIVER"
             android:textColor="@color/text_label"
             android:textSize="10sp"
+            android:textStyle="bold"
             android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.12" />
+            android:letterSpacing="0.20" />
 
         <!-- Driver list — max 4 visible, scrollable -->
         <ListView
@@ -135,7 +167,8 @@
             android:dividerHeight="1dp"
             android:scrollbars="none"
             android:background="@color/bg_card"
-            android:layout_marginHorizontal="20dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
             android:paddingTop="4dp"
             android:paddingBottom="4dp" />
 
@@ -145,71 +178,79 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:gravity="center"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:text="No drivers in assets/drivers/"
             android:textColor="@color/text_tertiary"
             android:textSize="12sp"
             android:visibility="gone" />
 
-        <!-- Load selected driver button -->
+        <!-- LOAD DRIVER button — primary action -->
         <Button
             android:id="@+id/btn_menu_load_driver"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginTop="12dp"
+            android:layout_height="50dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="14dp"
             android:background="@drawable/bg_button_red"
             android:text="LOAD DRIVER"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
             android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.08"
+            android:letterSpacing="0.10"
             android:enabled="false" />
 
-        <!-- Driver status -->
+        <!-- Driver operation status -->
         <TextView
             android:id="@+id/tv_menu_driver_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:paddingTop="8dp"
             android:textSize="12sp"
+            android:fontFamily="sans-serif"
+            android:gravity="center"
             android:visibility="gone" />
 
-        <!-- Section divider -->
+        <!-- ── Divider ── -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="18dp"
             android:background="@color/divider" />
 
-        <!-- Section label: QUICK ACTIONS -->
+        <!-- ── QUICK ACTIONS section label ── -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:paddingBottom="12dp"
             android:text="QUICK ACTIONS"
             android:textColor="@color/text_label"
             android:textSize="10sp"
+            android:textStyle="bold"
             android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.12" />
+            android:letterSpacing="0.20" />
 
-        <!-- Action buttons row -->
+        <!-- Action buttons row: MERGE TILE + HIDE ICON -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <!-- Merge tile button -->
             <Button
                 android:id="@+id/btn_menu_merge_tile"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="46dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="8dp"
                 android:background="@drawable/bg_button_ghost"
@@ -217,13 +258,12 @@
                 android:textColor="@color/text_primary"
                 android:textSize="11sp"
                 android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.06" />
+                android:letterSpacing="0.08" />
 
-            <!-- Hide icon button -->
             <Button
                 android:id="@+id/btn_menu_hide_icon"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="46dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
                 android:background="@drawable/bg_button_ghost"
@@ -231,26 +271,30 @@
                 android:textColor="@color/text_primary"
                 android:textSize="11sp"
                 android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.06" />
+                android:letterSpacing="0.08" />
         </LinearLayout>
 
-        <!-- Tile merge status -->
+        <!-- Tile action feedback -->
         <TextView
             android:id="@+id/tv_tile_merge_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
             android:paddingTop="8dp"
             android:textSize="11sp"
+            android:fontFamily="sans-serif"
+            android:gravity="center"
             android:visibility="gone" />
 
-        <!-- Close button -->
+        <!-- CLOSE — dismisses the overlay -->
         <Button
             android:id="@+id/btn_menu_close"
             android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginTop="16dp"
+            android:layout_height="46dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="18dp"
             android:background="@drawable/bg_button_ghost"
             android:text="CLOSE"
             android:textColor="@color/text_secondary"

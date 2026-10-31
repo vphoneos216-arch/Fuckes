@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Themes — Money Heist / La Casa de Papel.
+  Absolute darkness. Crimson authority. The Professor's precision.
+-->
 <resources>
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/red_primary</item>
         <item name="colorPrimaryDark">@color/red_dark</item>
-        <item name="colorAccent">@color/red_primary</item>
+        <item name="colorAccent">@color/red_accent</item>
         <item name="android:windowBackground">@color/bg_black</item>
+        <!-- Near-pure black chrome — mask darkness -->
         <item name="android:statusBarColor">@color/status_bar</item>
-        <item name="android:navigationBarColor">@color/bg_black</item>
+        <item name="android:navigationBarColor">@color/nav_bg</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:fontFamily">sans-serif</item>
@@ -21,45 +26,61 @@
         <item name="android:background">@drawable/bg_input</item>
     </style>
 
+    <!-- Primary action button — deep crimson, bold authority -->
     <style name="RedButton" parent="Widget.MaterialComponents.Button">
         <item name="android:backgroundTint">@color/red_primary</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColor">#FFFFFF</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:letterSpacing">0.1</item>
-        <item name="cornerRadius">8dp</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="cornerRadius">6dp</item>
+        <item name="android:textAllCaps">true</item>
     </style>
 
+    <!-- Outline variant — red border, transparent fill -->
     <style name="RedOutlineButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
         <item name="strokeColor">@color/red_primary</item>
-        <item name="android:textColor">@color/red_primary</item>
+        <item name="android:textColor">@color/red_accent</item>
         <item name="android:textStyle">bold</item>
-        <item name="cornerRadius">8dp</item>
+        <item name="android:letterSpacing">0.10</item>
+        <item name="cornerRadius">6dp</item>
     </style>
 
+    <!-- Cards — barely-lifted dark surface, red-tinted border -->
     <style name="CardStyle" parent="Widget.MaterialComponents.CardView">
         <item name="cardBackgroundColor">@color/bg_card</item>
         <item name="strokeColor">@color/stroke_dim</item>
         <item name="strokeWidth">1dp</item>
-        <item name="cardCornerRadius">12dp</item>
+        <item name="cardCornerRadius">10dp</item>
         <item name="cardElevation">0dp</item>
     </style>
 
+    <!-- Section labels — ALL CAPS crimson, like mission briefings -->
     <style name="SectionTitle">
-        <item name="android:textSize">11sp</item>
+        <item name="android:textSize">10sp</item>
         <item name="android:textColor">@color/red_primary</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:letterSpacing">0.15</item>
+        <item name="android:letterSpacing">0.20</item>
         <item name="android:textAllCaps">true</item>
     </style>
 
+    <!-- Body text — off-white, clean readability -->
     <style name="BodyText">
         <item name="android:textSize">14sp</item>
         <item name="android:textColor">@color/text_primary</item>
+        <item name="android:lineSpacingExtra">2dp</item>
     </style>
 
+    <!-- Secondary / hint text — muted grey -->
     <style name="HintText">
         <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <!-- Monospace data labels — key names, IDs, driver names -->
+    <style name="MonoLabel">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:fontFamily">monospace</item>
     </style>
 
     <!-- Transparent overlay theme for LaunchMenuActivity -->
@@ -71,7 +92,7 @@
         <item name="android:windowContentOverlay">@null</item>
         <item name="colorPrimary">@color/red_primary</item>
         <item name="colorPrimaryDark">@color/red_dark</item>
-        <item name="colorAccent">@color/red_primary</item>
+        <item name="colorAccent">@color/red_accent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>

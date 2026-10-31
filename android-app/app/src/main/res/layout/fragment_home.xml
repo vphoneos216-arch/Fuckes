@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  fragment_home.xml — Money Heist / La Casa de Papel dashboard.
+  Mission briefing style. Absolute black. Crimson sections. The Professor's control room.
+-->
 <ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -16,13 +20,13 @@
         android:paddingTop="28dp"
         android:paddingBottom="32dp">
 
-        <!-- Header row -->
+        <!-- ── Header row: codename + status pill ── -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="22dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -30,44 +34,47 @@
                 android:layout_weight="1"
                 android:orientation="vertical">
 
+                <!-- Mission label — red ALL CAPS -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="DASHBOARD"
+                    android:text="OPERATION"
                     android:textSize="10sp"
                     android:textColor="@color/text_label"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.20"
+                    android:letterSpacing="0.22"
                     android:layout_marginBottom="4dp" />
 
+                <!-- Codename — bold heist identity -->
                 <TextView
                     android:id="@+id/tv_welcome"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="InvisibleX"
-                    android:textSize="26sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_primary"
-                    android:fontFamily="sans-serif-medium" />
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="-0.01" />
             </LinearLayout>
 
-            <!-- Status pill -->
+            <!-- Status pill — auth state -->
             <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="34dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
                 android:background="@drawable/bg_status_pill"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp">
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp">
 
                 <View
                     android:id="@+id/dot_auth"
                     android:layout_width="7dp"
                     android:layout_height="7dp"
                     android:background="@drawable/dot_status"
-                    android:layout_marginEnd="7dp" />
+                    android:layout_marginEnd="8dp" />
 
                 <TextView
                     android:id="@+id/tv_auth_status"
@@ -77,19 +84,27 @@
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:textColor="@color/status_ok"
-                    android:fontFamily="sans-serif-medium" />
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.04" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Session status card -->
+        <!-- ── Red accent divider — heist stripe ── -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/stroke_accent"
+            android:layout_marginBottom="22dp" />
+
+        <!-- ── SESSION card — classified intel ── -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="14dp"
+            app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
-            app:strokeColor="@color/stroke_dim"
+            app:strokeColor="@color/stroke_accent"
             app:strokeWidth="1dp"
             android:layout_marginBottom="14dp">
 
@@ -99,16 +114,17 @@
                 android:orientation="vertical"
                 android:padding="18dp">
 
+                <!-- Session section label -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="SESSION"
+                    android:text="SESSION INTEL"
                     android:textSize="10sp"
                     android:textColor="@color/text_label"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.18"
-                    android:layout_marginBottom="14dp" />
+                    android:letterSpacing="0.20"
+                    android:layout_marginBottom="16dp" />
 
                 <!-- Expiry row -->
                 <LinearLayout
@@ -116,7 +132,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="10dp">
+                    android:layout_marginBottom="12dp">
 
                     <TextView
                         android:layout_width="0dp"
@@ -134,7 +150,7 @@
                         android:text="—"
                         android:textSize="13sp"
                         android:textColor="@color/text_primary"
-                        android:fontFamily="sans-serif-medium" />
+                        android:fontFamily="monospace" />
                 </LinearLayout>
 
                 <!-- Divider -->
@@ -142,9 +158,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:background="@color/divider"
-                    android:layout_marginBottom="10dp" />
+                    android:layout_marginBottom="12dp" />
 
-                <!-- Key row -->
+                <!-- Key / license row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -173,13 +189,13 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Quick Settings Tile card -->
+        <!-- ── TILE card — deploy the tile ── -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_tile"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="14dp"
+            app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
             app:strokeColor="@color/stroke_dim"
             app:strokeWidth="1dp"
@@ -199,8 +215,8 @@
                     android:textColor="@color/text_label"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.18"
-                    android:layout_marginBottom="6dp" />
+                    android:letterSpacing="0.20"
+                    android:layout_marginBottom="8dp" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -210,7 +226,7 @@
                     android:textColor="@color/text_secondary"
                     android:fontFamily="sans-serif"
                     android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="14dp" />
+                    android:layout_marginBottom="16dp" />
 
                 <Button
                     android:id="@+id/btn_add_tile"
@@ -218,22 +234,22 @@
                     android:layout_height="50dp"
                     android:text="@string/btn_add_tile"
                     android:background="@drawable/bg_button_red"
-                    android:textColor="@color/text_primary"
+                    android:textColor="#FFFFFF"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.08"
+                    android:letterSpacing="0.10"
                     android:textSize="13sp" />
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- App Visibility card -->
+        <!-- ── APP STEALTH card — vanish from launcher ── -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_visibility"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="14dp"
+            app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
             app:strokeColor="@color/stroke_dim"
             app:strokeWidth="1dp"
@@ -253,8 +269,8 @@
                     android:textColor="@color/text_label"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.18"
-                    android:layout_marginBottom="6dp" />
+                    android:letterSpacing="0.20"
+                    android:layout_marginBottom="8dp" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -263,8 +279,8 @@
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     android:fontFamily="sans-serif"
-                    android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="14dp" />
+                    android:lineSpacingExtra="3dp"
+                    android:layout_marginBottom="16dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -278,10 +294,11 @@
                         android:layout_weight="1"
                         android:text="@string/btn_hide_app"
                         android:background="@drawable/bg_button_red"
-                        android:textColor="@color/text_primary"
+                        android:textColor="#FFFFFF"
                         android:textStyle="bold"
                         android:fontFamily="sans-serif-medium"
                         android:textSize="12sp"
+                        android:letterSpacing="0.08"
                         android:layout_marginEnd="8dp" />
 
                     <Button
@@ -295,14 +312,14 @@
                         android:textStyle="bold"
                         android:fontFamily="sans-serif-medium"
                         android:textSize="12sp"
+                        android:letterSpacing="0.08"
                         android:layout_marginStart="8dp" />
 
                 </LinearLayout>
-
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Logout -->
+        <!-- ── LOGOUT — ghost button, low prominence ── -->
         <Button
             android:id="@+id/btn_logout"
             android:layout_width="match_parent"
@@ -312,9 +329,9 @@
             android:textColor="@color/text_secondary"
             android:textStyle="bold"
             android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.08"
+            android:letterSpacing="0.10"
             android:textSize="13sp"
-            android:layout_marginTop="8dp" />
+            android:layout_marginTop="6dp" />
 
     </LinearLayout>
 </ScrollView>

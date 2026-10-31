@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  InvisibleX Quick Settings Tile icon.
+  Bold X in the Dali mask eye-hole style — deep red / crimson.
+  Visible against both light and dark QS tile backgrounds.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="?attr/colorControlNormal">
-    <!-- X icon for quick settings tile -->
+
+    <!-- Bold X strokes — Money Heist red -->
     <path
-        android:fillColor="#FF2D2D"
-        android:pathData="M3,3 L9,12 L3,21 L6,21 L12,13 L18,21 L21,21 L15,12 L21,3 L18,3 L12,11 L6,3 Z" />
+        android:fillColor="#C62828"
+        android:pathData="M2,2 L9.5,12 L2,22 L5.5,22 L12,13.3 L18.5,22 L22,22 L14.5,12 L22,2 L18.5,2 L12,10.7 L5.5,2 Z" />
+
 </vector>

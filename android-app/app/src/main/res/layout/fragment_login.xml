@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  fragment_login.xml — Money Heist / La Casa de Papel aesthetic.
+  The Professor's precision auth screen. Dark. Purposeful. Red.
+-->
 <ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -12,14 +16,14 @@
         android:layout_height="wrap_content"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
-        android:paddingTop="56dp"
+        android:paddingTop="52dp"
         android:paddingBottom="32dp">
 
-        <!-- Logo -->
+        <!-- ── Dali mask icon — the face of the operation ── -->
         <ImageView
             android:id="@+id/iv_logo"
-            android:layout_width="72dp"
-            android:layout_height="72dp"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
             android:src="@drawable/ic_app_icon"
             android:scaleType="centerCrop"
             android:background="@drawable/bg_logo_circle"
@@ -27,59 +31,60 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- App title -->
+        <!-- ── INVISIBLE X — bold heist codename ── -->
         <TextView
             android:id="@+id/tv_login_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/login_title"
-            android:textSize="30sp"
+            android:textSize="32sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
             android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.01"
-            android:layout_marginTop="20dp"
+            android:letterSpacing="-0.01"
+            android:layout_marginTop="18dp"
             app:layout_constraintTop_toBottomOf="@id/iv_logo"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Subtitle -->
+        <!-- ── Tagline — Professor's calm authority ── -->
         <TextView
             android:id="@+id/tv_subtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/login_subtitle"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textColor="@color/text_secondary"
             android:fontFamily="sans-serif"
-            android:letterSpacing="0.01"
+            android:letterSpacing="0.06"
             android:layout_marginTop="6dp"
             app:layout_constraintTop_toBottomOf="@id/tv_login_title"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Red accent line -->
+        <!-- ── Red accent divider line ── -->
         <View
-            android:layout_width="48dp"
+            android:id="@+id/divider_accent"
+            android:layout_width="56dp"
             android:layout_height="2dp"
             android:background="@color/red_primary"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="18dp"
             app:layout_constraintTop_toBottomOf="@id/tv_subtitle"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Auth card -->
+        <!-- ── Auth card — mission briefing panel ── -->
         <androidx.cardview.widget.CardView
             android:id="@+id/card_auth"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="@color/bg_card"
-            app:cardCornerRadius="16dp"
+            app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
-            app:strokeColor="@color/stroke_dim"
+            app:strokeColor="@color/stroke_accent"
             app:strokeWidth="1dp"
-            android:layout_marginTop="32dp"
-            app:layout_constraintTop_toBottomOf="@id/tv_subtitle"
+            android:layout_marginTop="28dp"
+            app:layout_constraintTop_toBottomOf="@id/divider_accent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
@@ -87,29 +92,32 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="22dp">
 
-                <!-- Section label -->
+                <!-- Section label — mission style -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="LICENSE KEY"
-                    android:textSize="10sp"
+                    android:textSize="9sp"
                     android:textColor="@color/text_label"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.18"
-                    android:layout_marginBottom="10dp" />
+                    android:letterSpacing="0.22"
+                    android:layout_marginBottom="12dp" />
 
-                <!-- Key input field -->
+                <!-- Key input field — monospace terminal style -->
                 <EditText
                     android:id="@+id/et_key"
                     android:layout_width="match_parent"
-                    android:layout_height="56dp"
+                    android:layout_height="54dp"
                     android:hint="@string/hint_key"
                     android:inputType="textVisiblePassword"
                     android:fontFamily="monospace"
-                    android:textSize="16sp"
+                    android:textSize="15sp"
                     android:textColor="@color/text_primary"
                     android:textColorHint="@color/text_tertiary"
                     android:background="@drawable/bg_input_field"
@@ -117,22 +125,22 @@
                     android:paddingEnd="16dp"
                     android:imeOptions="actionDone"
                     android:maxLines="1"
-                    android:letterSpacing="0.04" />
+                    android:letterSpacing="0.06" />
 
-                <!-- Status text -->
+                <!-- Status feedback text -->
                 <TextView
                     android:id="@+id/tv_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     android:fontFamily="sans-serif"
                     android:gravity="center"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:visibility="gone" />
 
-                <!-- Progress bar -->
+                <!-- Loading indicator — red spinner -->
                 <ProgressBar
                     android:id="@+id/progress_bar"
                     android:layout_width="wrap_content"
@@ -142,64 +150,68 @@
                     android:visibility="gone"
                     android:layout_marginTop="8dp" />
 
-                <!-- Authenticate button -->
+                <!-- AUTHENTICATE — primary action button -->
                 <Button
                     android:id="@+id/btn_login"
                     android:layout_width="match_parent"
-                    android:layout_height="56dp"
+                    android:layout_height="52dp"
                     android:text="@string/btn_login"
                     android:background="@drawable/bg_button_red"
-                    android:textColor="@color/text_primary"
+                    android:textColor="#FFFFFF"
                     android:textStyle="bold"
                     android:fontFamily="sans-serif-medium"
-                    android:letterSpacing="0.10"
-                    android:textSize="14sp"
-                    android:layout_marginTop="16dp" />
+                    android:letterSpacing="0.12"
+                    android:textSize="13sp"
+                    android:layout_marginTop="18dp" />
 
-                <!-- Saved key hint -->
+                <!-- Expiry hint below button -->
                 <TextView
                     android:id="@+id/tv_expiry"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:textColor="@color/text_secondary"
-                    android:fontFamily="sans-serif"
+                    android:fontFamily="monospace"
                     android:gravity="center"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:visibility="gone" />
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Security badge -->
+        <!-- ── Security badge — encrypted / classified ── -->
         <LinearLayout
+            android:id="@+id/layout_badge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="22dp"
             app:layout_constraintTop_toBottomOf="@id/card_auth"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
             <View
-                android:layout_width="4dp"
-                android:layout_height="4dp"
-                android:background="@drawable/dot_status_dim" />
+                android:layout_width="5dp"
+                android:layout_height="5dp"
+                android:background="@drawable/dot_status_dim"
+                android:layout_marginEnd="8dp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="  End-to-end encrypted · Device-bound  "
-                android:textSize="11sp"
+                android:text="END-TO-END ENCRYPTED  ·  DEVICE-BOUND"
+                android:textSize="9sp"
                 android:textColor="@color/text_tertiary"
-                android:fontFamily="sans-serif" />
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.14" />
 
             <View
-                android:layout_width="4dp"
-                android:layout_height="4dp"
-                android:background="@drawable/dot_status_dim" />
+                android:layout_width="5dp"
+                android:layout_height="5dp"
+                android:background="@drawable/dot_status_dim"
+                android:layout_marginStart="8dp" />
 
         </LinearLayout>
 

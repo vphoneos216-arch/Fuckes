@@ -1,50 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ── Core brand ─────────────────────────────────────── -->
-    <color name="red_primary">#E53935</color>
-    <color name="red_accent">#FF5252</color>
-    <color name="red_dim">#3A1A1A</color>
-    <color name="red_dark">#B71C1C</color>
+    <!-- ── Money Heist / La Casa de Papel brand ───────────────── -->
+    <!-- Deep crimson — the heist suit color                       -->
+    <color name="red_primary">#C62828</color>
+    <!-- Bright accent — active states, pressed, highlights        -->
+    <color name="red_accent">#EF5350</color>
+    <!-- Muted red — chip backgrounds, dim overlays                -->
+    <color name="red_dim">#4A1010</color>
+    <!-- Near-black red — borders, subtle tints                    -->
+    <color name="red_dark">#7B0000</color>
+    <!-- Warm gold — Professor's precision / Bella Ciao accent     -->
+    <color name="gold_accent">#D4A017</color>
+    <color name="gold_dim">#2A1F00</color>
 
-    <!-- ── System chrome ──────────────────────────────────── -->
-    <color name="status_bar">#060809</color>
-    <color name="nav_bg">#0D1117</color>
-    <color name="nav_selected">#E53935</color>
-    <color name="nav_unselected">#555B66</color>
+    <!-- ── System chrome ──────────────────────────────────────── -->
+    <color name="status_bar">#030507</color>
+    <color name="nav_bg">#060A0E</color>
+    <color name="nav_selected">#C62828</color>
+    <color name="nav_unselected">#444C5C</color>
 
-    <!-- ── Background hierarchy ───────────────────────────── -->
-    <color name="bg_black">#080B0F</color>
-    <color name="bg_card">#0F1318</color>
-    <color name="bg_surface">#161B22</color>
-    <color name="bg_elevated">#1C2230</color>
-    <color name="bg_input">#0D1117</color>
+    <!-- ── Background hierarchy — near-pure black base ─────────  -->
+    <!-- True black void — the mask / the dark                     -->
+    <color name="bg_black">#050709</color>
+    <!-- Card surface — barely lifted                              -->
+    <color name="bg_card">#0A0D12</color>
+    <!-- Panel surface — overlay, sheets                           -->
+    <color name="bg_surface">#0F1419</color>
+    <!-- Elevated elements — modals, tooltips                      -->
+    <color name="bg_elevated">#161D26</color>
+    <!-- Input fields                                              -->
+    <color name="bg_input">#080B0F</color>
+    <!-- Red-tinted surface — selected states                      -->
+    <color name="bg_red_surface">#1A0808</color>
 
-    <!-- ── Typography ─────────────────────────────────────── -->
-    <color name="text_primary">#F0F4FF</color>
-    <color name="text_secondary">#8892A4</color>
-    <color name="text_tertiary">#4A5568</color>
-    <color name="text_label">#E53935</color>
-    <color name="text_hint">#4A5568</color>
+    <!-- ── Typography ─────────────────────────────────────────── -->
+    <!-- Off-white — crisp, not harsh                              -->
+    <color name="text_primary">#EEF2FF</color>
+    <!-- Muted — secondary labels                                  -->
+    <color name="text_secondary">#7A8599</color>
+    <!-- Dim — tertiary, hints                                     -->
+    <color name="text_tertiary">#3D4858</color>
+    <!-- Section labels — crimson red                              -->
+    <color name="text_label">#C62828</color>
+    <!-- Placeholder / hint text                                   -->
+    <color name="text_hint">#3D4858</color>
+    <!-- Gold label variant                                        -->
+    <color name="text_gold">#D4A017</color>
 
-    <!-- ── Status ─────────────────────────────────────────── -->
-    <color name="status_ok">#00E676</color>
-    <color name="status_fail">#E53935</color>
-    <color name="status_warn">#FF9800</color>
-    <color name="status_ok_dim">#0D2A1A</color>
-    <color name="status_fail_dim">#2A0D0D</color>
+    <!-- ── Status indicators ──────────────────────────────────── -->
+    <color name="status_ok">#00C853</color>
+    <color name="status_fail">#C62828</color>
+    <color name="status_warn">#E65100</color>
+    <color name="status_ok_dim">#071A0E</color>
+    <color name="status_fail_dim">#1A0707</color>
 
-    <!-- ── Borders / dividers ─────────────────────────────── -->
-    <color name="stroke_dim">#1E2730</color>
-    <color name="stroke_accent">#2A3444</color>
-    <color name="divider">#141920</color>
+    <!-- ── Borders / dividers ─────────────────────────────────── -->
+    <!-- Near-invisible thin line                                  -->
+    <color name="stroke_dim">#161C24</color>
+    <!-- Red-tinted accent border                                  -->
+    <color name="stroke_accent">#3D1515</color>
+    <!-- Table row divider                                         -->
+    <color name="divider">#0D1018</color>
 
-    <!-- ── Chips / badges ─────────────────────────────────── -->
-    <color name="chip_read_bg">#0D2035</color>
+    <!-- ── Permission chips / badges ─────────────────────────── -->
+    <!-- READ — ice blue (surveillance / data)                    -->
+    <color name="chip_read_bg">#091829</color>
     <color name="chip_read_text">#4FC3F7</color>
-    <color name="chip_write_bg">#2A1A00</color>
-    <color name="chip_write_text">#FFB74D</color>
-    <color name="chip_exec_bg">#1A2A00</color>
-    <color name="chip_exec_text">#AED581</color>
-    <color name="chip_root_bg">#3A1A1A</color>
-    <color name="chip_root_text">#EF5350</color>
+    <!-- WRITE — amber (dangerous / tamper)                       -->
+    <color name="chip_write_bg">#1F1200</color>
+    <color name="chip_write_text">#FFB300</color>
+    <!-- EXEC — acid green (execution / run)                      -->
+    <color name="chip_exec_bg">#0F1A00</color>
+    <color name="chip_exec_text">#76FF03</color>
+    <!-- ROOT — blood red (maximum access / heist level)          -->
+    <color name="chip_root_bg">#2A0000</color>
+    <color name="chip_root_text">#FF1744</color>
 </resources>

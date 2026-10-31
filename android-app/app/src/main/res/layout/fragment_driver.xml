@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  fragment_driver.xml — Money Heist driver section.
+  Kernel driver selection. Dark surface. Crimson authority.
+  Every driver loaded goes through security gate — no exceptions.
+-->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -8,25 +13,35 @@
     android:background="@color/bg_black"
     android:padding="20dp">
 
-    <!-- Section title -->
+    <!-- ── Header: section label + title ── -->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="DRIVER"
-        android:textSize="11sp"
-        android:textColor="@color/red_primary"
+        android:text="KERNEL MODULE"
+        android:textSize="10sp"
+        android:textColor="@color/text_label"
         android:textStyle="bold"
-        android:letterSpacing="0.2"
-        android:layout_marginBottom="4dp" />
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.22"
+        android:layout_marginBottom="5dp" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Kernel Driver"
-        android:textSize="24sp"
+        android:text="Driver Select"
+        android:textSize="26sp"
         android:textStyle="bold"
         android:textColor="@color/text_primary"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="-0.01"
         android:layout_marginBottom="6dp" />
+
+    <!-- Accent divider -->
+    <View
+        android:layout_width="42dp"
+        android:layout_height="2dp"
+        android:background="@color/red_primary"
+        android:layout_marginBottom="10dp" />
 
     <TextView
         android:layout_width="match_parent"
@@ -34,9 +49,11 @@
         android:text="@string/driver_select_hint"
         android:textSize="12sp"
         android:textColor="@color/text_secondary"
+        android:fontFamily="sans-serif"
+        android:lineSpacingExtra="2dp"
         android:layout_marginBottom="20dp" />
 
-    <!-- Driver list card -->
+    <!-- ── Driver list card ── -->
     <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -44,7 +61,7 @@
         app:cardBackgroundColor="@color/bg_card"
         app:cardCornerRadius="12dp"
         app:cardElevation="0dp"
-        app:strokeColor="@color/stroke_dim"
+        app:strokeColor="@color/stroke_accent"
         app:strokeWidth="1dp"
         android:layout_marginBottom="16dp">
 
@@ -59,10 +76,11 @@
                 android:layout_height="wrap_content"
                 android:text="AVAILABLE DRIVERS"
                 android:textSize="10sp"
-                android:textColor="@color/red_primary"
+                android:textColor="@color/text_label"
                 android:textStyle="bold"
-                android:letterSpacing="0.15"
-                android:layout_marginBottom="10dp" />
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.20"
+                android:layout_marginBottom="12dp" />
 
             <!-- Empty state -->
             <TextView
@@ -72,8 +90,9 @@
                 android:text="@string/driver_none"
                 android:textSize="13sp"
                 android:textColor="@color/text_secondary"
+                android:fontFamily="sans-serif"
                 android:gravity="center"
-                android:padding="24dp"
+                android:padding="28dp"
                 android:visibility="gone" />
 
             <!-- Driver list -->
@@ -90,15 +109,15 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Selected driver info -->
+    <!-- ── Selected driver info chip ── -->
     <androidx.cardview.widget.CardView
         android:id="@+id/card_selected_driver"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:cardBackgroundColor="@color/bg_surface"
+        app:cardBackgroundColor="@color/bg_red_surface"
         app:cardCornerRadius="10dp"
         app:cardElevation="0dp"
-        app:strokeColor="@color/stroke_dim"
+        app:strokeColor="@color/stroke_accent"
         app:strokeWidth="1dp"
         android:visibility="gone"
         android:layout_marginBottom="12dp">
@@ -110,6 +129,7 @@
             android:padding="14dp"
             android:gravity="center_vertical">
 
+            <!-- Left: label + driver name -->
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -123,7 +143,9 @@
                     android:textSize="9sp"
                     android:textColor="@color/red_primary"
                     android:textStyle="bold"
-                    android:letterSpacing="0.15" />
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.18"
+                    android:layout_marginBottom="3dp" />
 
                 <TextView
                     android:id="@+id/tv_selected_driver"
@@ -135,30 +157,33 @@
                     android:fontFamily="monospace" />
             </LinearLayout>
 
+            <!-- Right: file size -->
             <TextView
                 android:id="@+id/tv_driver_size"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text=""
                 android:textSize="11sp"
-                android:textColor="@color/text_secondary" />
+                android:textColor="@color/text_secondary"
+                android:fontFamily="sans-serif" />
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Load Driver button -->
+    <!-- ── LOAD DRIVER button — primary action ── -->
     <Button
         android:id="@+id/btn_load_driver"
         android:layout_width="match_parent"
         android:layout_height="52dp"
         android:text="@string/btn_load_driver"
         android:background="@drawable/bg_button_red"
-        android:textColor="@color/text_primary"
+        android:textColor="#FFFFFF"
         android:textStyle="bold"
-        android:letterSpacing="0.08"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.10"
         android:textSize="14sp"
         android:enabled="false" />
 
-    <!-- Progress (auth + extraction) -->
+    <!-- Loading indicator -->
     <ProgressBar
         android:id="@+id/progress_driver"
         android:layout_width="wrap_content"
@@ -166,9 +191,9 @@
         android:layout_gravity="center_horizontal"
         android:indeterminateTint="@color/red_primary"
         android:visibility="gone"
-        android:layout_marginTop="6dp" />
+        android:layout_marginTop="8dp" />
 
-    <!-- Status -->
+    <!-- Operation status feedback -->
     <TextView
         android:id="@+id/tv_driver_status"
         android:layout_width="match_parent"
@@ -176,6 +201,7 @@
         android:text=""
         android:textSize="12sp"
         android:textColor="@color/status_ok"
+        android:fontFamily="sans-serif"
         android:gravity="center"
         android:layout_marginTop="10dp" />
 
