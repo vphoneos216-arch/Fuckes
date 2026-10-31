@@ -4,6 +4,11 @@
     <color name="red_primary">#E53935</color>
     <color name="red_accent">#FF5252</color>
     <color name="red_dim">#3A1A1A</color>
+    <color name="red_dark">#B71C1C</color>
+
+    <!-- ── System chrome ──────────────────────────────────── -->
+    <color name="status_bar">#060809</color>
+    <color name="nav_bg">#0D1117</color>
 
     <!-- ── Background hierarchy ───────────────────────────── -->
     <color name="bg_black">#080B0F</color>
@@ -17,6 +22,7 @@
     <color name="text_secondary">#8892A4</color>
     <color name="text_tertiary">#4A5568</color>
     <color name="text_label">#E53935</color>
+    <color name="text_hint">#4A5568</color>
 
     <!-- ── Status ─────────────────────────────────────────── -->
     <color name="status_ok">#00E676</color>
