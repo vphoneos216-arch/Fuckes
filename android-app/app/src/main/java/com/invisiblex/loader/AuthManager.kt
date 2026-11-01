@@ -64,7 +64,7 @@ class AuthManager private constructor() {
      */
     fun login(ctx: Context, licenseKey: String, callback: AuthCallback) {
         executor.execute {
-            val authClient = AuthClient(AppPrefs.getServerUrl())
+            val authClient = AuthClient()
             val result = authClient.authenticate(ctx, licenseKey)
 
             if (result.success) {
@@ -109,7 +109,7 @@ class AuthManager private constructor() {
             // No separate session-validation endpoint exists server-side —
             // the only real check is a full re-login with the saved key
             // (mirrors the binary's own perform_hwid_auth()).
-            val authClient = AuthClient(AppPrefs.getServerUrl())
+            val authClient = AuthClient()
             val result = authClient.authenticate(ctx, savedKey)
             if (result.success) {
                 AppPrefs.saveSession(result.sessionToken ?: "", result.sessionExpiresAt)
@@ -155,7 +155,7 @@ class AuthManager private constructor() {
             }
             // Final pre-execute gate — same re-login check as above, since
             // the server has no lighter "just validate" endpoint.
-            val authClient = AuthClient(AppPrefs.getServerUrl())
+            val authClient = AuthClient()
             val result = authClient.authenticate(ctx, savedKey)
             if (result.success) {
                 AppPrefs.saveSession(result.sessionToken ?: "", result.sessionExpiresAt)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gold gradient for the primary "LAUNCH GAME" action — visually
+     distinct from the crimson action buttons elsewhere, so the one
+     button that drives both the game and the engine reads as the
+     hero control on the Home screen. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="90"
+        android:startColor="#E6B325"
+        android:endColor="@color/gold_accent" />
+    <corners android:radius="12dp" />
+</shape>

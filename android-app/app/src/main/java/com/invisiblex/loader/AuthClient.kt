@@ -19,8 +19,12 @@ import org.json.JSONObject
  * perform_hwid_auth, which just re-runs perform_auth with the saved
  * key). AuthManager re-authenticates with the saved key for both the
  * initial session restore and the pre-execute security gate.
+ *
+ * Takes no URL/config of any kind — the server address lives ONLY in
+ * ix_auth.cpp's native CONNECT_URL constant, never in Kotlin/Java, so
+ * it can't show up as a plain-text string in classes.dex.
  */
-class AuthClient(@Suppress("UNUSED_PARAMETER") ignoredServerUrl: String) {
+class AuthClient {
 
     class AuthResult {
         @JvmField var success: Boolean = false

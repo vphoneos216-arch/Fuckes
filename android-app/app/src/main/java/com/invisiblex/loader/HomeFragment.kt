@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,14 +20,16 @@ import com.invisiblex.loader.databinding.FragmentHomeBinding
  * HomeFragment — main dashboard after login.
  *
  * Sections:
- *   1. Status card — auth status dot, expiry date, key name.
- *   2. Quick Settings tile card — "Add Tile" button.
- *   3. App Visibility card — Hide / Show app icon in launcher.
- *   4. Logout button.
+ *   1. LAUNCH GAME card — opens Free Fire MAX, then attaches the engine.
+ *   2. Status card — auth status dot, expiry date, key name.
+ *   3. Quick Settings tile card — "Add Tile" button.
+ *   4. App Visibility card — Hide / Show app icon in launcher.
+ *   5. Logout button.
  */
 class HomeFragment : Fragment() {
 
     private var binding: FragmentHomeBinding? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -41,6 +45,9 @@ class HomeFragment : Fragment() {
         val b = binding ?: return
 
         refreshStatus()
+
+        // ── Launch Game → attach engine ────────────────────────
+        b.btnLaunchGame.setOnClickListener { attemptLaunchGame() }
 
         // ── Add Quick Settings Tile ───────────────────────────
         b.btnAddTile.setOnClickListener { addQuickSettingsTile() }
@@ -82,6 +89,89 @@ class HomeFragment : Fragment() {
         // Key name — id: tv_key_name
         val keyName = AppPrefs.getKeyName()
         b.tvKeyName.text = getString(R.string.key_format, keyName.ifEmpty { "—" })
+    }
+
+    // ── Launch Game → attach engine ────────────────────────────
+
+    /**
+     * LAUNCH GAME: open Free Fire MAX, give it a moment to come up, then
+     * run through the exact same mandatory gate as every other entry
+     * point (Tile, Driver, LaunchMenu) — AuthManager.securityGate() —
+     * before BinaryExecutor.extractAndExecute() ever runs. The game
+     * launching first does NOT skip or weaken that gate in any way; it
+     * only decides *when* the already-gated execute call fires.
+     */
+    private fun attemptLaunchGame() {
+        val b = binding ?: return
+
+        val launchIntent = requireContext().packageManager
+            .getLaunchIntentForPackage(GAME_PACKAGE)
+        if (launchIntent == null) {
+            showGameStatus(getString(R.string.game_not_installed), false)
+            return
+        }
+
+        b.btnLaunchGame.isEnabled = false
+        b.progressLaunchGame.visibility = View.VISIBLE
+        showGameStatus(getString(R.string.game_launching), null)
+
+        try {
+            startActivity(launchIntent)
+        } catch (e: Exception) {
+            b.btnLaunchGame.isEnabled = true
+            b.progressLaunchGame.visibility = View.GONE
+            showGameStatus(getString(R.string.game_launch_failed), false)
+            return
+        }
+
+        // Give the game a moment to actually come up before attaching —
+        // mirrors the same launch-confirmation window BinaryExecutor
+        // itself uses for the engine process.
+        mainHandler.postDelayed({
+            if (!isAdded) return@postDelayed
+            showGameStatus(getString(R.string.engine_attaching), null)
+            runSecurityGatedExecute()
+        }, GAME_ATTACH_DELAY_MS)
+    }
+
+    /** Never call BinaryExecutor without this gate passing first. */
+    private fun runSecurityGatedExecute() {
+        AuthManager.get().securityGate(requireContext()) { authOk, authMsg ->
+            if (!isAdded) return@securityGate
+            if (!authOk) {
+                finishGameLaunch(getString(R.string.auth_required_driver) + " — " + authMsg, false)
+                return@securityGate
+            }
+            BinaryExecutor.extractAndExecute(requireContext().applicationContext) { execOk, execMsg ->
+                if (!isAdded) return@extractAndExecute
+                finishGameLaunch(
+                    if (execOk) getString(R.string.engine_attach_success) else execMsg,
+                    execOk
+                )
+            }
+        }
+    }
+
+    private fun finishGameLaunch(msg: String, ok: Boolean) {
+        val b = binding ?: return
+        b.btnLaunchGame.isEnabled = true
+        b.progressLaunchGame.visibility = View.GONE
+        showGameStatus(msg, ok)
+    }
+
+    private fun showGameStatus(msg: String, ok: Boolean?) {
+        val b = binding ?: return
+        b.tvLaunchGameStatus.visibility = View.VISIBLE
+        b.tvLaunchGameStatus.text = msg
+        b.tvLaunchGameStatus.setTextColor(
+            requireContext().getColor(
+                when (ok) {
+                    null -> R.color.text_secondary
+                    true -> R.color.status_ok
+                    false -> R.color.status_fail
+                }
+            )
+        )
     }
 
     // ── Quick Settings Tile ───────────────────────────────────
@@ -136,6 +226,15 @@ class HomeFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        mainHandler.removeCallbacksAndMessages(null)
         binding = null
+    }
+
+    companion object {
+        /** Garena Free Fire MAX — the target game for the Launch Game button. */
+        private const val GAME_PACKAGE = "com.dts.freefiremax"
+
+        /** How long to let the game settle before attaching the engine. */
+        private const val GAME_ATTACH_DELAY_MS = 4_000L
     }
 }

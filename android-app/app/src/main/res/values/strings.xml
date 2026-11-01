@@ -22,6 +22,12 @@
     <!-- Home -->
     <string name="home_title">Home</string>
     <string name="home_welcome">Welcome back</string>
+    <string name="btn_launch_game">LAUNCH GAME</string>
+    <string name="game_launching">Opening Free Fire MAX…</string>
+    <string name="game_not_installed">Free Fire MAX is not installed on this device</string>
+    <string name="game_launch_failed">Could not launch Free Fire MAX</string>
+    <string name="engine_attaching">Game launched — attaching engine…</string>
+    <string name="engine_attach_success">Engine attached — you\'re good to go</string>
     <string name="btn_add_tile">Add Quick Settings Tile</string>
     <string name="btn_hide_app">Hide App Icon</string>
     <string name="btn_show_app">Show App Icon</string>

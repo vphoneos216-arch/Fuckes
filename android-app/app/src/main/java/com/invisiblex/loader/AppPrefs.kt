@@ -29,9 +29,6 @@ object AppPrefs {
     private const val KEY_APP_HIDDEN  = "k_app_hidden"
     private const val KEY_DRIVER      = "k_driver"
 
-    private const val DEFAULT_SERVER =
-        "https://adminshop.myvipsite.fun/keydock_connect.php"
-
     private lateinit var sPrefs: SharedPreferences
 
     @Synchronized
@@ -116,26 +113,15 @@ object AppPrefs {
     @JvmStatic
     fun getAppName(): String = sPrefs.getString(KEY_APP_NAME, "InvisibleX") ?: "InvisibleX"
 
-    // [SECURITY FIX] getServerUrl() used to read a user-writable pref
-    // (KEY_SERVER_URL), with the Settings screen's input field merely
-    // UI-disabled as the only thing stopping someone from pointing the
-    // app's login traffic at a server they control (e.g. via a direct
-    // write to EncryptedSharedPreferences, which a disabled EditText does
-    // nothing to prevent). That would let a captured key get silently
-    // replayed against a fake "connect" endpoint, or let an attacker
-    // bypass the real activation/expiry checks entirely — this is
-    // exactly the kind of login compromise that must never be possible.
-    // The auth server URL is now a hardcoded constant, period: nothing
-    // reads or writes a server-url pref any more, and no code path — not
-    // even a rooted device writing the prefs file directly — can change
-    // where AuthManager sends the login request. setServerUrl() is kept
-    // as a harmless no-op only so any existing call site still compiles.
-    @JvmStatic
-    fun setServerUrl(url: String) {
-        // Intentionally does nothing — see note above.
-    }
-    @JvmStatic
-    fun getServerUrl(): String = DEFAULT_SERVER
+    // [SECURITY] There used to be a getServerUrl()/setServerUrl() pair
+    // here backed by a stored preference — even hardcoded-and-ignored,
+    // that constant was still a second, Java-side copy of the real
+    // server URL, sitting in classes.dex in plain text for anyone to
+    // pull with `strings` on the APK. The ONLY place the server URL now
+    // exists anywhere in this app is the native constant CONNECT_URL in
+    // ix_auth.cpp (app side) / login.h (binary side) — nothing on the
+    // Kotlin/Java side reads, writes, or even knows the URL any more.
+    // AuthClient/AuthManager no longer take or pass a URL at all.
 
     @JvmStatic
     fun setCustomLogoPath(path: String) {
