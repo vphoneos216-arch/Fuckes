@@ -36,14 +36,15 @@ class DriverAdapter(
     }
 
     override fun getView(position: Int, convertViewIn: View?, parent: ViewGroup): View {
-        var convertView = convertViewIn
         val holder: ViewHolder
-        if (convertView == null) {
-            convertView = LayoutInflater.from(context).inflate(R.layout.item_driver, parent, false)
-            holder = ViewHolder(convertView)
-            convertView.tag = holder
+        val convertView: View = if (convertViewIn == null) {
+            val inflated = LayoutInflater.from(context).inflate(R.layout.item_driver, parent, false)
+            holder = ViewHolder(inflated)
+            inflated.tag = holder
+            inflated
         } else {
-            holder = convertView.tag as ViewHolder
+            holder = convertViewIn.tag as ViewHolder
+            convertViewIn
         }
 
         val info = getItem(position) ?: return convertView
