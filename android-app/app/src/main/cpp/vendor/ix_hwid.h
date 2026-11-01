@@ -29,9 +29,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#define IX_HWID_FILE      "/data/adb/modules/invisiblex_loader/config/.ix_hwid"
-#define IX_HWID_FP_FILE   "/data/adb/modules/invisiblex_loader/config/.ix_hwid_fp"
-#define IX_HWID_FALLBACK  "/data/local/tmp/.ix_hwid_fp"
+#define IX_HWID_FILE        "/data/adb/modules/invisiblex_loader/config/.ix_hwid"
+#define IX_HWID_FP_FILE     "/data/adb/modules/invisiblex_loader/config/.ix_hwid_fp"
+#define IX_HWID_FALLBACK    "/data/local/tmp/.ix_hwid_fp"
+#define IX_HWID_FIELDS_FILE "/data/adb/modules/invisiblex_loader/config/.ix_hwid_fields"
 
 static inline std::string ix_trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n");
@@ -70,76 +71,34 @@ static inline std::string ix_hash16(const std::string& in) {
     return std::string(out);
 }
 
-/* Collect durable hardware material (order matters for stability). */
-static inline std::string ix_collect_hw_raw() {
-    std::string raw;
-    auto add = [&](const std::string& v) {
-        if (v.empty() || v == "unknown") return;
-        if (!raw.empty()) raw.push_back('|');
-        raw += v;
-    };
-
-    /* 1) eMMC / UFS CID — survives factory reset on most devices */
-    static const char* kCidPaths[] = {
-        "/sys/block/mmcblk0/device/cid",
-        "/sys/class/block/mmcblk0/device/cid",
-        "/sys/block/sda/device/serial",
-        "/sys/block/sda/device/cid",
-        "/sys/devices/platform/soc/1d84000.ufshc/host0/target0:0:0/0:0:0:0/scsi_generic/sg0/device/serial",
-        nullptr
-    };
-    for (int i = 0; kCidPaths[i]; ++i) {
-        std::string v = ix_read_file_raw(kCidPaths[i]);
-        if (!v.empty()) { add(v); break; }
-    }
-
-    /* 2) SoC / chip serial */
-    static const char* kSocPaths[] = {
-        "/sys/devices/soc0/serial_number",
-        "/sys/firmware/devicetree/base/serial-number",
-        "/proc/device-tree/serial-number",
-        nullptr
-    };
-    for (int i = 0; kSocPaths[i]; ++i) {
-        std::string v = ix_read_file_raw(kSocPaths[i]);
-        if (!v.empty()) { add(v); break; }
-    }
-
-    /* 3) Kernel cmdline androidboot.serialno */
-    {
-        std::string cmd = ix_read_file_raw("/proc/cmdline");
-        const char* key = "androidboot.serialno=";
-        size_t p = cmd.find(key);
-        if (p != std::string::npos) {
-            p += strlen(key);
-            size_t e = cmd.find_first_of(" \t\n", p);
-            add(cmd.substr(p, e == std::string::npos ? std::string::npos : e - p));
-        }
-    }
-
-    /* 4) getprop serials (last resort among serials) */
-    std::string ser = ix_getprop("ro.boot.serialno");
-    if (ser.empty()) ser = ix_getprop("ro.serialno");
-    add(ser);
-
-    /* 5) Brand + model (weak alone, stabilizes combo) */
-    add(ix_getprop("ro.product.brand"));
-    add(ix_getprop("ro.product.model"));
-    add(ix_getprop("ro.product.device"));
-
-    /* 6) If still empty — rare; use boot_id once is BAD (changes). Prefer nothing. */
-    if (raw.empty()) {
-        add(ix_getprop("ro.boot.verifiedbootstate"));
-        add(ix_getprop("ro.build.fingerprint"));
-    }
-    return raw;
-}
-
-/* Fingerprint of THIS hardware (not the display HWID). */
-static inline std::string ix_hw_fingerprint() {
-    return ix_hash16(ix_collect_hw_raw());
-}
-
+/* ── Per-field cache (bug fix: "max devices reached" on the SAME phone) ──
+ *
+ * Root cause this fixes: ix_collect_hw_raw() used to concatenate several
+ * hardware fields fresh on EVERY call. Any one of them going transiently
+ * unreadable — a CID sysfs path missing on a given kernel build, getprop
+ * timing out, a driver-mode switch temporarily changing what /sys exposes —
+ * silently changed the WHOLE concatenated string, so ix_hw_fingerprint()
+ * produced a different hash, the cached HWID no longer matched, and this
+ * genuinely-the-same physical device got re-registered with the server as
+ * a brand-new device. That eats into max_devices on every such hiccup,
+ * which is exactly the "max device reached" reports on a device that never
+ * actually changed. A reseller's freshly-issued key showing "expired" is
+ * very often this same symptom one step downstream — the server's own
+ * expired/limit message surfaces once the device-slot budget is gone.
+ *
+ * Fix: cache each field INDIVIDUALLY. A fresh successful read updates its
+ * own cached value; a fresh read that fails/returns empty falls back to
+ * that field's last known-good cached value instead of dropping out of
+ * the fingerprint. A genuinely different phone has no cache file at all,
+ * so every field there is a true fresh read — detection of an actually
+ * different device is unaffected. Only transient same-device flakiness is
+ * smoothed out.
+ *
+ * NOTE: ix_mkdir_parent() / ix_write_secret() are defined right here
+ * (moved up from below ix_hw_fingerprint()) because ix_collect_hw_raw()
+ * below needs ix_write_secret() for the new per-field cache file, and a
+ * static-inline helper must be defined before first use in this header.
+ */
 static inline void ix_mkdir_parent() {
     ::mkdir("/data/adb", 0755);
     ::mkdir("/data/adb/modules", 0755);
@@ -153,6 +112,121 @@ static inline void ix_write_secret(const char* path, const std::string& v) {
     (void)write(fd, v.data(), v.size());
     close(fd);
     ::chmod(path, 0600);
+}
+
+static inline std::string ix_fields_cache_get(const std::string& all, const char* key) {
+    std::string marker = std::string(key) + "=";
+    size_t p = 0;
+    while (p < all.size()) {
+        size_t nl = all.find('\n', p);
+        std::string line = all.substr(p, nl == std::string::npos ? std::string::npos : nl - p);
+        if (line.rfind(marker, 0) == 0) return line.substr(marker.size());
+        if (nl == std::string::npos) break;
+        p = nl + 1;
+    }
+    return "";
+}
+
+static inline std::string ix_stable_field(const char* key,
+                                           const std::string& cacheRaw,
+                                           const std::string& freshValue,
+                                           std::string& outUpdatedCache) {
+    std::string value = freshValue;
+    if (value.empty() || value == "unknown") {
+        value = ix_fields_cache_get(cacheRaw, key); // fall back to last-known-good
+    }
+    if (!value.empty()) {
+        outUpdatedCache += std::string(key) + "=" + value + "\n";
+    }
+    return value;
+}
+
+/* Collect durable hardware material (order matters for stability). */
+static inline std::string ix_collect_hw_raw() {
+    ix_mkdir_parent(); // ensure config dir exists before the field-cache write below
+    std::string cacheRaw = ix_read_file_raw(IX_HWID_FIELDS_FILE);
+    std::string newCache; // rebuilt below, written back once at the end
+
+    std::string raw;
+    auto add = [&](const std::string& v) {
+        if (v.empty() || v == "unknown") return;
+        if (!raw.empty()) raw.push_back('|');
+        raw += v;
+    };
+
+    /* 1) eMMC / UFS CID — survives factory reset on most devices */
+    std::string cidFresh;
+    {
+        static const char* kCidPaths[] = {
+            "/sys/block/mmcblk0/device/cid",
+            "/sys/class/block/mmcblk0/device/cid",
+            "/sys/block/sda/device/serial",
+            "/sys/block/sda/device/cid",
+            "/sys/devices/platform/soc/1d84000.ufshc/host0/target0:0:0/0:0:0:0/scsi_generic/sg0/device/serial",
+            nullptr
+        };
+        for (int i = 0; kCidPaths[i]; ++i) {
+            std::string v = ix_read_file_raw(kCidPaths[i]);
+            if (!v.empty()) { cidFresh = v; break; }
+        }
+    }
+    add(ix_stable_field("cid", cacheRaw, cidFresh, newCache));
+
+    /* 2) SoC / chip serial */
+    std::string socFresh;
+    {
+        static const char* kSocPaths[] = {
+            "/sys/devices/soc0/serial_number",
+            "/sys/firmware/devicetree/base/serial-number",
+            "/proc/device-tree/serial-number",
+            nullptr
+        };
+        for (int i = 0; kSocPaths[i]; ++i) {
+            std::string v = ix_read_file_raw(kSocPaths[i]);
+            if (!v.empty()) { socFresh = v; break; }
+        }
+    }
+    add(ix_stable_field("soc", cacheRaw, socFresh, newCache));
+
+    /* 3) Kernel cmdline androidboot.serialno */
+    std::string cmdlineFresh;
+    {
+        std::string cmd = ix_read_file_raw("/proc/cmdline");
+        const char* key = "androidboot.serialno=";
+        size_t p = cmd.find(key);
+        if (p != std::string::npos) {
+            p += strlen(key);
+            size_t e = cmd.find_first_of(" \t\n", p);
+            cmdlineFresh = cmd.substr(p, e == std::string::npos ? std::string::npos : e - p);
+        }
+    }
+    add(ix_stable_field("cmdline", cacheRaw, cmdlineFresh, newCache));
+
+    /* 4) getprop serials (last resort among serials) */
+    std::string serFresh = ix_getprop("ro.boot.serialno");
+    if (serFresh.empty()) serFresh = ix_getprop("ro.serialno");
+    add(ix_stable_field("serial", cacheRaw, serFresh, newCache));
+
+    /* 5) Brand + model (weak alone, stabilizes combo) */
+    add(ix_stable_field("brand",  cacheRaw, ix_getprop("ro.product.brand"),  newCache));
+    add(ix_stable_field("model",  cacheRaw, ix_getprop("ro.product.model"),  newCache));
+    add(ix_stable_field("device", cacheRaw, ix_getprop("ro.product.device"), newCache));
+
+    /* 6) If still empty — rare; use boot_id once is BAD (changes). Prefer nothing. */
+    if (raw.empty()) {
+        add(ix_stable_field("verifiedboot", cacheRaw, ix_getprop("ro.boot.verifiedbootstate"), newCache));
+        add(ix_stable_field("buildfp",      cacheRaw, ix_getprop("ro.build.fingerprint"),       newCache));
+    }
+
+    if (!newCache.empty()) {
+        ix_write_secret(IX_HWID_FIELDS_FILE, newCache);
+    }
+    return raw;
+}
+
+/* Fingerprint of THIS hardware (not the display HWID). */
+static inline std::string ix_hw_fingerprint() {
+    return ix_hash16(ix_collect_hw_raw());
 }
 
 static inline std::string ix_format_hwid(const std::string& h16) {
