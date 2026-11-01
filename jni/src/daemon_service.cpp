@@ -365,9 +365,15 @@ int main(int /*argc*/, char* /*argv*/[]) {
         if (inTarget && !running && loggedIn) {
             daemon_log("Target %s in foreground — starting binary", target.c_str());
 
-            // Load driver first (if configured)
-            if (!driver.empty()) {
+            // Driver handling:
+            //  - Absolute path  -> external driver executable, run here.
+            //  - Name (rtdev, qx1, paradise, ditpro, ...) -> the binary
+            //    itself selects that in-process backend from config.json
+            //    "driver", so nothing is executed here.
+            if (!driver.empty() && driver[0] == '/') {
                 load_driver(driver);
+            } else if (!driver.empty()) {
+                daemon_log("Driver '%s' selected — handled inside binary", driver.c_str());
             }
 
             // Launch binary (key forwarded as argv[1] — see start_binary() note)

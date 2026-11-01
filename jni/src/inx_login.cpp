@@ -4,13 +4,17 @@
    Usage:  inx_login_@api <KEY>
 
    Output (one JSON line to stdout):
-     Success: {"status":"success","message":"Welcome <seller>! Valid till <expiry>"}
-     Failure: {"status":"error","message":"Login failed. Please try again."}
+     Success: {"status":"success","message":"...","key":"...",
+               "seller":"...","validity":"...","days":N}
+     Failure: {"status":"error","message":"..."}
 
-   On success:
-     - Saves key via kd_save_key() (same slot INX.SH / optimum_vol use)
-     - Writes /data/adb/modules/inx_mods/webroot/config.json updating:
-         "key", "seller", "validity", "status"
+   Exit code: 0 on success, 1 on failure.
+
+   On success it also writes webroot/config.json (key/seller/
+   validity/status) so the WebUI and the daemon read the same
+   verified state. The JSON on stdout carries the same fields so the
+   WebUI can show Key Info immediately, without relying on a re-read
+   of config.json.
 
    Module dir is overridable at compile time:
      -DINX_MODULE_DIR="/data/adb/modules/inx_mods"
@@ -33,33 +37,16 @@ using json = nlohmann::json;
 static const char* WEB_CFG = INX_MODULE_DIR "/webroot/config.json";
 
 // -------------------------------------------------------------
-//  JSON output — matches what script.js login handler expects
+//  Single JSON line to stdout. nlohmann handles all escaping.
 // -------------------------------------------------------------
-static void print_result(bool ok, const std::string& msg) {
-    printf("{\"status\":\"%s\",\"message\":\"%s\"}\n",
-           ok ? "success" : "error",
-           msg.c_str());
+static void print_error(const std::string& msg) {
+    json out = { {"status", "error"}, {"message", msg} };
+    printf("%s\n", out.dump().c_str());
 }
 
 // -------------------------------------------------------------
-//  Escape a string for embedding inside a JSON string value
-// -------------------------------------------------------------
-static std::string json_esc(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        if      (c == '"')  { out += "\\\""; }
-        else if (c == '\\') { out += "\\\\"; }
-        else if (c == '\n') { out += "\\n";  }
-        else if (c == '\r') { out += "\\r";  }
-        else if ((unsigned char)c < 0x20) continue;
-        else out += c;
-    }
-    return out;
-}
-
-// -------------------------------------------------------------
-//  Read config.json → update key/seller/validity/status → write
+//  Read config.json -> update key/seller/validity/status -> write
+//  Other fields (binary, duration, driver, ...) are preserved.
 // -------------------------------------------------------------
 static bool update_web_config(const std::string& key,
                                const std::string& seller,
@@ -81,7 +68,6 @@ static bool update_web_config(const std::string& key,
     cfg["validity"] = validity;
     cfg["status"]   = status;
 
-    // Preserve existing fields (binary, duration) — only overwrite the above
     std::ofstream out(WEB_CFG, std::ios::trunc);
     if (!out.good()) return false;
     out << cfg.dump(4);
@@ -93,7 +79,7 @@ static bool update_web_config(const std::string& key,
 // ===============================================================
 int main(int argc, char* argv[]) {
     if (argc < 2 || strlen(argv[1]) == 0) {
-        print_result(false, "Missing license key argument.");
+        print_error("Missing license key argument.");
         return 1;
     }
 
@@ -103,11 +89,10 @@ int main(int argc, char* argv[]) {
     const bool ok = auth.run_silent(key);
 
     if (ok) {
-        const std::string seller  = auth.getSellerName();
-        const std::string expiry  = auth.getExpiryDate();
-        const int         days    = auth.getDaysRemain();
+        const std::string seller = auth.getSellerName();
+        const std::string expiry = auth.getExpiryDate();
+        const int         days   = auth.getDaysRemain();
 
-        // Compose friendly message
         char msg[512];
         if (days > 0) {
             snprintf(msg, sizeof(msg),
@@ -120,26 +105,36 @@ int main(int argc, char* argv[]) {
                      seller.c_str(), expiry.c_str());
         }
 
-        // Persist: key file + webroot config.json
-        update_web_config(key, seller, expiry, "success");
-
-        print_result(true, json_esc(msg));
-        return 0;
-    } else {
-        // On failure clear status in config (don't clear the key field —
-        // user may retry; we leave the previously working key untouched)
-        {
-            json cfg = json::object();
-            std::ifstream f(WEB_CFG);
-            if (f.good()) {
-                try { json tmp; f >> tmp; if (tmp.is_object()) cfg = tmp; } catch (...) {}
-            }
-            cfg["status"] = "error";
-            std::ofstream out(WEB_CFG, std::ios::trunc);
-            if (out.good()) { out << cfg.dump(4); chmod(WEB_CFG, 0644); }
+        if (!update_web_config(key, seller, expiry, "success")) {
+            print_error("Login verified, but config.json could not be written.");
+            return 1;
         }
 
-        print_result(false, "Login failed. Please check your key and try again.");
-        return 1;
+        json out = {
+            {"status",   "success"},
+            {"message",  msg},
+            {"key",      key},
+            {"seller",   seller},
+            {"validity", expiry},
+            {"days",     days}
+        };
+        printf("%s\n", out.dump().c_str());
+        return 0;
     }
+
+    // Failure: mark status as error but keep the previously saved key
+    // so the user can retry without retyping it.
+    {
+        json cfg = json::object();
+        std::ifstream f(WEB_CFG);
+        if (f.good()) {
+            try { json tmp; f >> tmp; if (tmp.is_object()) cfg = tmp; } catch (...) {}
+        }
+        cfg["status"] = "error";
+        std::ofstream out(WEB_CFG, std::ios::trunc);
+        if (out.good()) { out << cfg.dump(4); chmod(WEB_CFG, 0644); }
+    }
+
+    print_error("Login failed. Please check your key and try again.");
+    return 1;
 }

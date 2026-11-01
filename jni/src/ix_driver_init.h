@@ -13,7 +13,10 @@
 #include <cstring>
 #include <cctype>
 
-#define IX_CONFIG_PATH "/data/adb/modules/invisiblex_loader/config/config.json"
+// InxMods module id is "inx_mods" and its WebUI writes config.json to
+// webroot/ — the old invisiblex_loader path never existed for this module,
+// so the WebUI driver selection never reached the binary at all.
+#define IX_CONFIG_PATH "/data/adb/modules/inx_mods/webroot/config.json"
 
 static inline int ix_driver_number(const std::string& v) {
     if (v.empty()) return -1;  // AUTO — was wrongly 8
