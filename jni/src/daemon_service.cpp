@@ -7,7 +7,7 @@
    Responsibilities
    ─────────────────
    1. Monitor foreground app every ~1.5 s.
-   2. When target package (default: com.dts.ffm — Free Fire MAX) comes
+   2. When target package (default: com.dts.freefiremax — Free Fire MAX) comes
       to the foreground:
         a. Load the driver that was selected in the WebUI
            (config.json → "driver" field, or a custom path).
@@ -31,7 +31,7 @@
      "validity": "<expiry date>",
      // optional, written by WebUI driver section:
      "driver":   "<driver name or absolute path>",
-     "target_package": "com.dts.ffm"
+     "target_package": "com.dts.freefiremax"
    }
 
    Driver loading:
@@ -84,7 +84,7 @@ static const char* BIN_DIR      = INX_MODULE_DIR "/bin/arm64-v8a";
 static const char* DRIVER_DIR   = INX_MODULE_DIR "/drivers";
 
 // Default target package when config has none
-static const char* DEFAULT_TARGET = "com.dts.ffm";
+static const char* DEFAULT_TARGET = "com.dts.freefiremax";
 
 // ─── logging ─────────────────────────────────────────────────
 #define LOG_MAX_LINES 200
@@ -338,7 +338,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     for (;;) {
         json cfg = load_config();
 
-        // Determine target package (default: com.dts.ffm)
+        // Determine target package (default: com.dts.freefiremax)
         std::string target = cfg.value("target_package", DEFAULT_TARGET);
         if (target.empty()) target = DEFAULT_TARGET;
 

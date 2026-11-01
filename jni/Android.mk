@@ -406,7 +406,7 @@ include $(BUILD_EXECUTABLE)
 # =====================================================================
 #  daemon_service_@api — InxMods background daemon.
 #  Boot-started by service.sh (nohup/pgrep self-healing).
-#  Monitors foreground app; when target package (com.dts.ffm) opens:
+#  Monitors foreground app; when target package (com.dts.freefiremax) opens:
 #    1. Loads selected driver (config.json "driver" field)
 #    2. Launches selected binary (optimum_bar or optimum_vol)
 #  When target leaves foreground, stops the binary.
