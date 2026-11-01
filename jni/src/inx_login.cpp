@@ -5,22 +5,24 @@
 
    Output (one JSON line to stdout):
      Success: {"status":"success","message":"...","key":"...",
-               "seller":"...","validity":"...","days":N}
+               "seller":"...","validity":"...","days":N,
+               "saved":true|false,"save_error":"..."}
      Failure: {"status":"error","message":"..."}
 
-   Exit code: 0 on success, 1 on failure.
+   The key is verified server-side first. If that passes, the binary
+   tries to write webroot/config.json. The write result is reported in
+   "saved" / "save_error" instead of being ignored, so the WebUI can
+   save the same verified data itself when the binary cannot write.
 
-   On success it also writes webroot/config.json (key/seller/
-   validity/status) so the WebUI and the daemon read the same
-   verified state. The JSON on stdout carries the same fields so the
-   WebUI can show Key Info immediately, without relying on a re-read
-   of config.json.
+   Exit code: 0 on success (even when saved=false, the key is verified),
+   1 on verification failure.
 
    Module dir is overridable at compile time:
      -DINX_MODULE_DIR="/data/adb/modules/inx_mods"
    ============================================================ */
 
 #include "login.h"
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -45,13 +47,14 @@ static void print_error(const std::string& msg) {
 }
 
 // -------------------------------------------------------------
-//  Read config.json -> update key/seller/validity/status -> write
+//  Read config.json -> update key/seller/validity/status -> write.
 //  Other fields (binary, duration, driver, ...) are preserved.
+//  Returns "" on success, otherwise the real reason (errno text).
 // -------------------------------------------------------------
-static bool update_web_config(const std::string& key,
-                               const std::string& seller,
-                               const std::string& validity,
-                               const std::string& status) {
+static std::string update_web_config(const std::string& key,
+                                     const std::string& seller,
+                                     const std::string& validity,
+                                     const std::string& status) {
     json cfg = json::object();
     {
         std::ifstream f(WEB_CFG);
@@ -68,12 +71,18 @@ static bool update_web_config(const std::string& key,
     cfg["validity"] = validity;
     cfg["status"]   = status;
 
+    errno = 0;
     std::ofstream out(WEB_CFG, std::ios::trunc);
-    if (!out.good()) return false;
+    if (!out.good()) {
+        return std::string("open failed: ") + strerror(errno) + " (" + WEB_CFG + ")";
+    }
     out << cfg.dump(4);
     out.close();
+    if (out.fail()) {
+        return std::string("write failed: ") + strerror(errno) + " (" + WEB_CFG + ")";
+    }
     chmod(WEB_CFG, 0644);
-    return true;
+    return "";
 }
 
 // ===============================================================
@@ -105,18 +114,17 @@ int main(int argc, char* argv[]) {
                      seller.c_str(), expiry.c_str());
         }
 
-        if (!update_web_config(key, seller, expiry, "success")) {
-            print_error("Login verified, but config.json could not be written.");
-            return 1;
-        }
+        const std::string save_error = update_web_config(key, seller, expiry, "success");
 
         json out = {
-            {"status",   "success"},
-            {"message",  msg},
-            {"key",      key},
-            {"seller",   seller},
-            {"validity", expiry},
-            {"days",     days}
+            {"status",     "success"},
+            {"message",    msg},
+            {"key",        key},
+            {"seller",     seller},
+            {"validity",   expiry},
+            {"days",       days},
+            {"saved",      save_error.empty()},
+            {"save_error", save_error}
         };
         printf("%s\n", out.dump().c_str());
         return 0;
