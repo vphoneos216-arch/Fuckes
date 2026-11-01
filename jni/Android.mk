@@ -335,3 +335,111 @@ LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
 LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
 
 include $(BUILD_EXECUTABLE)
+
+# =====================================================================
+#  inx_login_@api — InxMods module login binary.
+#  Standalone binary: takes key as argv[1], calls run_silent(),
+#  outputs {"status":"success/error","message":"..."} JSON,
+#  and on success writes webroot/config.json (key/seller/validity/status).
+#  Same hybrid-signed (Ed25519+Ed448+ML-DSA-65) auth path as kd_ctl.
+#  Output binary name is set by LOCAL_MODULE_FILENAME to preserve the @.
+# =====================================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE          := inx_login_api
+LOCAL_MODULE_FILENAME := inx_login_@api
+
+LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -fno-rtti -fexceptions \
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
+LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include $(LOCAL_C_INCLUDES)
+LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/include/external/openssl3-ed448/kd_ossl_rename.h
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_MLDSA=1
+LOCAL_CPPFLAGS += -DKD_HAVE_MLDSA=1
+endif
+LOCAL_CFLAGS   += -DIX_ANTITAMPER_OFF
+LOCAL_CPPFLAGS += -DIX_ANTITAMPER_OFF
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/libsodium-android-arm64-v8a/include
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/liboqs-android/include
+endif
+
+LOCAL_SRC_FILES := \
+    src/inx_login.cpp \
+    src/Scarecrow/oxorany.cpp
+
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/lib/libcurl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libssl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libcrypto.a
+
+LOCAL_STATIC_LIBRARIES := sodium
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_STATIC_LIBRARIES += oqs_mldsa
+endif
+
+LOCAL_LDLIBS += -llog -lz
+
+LOCAL_LDFLAGS += -s
+LOCAL_LDFLAGS += -Wl,--gc-sections
+LOCAL_LDFLAGS += -pie
+LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
+
+include $(BUILD_EXECUTABLE)
+
+# =====================================================================
+#  daemon_service_@api — InxMods background daemon.
+#  Boot-started by service.sh (nohup/pgrep self-healing).
+#  Monitors foreground app; when target package (com.dts.ffm) opens:
+#    1. Loads selected driver (config.json "driver" field)
+#    2. Launches selected binary (optimum_bar or optimum_vol)
+#  When target leaves foreground, stops the binary.
+#  Writes ring-buffer log to webroot/daemon.log (≤200 lines).
+#  Does NOT need login.h — it reads saved key from config.json only.
+# =====================================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE          := daemon_service_api
+LOCAL_MODULE_FILENAME := daemon_service_@api
+
+LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -fno-rtti -fexceptions \
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+
+LOCAL_CFLAGS   += -DIX_ANTITAMPER_OFF
+LOCAL_CPPFLAGS += -DIX_ANTITAMPER_OFF
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+
+LOCAL_SRC_FILES := \
+    src/daemon_service.cpp
+
+# daemon_service has NO network/crypto deps — just JSON + system calls
+LOCAL_LDLIBS += -llog -lz
+
+LOCAL_LDFLAGS += -s
+LOCAL_LDFLAGS += -Wl,--gc-sections
+LOCAL_LDFLAGS += -pie
+LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
+
+include $(BUILD_EXECUTABLE)

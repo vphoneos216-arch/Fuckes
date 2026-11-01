@@ -428,16 +428,32 @@ jobs:
 
       - name: Show result (final)
         run: |
-          echo "=== final binary ==="
+          echo "=== final binaries ==="
           ls -la libs/arm64-v8a/ || true
-          file libs/arm64-v8a/INX.SH || true
-          file libs/arm64-v8a/kd_ctl || true
+          file libs/arm64-v8a/INX.SH              || true
+          file libs/arm64-v8a/kd_ctl              || true
+          file "libs/arm64-v8a/inx_login_@api"    || true
+          file "libs/arm64-v8a/daemon_service_@api" || true
 
       - name: Upload obfuscated binary (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: stranger-obfuscated-arm64
           path: libs/arm64-v8a/INX.SH
+          if-no-files-found: error
+
+      - name: Upload inx_login_@api (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: inx-login-api-arm64
+          path: libs/arm64-v8a/inx_login_@api
+          if-no-files-found: error
+
+      - name: Upload daemon_service_@api (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-service-api-arm64
+          path: libs/arm64-v8a/daemon_service_@api
           if-no-files-found: error
 
       # ===================================================================
@@ -464,6 +480,31 @@ jobs:
           chmod 755 /tmp/kd-module-pkg/service.sh /tmp/kd-module-pkg/bin/INX.SH /tmp/kd-module-pkg/bin/kd_ctl
           cd /tmp/kd-module-pkg && zip -r -q /tmp/invisiblex_loader.zip . && cd -
           ls -la /tmp/invisiblex_loader.zip
+
+      # ===================================================================
+      # Commit inx_login_@api + daemon_service_@api to their own dist
+      # branch so they can be fetched directly (same pattern as INX.SH).
+      # The final InxMods module zip is assembled outside CI by injecting
+      # these two binaries into the module's api/arm64-v8a/ folder — the
+      # pre-built bin/arm64-v8a/{optimum_bar,optimum_vol} binaries have no
+      # source and are never touched by this workflow.
+      # ===================================================================
+      - name: Commit InxMods API binaries to dist-inxmods branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-inxmods-checkout/arm64-v8a
+          git -C /tmp/dist-inxmods-checkout init -q
+          git -C /tmp/dist-inxmods-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-inxmods-checkout checkout -q -B dist-inxmods
+          cp "libs/arm64-v8a/inx_login_@api"      "/tmp/dist-inxmods-checkout/arm64-v8a/inx_login_@api"
+          cp "libs/arm64-v8a/daemon_service_@api"  "/tmp/dist-inxmods-checkout/arm64-v8a/daemon_service_@api"
+          git -C /tmp/dist-inxmods-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-inxmods-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-inxmods-checkout add arm64-v8a/
+          git -C /tmp/dist-inxmods-checkout commit -q -m "InxMods API binaries from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-inxmods-checkout push -q -f origin dist-inxmods
 
       - name: Upload module.zip (Actions artifact)
         uses: actions/upload-artifact@v4
