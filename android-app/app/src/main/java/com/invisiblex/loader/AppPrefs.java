@@ -19,7 +19,6 @@ public class AppPrefs {
     private static final String KEY_EXPIRY_DATE  = "k_expiry_date";
     private static final String KEY_KEY_NAME     = "k_key_name";
     private static final String KEY_APP_NAME     = "k_app_name";
-    private static final String KEY_SERVER_URL   = "k_server_url";
     private static final String KEY_CUSTOM_LOGO  = "k_custom_logo_path";
     private static final String KEY_APP_HIDDEN   = "k_app_hidden";
     private static final String KEY_DRIVER       = "k_driver";
@@ -108,11 +107,25 @@ public class AppPrefs {
         return sPrefs.getString(KEY_APP_NAME, "InvisibleX");
     }
 
+    // [SECURITY FIX] getServerUrl() used to read a user-writable pref
+    // (KEY_SERVER_URL), with the Settings screen's input field merely
+    // UI-disabled as the only thing stopping someone from pointing the
+    // app's login traffic at a server they control (e.g. via a direct
+    // write to EncryptedSharedPreferences, which a disabled EditText does
+    // nothing to prevent). That would let a captured key get silently
+    // replayed against a fake "connect" endpoint, or let an attacker
+    // bypass the real activation/expiry checks entirely — this is
+    // exactly the kind of login compromise that must never be possible.
+    // The auth server URL is now a hardcoded constant, period: nothing
+    // reads or writes KEY_SERVER_URL any more, and no code path — not
+    // even a rooted device writing the prefs file directly — can change
+    // where AuthManager sends the login request. setServerUrl() is kept
+    // as a harmless no-op only so any existing call site still compiles.
     public static void setServerUrl(String url) {
-        sPrefs.edit().putString(KEY_SERVER_URL, url).apply();
+        // Intentionally does nothing — see note above.
     }
     public static String getServerUrl() {
-        return sPrefs.getString(KEY_SERVER_URL, DEFAULT_SERVER);
+        return DEFAULT_SERVER;
     }
 
     public static void setCustomLogoPath(String path) {

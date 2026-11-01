@@ -63,11 +63,15 @@ public class DriverAdapter extends ArrayAdapter<DriverInfo> {
         holder.size.setText(info.configValue);
         holder.hint.setText(info.hint);
 
-        // Selection dot: lit = selected, dim = unselected
+        // Selected state — whole row is now its own rounded card (bg_driver_row_*)
+        // with a left accent stripe, instead of just a dim dot + alpha fade.
         boolean selected = info.configValue.equals(selectedConfigValue);
+        convertView.setBackgroundResource(
+            selected ? R.drawable.bg_driver_row_selected : R.drawable.bg_driver_row_idle);
+        holder.stripe.setVisibility(selected ? View.VISIBLE : View.INVISIBLE);
         holder.dot.setBackground(getContext().getDrawable(
             selected ? R.drawable.dot_status : R.drawable.dot_status_dim));
-        convertView.setAlpha(selected ? 1.0f : 0.78f);
+        convertView.setAlpha(selected ? 1.0f : 0.9f);
 
         // Permission chips — show/hide each independently
         List<DriverInfo.Permission> perms = info.permissions;
@@ -85,6 +89,7 @@ public class DriverAdapter extends ArrayAdapter<DriverInfo> {
 
     static class ViewHolder {
         final View     dot;
+        final View     stripe;
         final TextView name;
         final TextView hint;
         final TextView size;
@@ -95,6 +100,7 @@ public class DriverAdapter extends ArrayAdapter<DriverInfo> {
 
         ViewHolder(View v) {
             dot       = v.findViewById(R.id.dot_selected);
+            stripe    = v.findViewById(R.id.stripe_selected);
             name      = v.findViewById(R.id.tv_driver_name);
             hint      = v.findViewById(R.id.tv_driver_info);
             size      = v.findViewById(R.id.tv_driver_item_size);
