@@ -137,18 +137,32 @@ public final class DriverConfig {
                 out.setExecutable(true, true);
                 runRoot("chmod 700 " + out.getAbsolutePath());
 
+                String kernelTag = kernel.isEmpty() ? "" : " (kernel " + kernel + ")";
+
+                if (chosen.endsWith(".sh")) {
+                    // Self-extracting loader script (embeds a base64 .ko and
+                    // insmod's it itself, e.g. the Paradise driver packages) —
+                    // run it with "sh", never insmod the script file directly.
+                    RootResult sh = runRoot("sh " + out.getAbsolutePath());
+                    if (sh.exitCode == 0) {
+                        callback.onResult(true, "Loaded " + chosen + kernelTag);
+                    } else {
+                        callback.onResult(false, "Script failed (" + chosen + "): "
+                            + firstLine(sh.stdout));
+                    }
+                    return;
+                }
+
                 RootResult insmod = runRoot("insmod " + out.getAbsolutePath());
                 if (insmod.exitCode == 0) {
-                    callback.onResult(true, "Loaded " + chosen
-                        + (kernel.isEmpty() ? "" : " (kernel " + kernel + ")"));
+                    callback.onResult(true, "Loaded " + chosen + kernelTag);
                     return;
                 }
                 // Not every bundled file is a .ko module — some are plain
                 // executables. Fall back to direct execute, same pattern
                 // used everywhere else in this app for driver files.
                 runRoot(out.getAbsolutePath() + " >/dev/null 2>&1 &");
-                callback.onResult(true, "Executed " + chosen
-                    + (kernel.isEmpty() ? "" : " (kernel " + kernel + ")"));
+                callback.onResult(true, "Executed " + chosen + kernelTag);
 
             } catch (Exception e) {
                 Log.e(TAG, "loadMatchingAsset failed", e);
@@ -189,6 +203,12 @@ public final class DriverConfig {
         RootResult r = runRoot("cat " + path);
         if (r.exitCode != 0) return null;
         return r.stdout;
+    }
+
+    private static String firstLine(String s) {
+        if (s == null) return "";
+        int nl = s.indexOf('\n');
+        return (nl >= 0 ? s.substring(0, nl) : s).trim();
     }
 
     private static RootResult runRoot(String shellCmd) {

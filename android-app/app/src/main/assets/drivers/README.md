@@ -25,9 +25,15 @@ and falls back to a kernel-agnostic file if present:
 <mode>.<ext>                           e.g. paradise.ko
 ```
 
-(`<ext>` can be `.ko` for a real kernel module, or any extension for a
-plain executable — the loader tries `insmod` first and falls back to
-direct execute.)
+`<ext>` can be:
+- `.ko` — a real kernel module; the loader tries `insmod` first and falls
+  back to direct execute if that fails.
+- `.sh` — a self-extracting loader script (embeds a base64 `.ko` and runs
+  `insmod` on it itself, e.g. the bundled Paradise driver packages
+  `paradise_5.10.sh` / `paradise_5.15.sh` / `paradise_6.1.sh` /
+  `paradise_6.6.sh` / `paradise_6.12.sh`). The loader runs these with
+  `sh`, never `insmod`s the script file itself.
+- anything else — treated as a plain executable.
 
 Example: if the device reports kernel `6.6` and the user picks
 **Paradise**, the loader looks for `paradise_6.6.ko` first, then

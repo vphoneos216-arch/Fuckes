@@ -51,7 +51,39 @@
         android:textColor="@color/text_secondary"
         android:fontFamily="sans-serif"
         android:lineSpacingExtra="2dp"
-        android:layout_marginBottom="20dp" />
+        android:layout_marginBottom="10dp" />
+
+    <!-- Detected kernel version — decides which bundled module (if any) a
+         KPM-style mode will load; shown so the user knows what's being
+         matched against. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_status_pill"
+        android:paddingStart="10dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
+        android:layout_marginBottom="16dp">
+
+        <View
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:background="@drawable/dot_status"
+            android:layout_marginEnd="7dp" />
+
+        <TextView
+            android:id="@+id/tv_kernel_version"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Kernel: —"
+            android:textColor="@color/text_primary"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.02" />
+    </LinearLayout>
 
     <!-- ── Driver list card ── -->
     <androidx.cardview.widget.CardView

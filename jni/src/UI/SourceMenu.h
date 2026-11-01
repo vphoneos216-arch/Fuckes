@@ -516,13 +516,13 @@ inline void RenderSingleMenuWindow() {
                     float row    = 48 * scale;
                     float col    = 250 * scale;
 
-                    // Row 0 — Silent Aim + Aimbot (Aim Lock removed)
+                    // Row 0 — Silent Aim (Aim Lock + Aimbot removed from UI)
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
-                    ImGui::Checkbox1("Aimbot", &Aimbot);
+                    // Aimbot checkbox removed — feature disabled, forced off below.
+                    Aimbot = false;
 
                     // Row 1 — Hardware BT + FOV Circle
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
@@ -603,7 +603,7 @@ inline void RenderSingleMenuWindow() {
                     if (chestRate > 3) chestRate = 3;
                     /* threads are idempotent (guarded by running flags) */
                     StartSilentAimThread();
-                    StartAimbotThread();      // Aimbot now live — driven by Aimbot bool
+                    // Aimbot feature removed from the menu — never started.
                     StartHardwareBTThread();
                 }
 

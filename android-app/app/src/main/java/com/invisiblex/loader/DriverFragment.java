@@ -57,6 +57,7 @@ public class DriverFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
+        showKernelVersion();
         setupList();
 
         binding.lvDrivers.setOnItemClickListener((parent, v, position, id) -> {
@@ -68,6 +69,21 @@ public class DriverFragment extends Fragment {
         });
 
         binding.btnLoadDriver.setOnClickListener(v -> attemptApplyDriver());
+    }
+
+    // ── Kernel version ──────────────────────────────────────────
+
+    private void showKernelVersion() {
+        // KernelUtil.detect() can shell out (uname -r) — keep it off the UI thread.
+        new Thread(() -> {
+            String kernel = KernelUtil.detect();
+            if (!isAdded()) return;
+            requireActivity().runOnUiThread(() -> {
+                if (binding == null) return;
+                binding.tvKernelVersion.setText(
+                    "Kernel: " + (kernel.isEmpty() ? "unknown" : kernel));
+            });
+        }).start();
     }
 
     // ── Driver list ───────────────────────────────────────────

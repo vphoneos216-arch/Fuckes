@@ -1413,7 +1413,7 @@ void UpdateAndSaveSettings(){
     showDistance      = g_Cfg.showDistance;
     showSkeleton      = g_Cfg.showSkeleton;
     is3600            = g_Cfg.is3600;
-    Aimbot            = g_Cfg.Aimbot;
+    Aimbot            = false; // Aimbot feature removed — never loaded from saved config
     aimBotBoneIndex   = g_Cfg.aimbotBone;
     AimSilent         = g_Cfg.aimSilent;
     HardwareBT        = g_Cfg.hardwareBT;
@@ -1881,7 +1881,7 @@ static void aimbot_tab(float /*a*/){
 
     // Sync to hook globals every frame
     g_ShowFovOverlay   = g_Cfg.showFovCircle;
-    Aimbot             = g_Cfg.Aimbot;
+    Aimbot             = false; // Aimbot feature removed — never loaded from saved config
     aimBotBoneIndex    = g_Cfg.aimbotBone;
     AimSilent          = g_Cfg.aimSilent;
     HardwareBT         = g_Cfg.hardwareBT;
@@ -2163,7 +2163,7 @@ int main(int argc,char* argv[]){
 
     // All threads detached — no join in game loop (crash fix)
     StartSilentAimThread();
-    StartAimbotThread();
+    // Aimbot feature removed — thread never started.
     StartEspThread();
 
     game_pid=getProcessID(packageName);

@@ -46,6 +46,7 @@ public class LaunchMenuActivity extends Activity {
     private TextView        tvEngineStatus;
     private TextView        tvMenuKey;
     private TextView        tvMenuExpiry;
+    private TextView        tvKernelVersion;
     private Button          btnMergeTile;
     private Button          btnHideIcon;
     private Button          btnClose;
@@ -69,6 +70,7 @@ public class LaunchMenuActivity extends Activity {
         bindViews();
         setupDismiss();
         populateSessionInfo();
+        showKernelVersion();
         loadDriverList();
         setupActions();
         animatePanelIn();
@@ -81,6 +83,7 @@ public class LaunchMenuActivity extends Activity {
         tvEngineStatus    = findViewById(R.id.tv_engine_status);
         tvMenuKey         = findViewById(R.id.tv_menu_key);
         tvMenuExpiry      = findViewById(R.id.tv_menu_expiry);
+        tvKernelVersion   = findViewById(R.id.tv_kernel_version);
         lvDrivers         = findViewById(R.id.lv_menu_drivers);
         tvNoDrivers       = findViewById(R.id.tv_menu_no_drivers);
         btnLoadDriver     = findViewById(R.id.btn_menu_load_driver);
@@ -110,6 +113,16 @@ public class LaunchMenuActivity extends Activity {
 
         String expiry = AppPrefs.getExpiryDate();
         tvMenuExpiry.setText("Expires: " + (expiry.isEmpty() ? "—" : expiry));
+    }
+
+    // ── Kernel version ──────────────────────────────────────────
+
+    private void showKernelVersion() {
+        new Thread(() -> {
+            String kernel = KernelUtil.detect();
+            runOnUiThread(() -> tvKernelVersion.setText(
+                "Kernel: " + (kernel.isEmpty() ? "unknown" : kernel)));
+        }).start();
     }
 
     // ── Driver list ───────────────────────────────────────────
