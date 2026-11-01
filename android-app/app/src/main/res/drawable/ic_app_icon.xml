@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  InvisibleX App Icon — Money Heist / La Casa de Papel aesthetic.
-  Inspired by the Dali mask silhouette merged with the IX mark.
-  Deep crimson on absolute black.
+  InvisibleX App Icon — original monogram mark.
+  A hexagonal "security badge" shield holding a bold, geometric IX
+  monogram, deep crimson on near-black, with a thin inner ring for a
+  layered/engraved feel. Deliberately abstract/geometric (no face,
+  mask or character likeness) so the brand mark is wholly original.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -15,67 +17,52 @@
         android:fillColor="#050709"
         android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
 
-    <!-- ── Subtle red vignette ring — outer glow ── -->
+    <!-- ── Radial-feel vignette ring ── -->
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#3D0000"
-        android:strokeWidth="3.5"
-        android:pathData="M54,54 m-48,0 a48,48 0 1,0 96,0 a48,48 0 1,0 -96,0" />
+        android:strokeColor="#2A0B0B"
+        android:strokeWidth="2"
+        android:pathData="M54,54 m-50,0 a50,50 0 1,0 100,0 a50,50 0 1,0 -100,0" />
 
-    <!-- ── Dali mask silhouette (simplified stylized oval face) ── -->
-    <!-- Mask forehead / top of head — oval crown -->
+    <!-- ── Hexagonal security-badge shield (outer) ── -->
     <path
-        android:fillColor="#1A0505"
+        android:fillColor="#0D0404"
         android:strokeColor="#7B0000"
-        android:strokeWidth="1"
-        android:pathData="M54,12 C38,12 26,22 24,38 C22,50 22,62 26,70 C28,76 32,80 36,82
-                          C40,84 44,84 46,82 C48,80 50,76 54,76
-                          C58,76 60,80 62,82 C64,84 68,84 72,82
-                          C76,80 80,76 82,70 C86,62 86,50 84,38
-                          C82,22 70,12 54,12 Z" />
+        android:strokeWidth="1.4"
+        android:pathData="M54,10
+                          L90,28
+                          L90,66
+                          L54,98
+                          L18,66
+                          L18,28 Z" />
 
-    <!-- Mask eye holes — dark voids (character's eyes) -->
-    <path
-        android:fillColor="#050709"
-        android:pathData="M38,38 C35,35 32,36 31,39 C30,42 31,47 34,49
-                          C37,51 41,50 43,47 C45,44 44,40 41,38 C40,37 39,37 38,38 Z" />
-    <path
-        android:fillColor="#050709"
-        android:pathData="M70,38 C67,37 66,37 65,38 C62,40 61,44 63,47
-                          C65,50 69,51 72,49 C75,47 76,42 75,39
-                          C74,36 72,35 70,38 Z" />
-
-    <!-- Iconic teardrop / rosy cheek detail — left -->
-    <path
-        android:fillColor="#C62828"
-        android:pathData="M37,54 C36,54 35,55 35,57 C35,60 37,63 39,63
-                          C40,63 41,61 40,59 C39,57 38,54 37,54 Z" />
-    <!-- Teardrop / rosy cheek detail — right -->
-    <path
-        android:fillColor="#C62828"
-        android:pathData="M71,54 C70,54 69,57 68,59 C67,61 68,63 69,63
-                          C71,63 73,60 73,57 C73,55 72,54 71,54 Z" />
-
-    <!-- Mask bottom — chin line -->
+    <!-- ── Inner engraved hex ring — layered depth ── -->
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#7B0000"
-        android:strokeWidth="1.2"
-        android:pathData="M40,76 C44,80 50,82 54,82 C58,82 64,80 68,76" />
+        android:strokeColor="#C62828"
+        android:strokeWidth="1.1"
+        android:pathData="M54,18
+                          L82,32.5
+                          L82,62
+                          L54,89
+                          L26,62
+                          L26,32.5 Z" />
 
-    <!-- ── IX mark — overlaid bold on lower portion ── -->
-    <!-- "I" bar — left stem -->
+    <!-- ── IX monogram — bold geometric mark, centered ── -->
+    <!-- "I" — left stem -->
     <path
-        android:fillColor="#EEF2FF"
-        android:pathData="M46,85 L50,85 L50,100 L46,100 Z" />
-    <!-- "X" — right side of icon -->
+        android:fillColor="#F2F5FF"
+        android:pathData="M38,37 L46,37 L46,71 L38,71 Z" />
+
+    <!-- "X" — crimson, right of center -->
+    <path
+        android:fillColor="#E53935"
+        android:pathData="M53,37 L62,37 L70,52 L78,37 L87,37 L75,54 L87,71 L78,71
+                          L70,56 L62,71 L53,71 L65,54 Z" />
+
+    <!-- ── Thin crimson base accent ── -->
     <path
         android:fillColor="#C62828"
-        android:pathData="M55,85 L62,92 L69,85 L72,85 L64,94 L72,102 L69,102 L62,95 L55,102 L52,102 L60,94 L52,85 Z" />
-
-    <!-- ── Thin crimson bottom border line ── -->
-    <path
-        android:fillColor="#C62828"
-        android:pathData="M0,106 L108,106 L108,108 L0,108 Z" />
+        android:pathData="M0,105 L108,105 L108,108 L0,108 Z" />
 
 </vector>

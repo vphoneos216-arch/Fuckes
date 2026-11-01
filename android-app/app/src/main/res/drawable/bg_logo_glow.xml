@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Soft radial glow sat behind the login-screen logo circle, so the
+     mark reads as lit from within rather than sitting flat on the page. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:type="radial"
+        android:gradientRadius="60dp"
+        android:startColor="#33C62828"
+        android:centerColor="#14C62828"
+        android:endColor="#00050709" />
+</shape>
