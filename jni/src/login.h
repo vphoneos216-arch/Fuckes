@@ -221,9 +221,21 @@ static inline const std::string& kd_writable_dir() {
     static std::string cached;
     if (!cached.empty()) return cached;
 
+    // [FIX] These two candidates were still the scaffold placeholder
+    // package name "com.mycompany.application" instead of this app's
+    // real package "com.invisiblex.loader" — neither path has ever
+    // existed on a real device, so BOTH silently failed on every single
+    // run and this always fell through to a lower-priority candidate
+    // (typically /data/local/tmp/.kd_store). That's not where the saved
+    // key actually "disappeared" from, but it IS a real, stable,
+    // SELinux/app-lifecycle-friendly location (cleared only on uninstall,
+    // never by a cache cleaner/task killer the way /data/local/tmp can
+    // be on some ROMs) that was simply never being used because of the
+    // wrong name. Fixed to the real package so this is actually tried
+    // first, as originally intended.
     std::vector<std::string> candidateList = {
-        "/data/data/com.mycompany.application/files",
-        "/sdcard/Android/data/com.mycompany.application/files",
+        "/data/data/com.invisiblex.loader/files",
+        "/sdcard/Android/data/com.invisiblex.loader/files",
     };
 
     // $HOME is set and stable under Termux (and most non-rooted test
@@ -557,8 +569,16 @@ static inline bool kd_http_post(const std::string& url, const std::string& body,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, kd_curl_write);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    // [FIX] Bumped from 20s/10s — the engine's login call happens right as
+    // the game is launching and the driver is attaching, competing hard for
+    // CPU and radio with everything else starting up, and a slow mobile
+    // connection could trip the old, tighter timeout well before the
+    // request had any real chance to finish. Combined with the one retry
+    // in perform_auth() above, this meaningfully cuts false "connection
+    // failed" results without materially changing how long a genuinely
+    // dead connection takes to give up.
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, (long)CURL_SSLVERSION_TLSv1_2);
@@ -1532,18 +1552,38 @@ static inline LoginResult perform_auth(
     std::string curlErr;
     long httpCode = 0;
 
-    if (!kd_auth_post(reqBody, envelope, curlErr, httpCode, transportKx)) {
-        // ╔═══════════════════════════════════════════════════════════════╗
-        // ║  CHANGE THIS TEXT to whatever message you want shown when the  ║
-        // ║  connection / TLS check fails. Edit only the text inside the   ║
-        // ║  quotes, then recompile.                                       ║
-        // ╚═══════════════════════════════════════════════════════════════╝
-        // Note: curl's raw reason (curlErr) is intentionally NOT shown now.
-        // It used to append "SSL certificate problem: ..." which told anyone
-        // probing exactly why their capture was blocked. Keeping it generic
-        // hides that. (void) marks it deliberately unused.
+    // [FIX — "fake packet capture" false positive] kd_auth_post() returning
+    // false means ANY of: DNS/connect failure, a TLS handshake hiccup, a
+    // slow mobile connection tripping the timeout, or a genuinely malicious
+    // MITM/capture attempt — kd_http_post() cannot tell those apart, they
+    // all just come back as "curl failed". The old message here accused
+    // the user of running a packet-capture/cracking tool on EVERY one of
+    // those cases, including a plain dropped packet on a weak signal —
+    // which is exactly the "fake packet capture detection" the user hit
+    // intermittently. Two changes:
+    //   1. One short, silent retry with a fresh transport keypair on the
+    //      FIRST failure only — absorbs a single transient drop (DNS
+    //      hiccup, momentary signal loss, cold TLS session) without ever
+    //      touching result.message, so a real capture/MITM attempt (which
+    //      fails the SAME way on retry, since it can't forge the Ed25519
+    //      signature or the transport keys) still ends up denied exactly
+    //      as before — this only removes false positives on a device with
+    //      a flaky connection, not real detection.
+    //   2. The message itself no longer claims a capture was detected at
+    //      all — connection failure is not evidence of one — so a genuine
+    //      network problem now reads as a network problem.
+    bool posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, transportKx);
+    if (!posted) {
+        KdTransportKx retryKx;
+        posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, retryKx);
+    }
+    if (!posted) {
+        // Note: curl's raw reason (curlErr) is intentionally NOT shown.
+        // It used to append "SSL certificate problem: ..." which told
+        // anyone probing exactly why their request was rejected. (void)
+        // marks it deliberately unused.
         (void)curlErr;
-        result.message = oxorany("kuy ra mc packets captcha kar ka khud ka cracker samjh ta h agar 1 bap ka hoga to tu dubara try nahi karga tara bas ki nahi h samjh kuy .");
+        result.message = oxorany("Connection failed — check your internet connection and try again.");
         return result;
     }
 

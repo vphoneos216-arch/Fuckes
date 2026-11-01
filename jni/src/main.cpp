@@ -2089,11 +2089,38 @@ void RenderMenu(){
 
 int main(int argc,char* argv[]){
     // =============================================================
-    // HWID-first login (Telegram bot registers key↔hardware)
-    // Kernel driver only if g_AuthKernelOk == true
+    // [FIX — ONE LOGIN, NOT TWO SEPARATE ONES] This used to call
+    // auth.run() unconditionally — the fully INTERACTIVE terminal
+    // login, which reads the key from stdin and only calls
+    // kd_save_key() after a key is typed and accepted right here.
+    // That is correct for a human at a real terminal (kd_ctl's
+    // manual/debug path still has one), but this binary is normally
+    // started by the app via ProcessBuilder with no TTY attached —
+    // exactly the "no stdin" situation already called out in the
+    // driver-selection comment below. With no saved key yet, run()'s
+    // std::cin.getline() hits EOF immediately, the 3-try loop breaks
+    // on the first attempt, login "fails" every single time, and the
+    // success-only kd_save_key() call is never reached — so a key
+    // launched this way could NEVER get saved, and the app's own
+    // already-successful login and this binary's internal login could
+    // disagree about whether the device is authenticated at all.
+    //
+    // Fix: the app now passes its own already-validated license key
+    // as argv[1] (see AuthManager.securityGate()/BinaryExecutor on the
+    // app side) — ONE login the user types, in the app. This binary
+    // still runs its OWN full, independent server round-trip against
+    // that same key (run_silent() → perform_auth(), unchanged, still
+    // the real "binary login") — the dual-check security contract is
+    // intact, only the broken interactive re-prompt is gone. On
+    // success the key is saved exactly as before; if the binary is
+    // ever launched again with NO argument (e.g. directly from the
+    // extracted lib path, outside the app), run_silent("") picks the
+    // saved key straight back up via kd_load_saved_key() — no stdin
+    // needed either way.
     // =============================================================
     Authentication auth;
-    bool ok = auth.run();  // HWID only — no key prompt
+    const std::string argKey = (argc >= 2 && argv[1] != nullptr) ? std::string(argv[1]) : std::string();
+    bool ok = auth.run_silent(argKey);
     if (!ok || !g_AuthKernelOk || !ix_rt_ready() || !ix_feat_ok()) {
         ix_features_lock();
         ix_rt_clear();
