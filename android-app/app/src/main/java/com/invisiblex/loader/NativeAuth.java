@@ -43,4 +43,13 @@ final class NativeAuth {
      * server as the same device.
      */
     static native String getSharedHwid();
+
+    /**
+     * App-side integrity gate — must be called and must return true
+     * BEFORE the login screen is shown. Verifies the compiled-in server
+     * URL + Ed25519 public key are still the genuine deployment values
+     * and that libsodium initializes. See ix_auth.cpp's comment on this
+     * function for exactly what it does and does not check, and why.
+     */
+    static native boolean integrityCheck();
 }

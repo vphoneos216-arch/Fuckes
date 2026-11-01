@@ -16,6 +16,8 @@
     <string name="login_saved">Resuming saved session…</string>
     <string name="enter_license_key">Enter your license key</string>
     <string name="saved_key_hint">Saved key: %1$s</string>
+    <string name="integrity_checking">Running integrity check…</string>
+    <string name="integrity_failed">Integrity check failed — this build is not genuine</string>
 
     <!-- Home -->
     <string name="home_title">Home</string>

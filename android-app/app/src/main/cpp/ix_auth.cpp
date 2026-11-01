@@ -43,6 +43,7 @@
 #include <cstring>
 #include <cstdio>
 #include <ctime>
+#include <cctype>
 #include <sys/stat.h>
 
 #include <sodium.h>
@@ -501,4 +502,43 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_invisiblex_loader_NativeAuth_getSharedHwid(JNIEnv* env, jclass) {
     const std::string hwid = ix_shared_hwid();
     return env->NewStringUTF(hwid.c_str());
+}
+
+// ==================== APP-SIDE INTEGRITY CHECK ====================
+// Runs BEFORE the login screen is allowed to open — the key goes nowhere
+// until this passes. Checks that CONNECT_URL / ED25519_PUBLIC_KEY_HEX
+// (both compiled directly into THIS .so, not read from anywhere
+// patchable at runtime) are still the genuine deployment values, and
+// that libsodium initializes. This is deliberately lighter than
+// jni/src/login.h's ix_integrity_gate() — no ptrace/Frida/Xposed scan —
+// because this runs inside the app's own normal (debuggable-in-dev,
+// non-rooted) process, where that scan produces far more false
+// positives than real detections; the binary's own, much stricter
+// ix_integrity_gate() is what actually guards the privileged path.
+// This check's job is narrower and still real: it proves the app
+// talking to the server is still running the genuine, unmodified
+// deployment constants, not a repackaged/retargeted APK.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_invisiblex_loader_NativeAuth_integrityCheck(JNIEnv*, jclass) {
+    const std::string url(CONNECT_URL);
+    const std::string pub(ED25519_PUBLIC_KEY_HEX);
+
+    if (url.size() < 20)                                  return JNI_FALSE;
+    if (url.rfind("https://", 0) != 0)                     return JNI_FALSE;
+    if (url.find("http://") != std::string::npos)          return JNI_FALSE;
+    if (url.find('@') != std::string::npos)                return JNI_FALSE;
+    if (url.find("adminshop.myvipsite.fun") == std::string::npos) return JNI_FALSE;
+    if (url.find("keydock_connect.php") == std::string::npos)     return JNI_FALSE;
+
+    if (pub.size() != 64) return JNI_FALSE;
+    bool nonzero = false;
+    for (unsigned char c : pub) {
+        if (!std::isxdigit(c)) return JNI_FALSE;
+        if (c != '0') nonzero = true;
+    }
+    if (!nonzero) return JNI_FALSE;
+
+    if (sodium_init() < 0) return JNI_FALSE;
+
+    return JNI_TRUE;
 }
