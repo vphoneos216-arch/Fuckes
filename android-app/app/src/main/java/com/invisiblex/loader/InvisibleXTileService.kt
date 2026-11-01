@@ -27,11 +27,23 @@ class InvisibleXTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        // [BUG FIX] AppPrefs was only ever init()'d from MainActivity.onCreate().
+        // A Quick Settings tile tap after the app process was killed in the
+        // background (very common — Android kills background app processes
+        // freely) starts THIS service cold, with MainActivity never having
+        // run in that process lifetime. AppPrefs.sPrefs was then still
+        // uninitialized, so isSessionValid()/getSessionToken() etc. threw
+        // immediately — the exact cause of the tile always showing
+        // "Not Authenticated" on a fresh tile-triggered launch, even with a
+        // perfectly valid saved session. init() is idempotent (no-ops once
+        // already set up), so calling it here is always safe.
+        AppPrefs.init(applicationContext)
         updateTileState()
     }
 
     override fun onClick() {
         super.onClick()
+        AppPrefs.init(applicationContext) // same cold-start guard as onStartListening()
         Log.i(TAG, "Tile tapped — starting security gate")
 
         qsTile?.apply {

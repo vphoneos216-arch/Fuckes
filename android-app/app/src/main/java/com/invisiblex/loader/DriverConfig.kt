@@ -91,16 +91,30 @@ object DriverConfig {
     }
 
     /**
-     * Some backend modes (ditpro, kma, ldk, tb-kpm, paradise) need an actual
-     * kernel module/KPM file inserted before the binary can use them, and
-     * that file MUST match the device's running kernel. This looks in
+     * Some backend modes (ditpro, kma, ldk, tb-kpm, paradise, rt-dev) need an
+     * actual kernel module/KPM file inserted before the binary can use them,
+     * and that file MUST match the device's running kernel. This looks in
      * assets/drivers/ for a file matching "<configValue>_<kernel>.<ext>"
-     * (e.g. "paradise_6.6.ko" on a 6.6 kernel), falling back to a generic
-     * "<configValue>.<ext>" (no kernel suffix) if present, and loads it via
-     * insmod (or direct execute as a fallback) before config.json is
-     * written. If nothing matches, this is NOT an error — several modes
-     * (auto, qx1, gt, rt-dev, rt-proc, qx2) work purely from config.json
-     * with no bundled module at all.
+     * and loads it via insmod (or direct execute as a fallback) before
+     * config.json is written. If nothing matches, this is NOT an error —
+     * several modes (qx1, rt-proc, qx2) work purely from config.json with
+     * no bundled module at all.
+     *
+     * [FIX] Matching used to be a bare String.startsWith("${configValue}_$kernel.")
+     * prefix check. That's exact for single-part kernels ("6.6"), but once
+     * RT-DEV shipped kernel-PATCH-specific files (rt-dev_4.14.117.sh,
+     * rt-dev_4.14.141.sh, rt-dev_4.14.180.sh, rt-dev_4.14.186.sh, …),
+     * detecting kernel "4.14" made startsWith("rt-dev_4.14.") match ALL of
+     * them simultaneously — whichever one AssetManager.list() happened to
+     * return first would silently "win", non-deterministically. Matching is
+     * now done by EXACT filename-stem equality against the full detected
+     * version first ("rt-dev_4.14.186" vs the file's name before its
+     * extension), then against the major.minor-only version as a fallback
+     * — never a prefix check — so a device on patch 186 can never load the
+     * file built for patch 117, and the ambiguous "b"/"c" alternate-build
+     * variants (rt-dev_4.14.186b.sh, rt-dev_4.14.186c.sh) are never picked
+     * automatically either, since their stems don't exactly equal either
+     * candidate string.
      *
      * Call ONLY after AuthManager.securityGate() has already passed.
      */
@@ -108,28 +122,38 @@ object DriverConfig {
     fun loadMatchingAsset(ctx: Context, configValue: String, callback: Callback) {
         Thread {
             try {
-                val kernel = KernelUtil.detect()
+                val kernelFull = KernelUtil.detect()
+                val kernelMajorMinor = if (kernelFull.isEmpty()) "" else KernelUtil.majorMinor(kernelFull)
                 val am = ctx.assets
                 val files = am.list(ASSET_DIR) ?: arrayOf()
 
+                val exactFullTarget = if (kernelFull.isNotEmpty()) "${configValue}_$kernelFull" else null
+                val exactMajorMinorTarget =
+                    if (kernelMajorMinor.isNotEmpty() && kernelMajorMinor != kernelFull) "${configValue}_$kernelMajorMinor" else null
+
                 var exact: String? = null
+                var majorMinorMatch: String? = null
                 var generic: String? = null
                 for (f in files) {
                     if (f.isEmpty() || f == ".keep" || f.equals("README.md", ignoreCase = true)) continue
-                    if (kernel.isNotEmpty() && f.startsWith("${configValue}_$kernel.")) {
-                        exact = f
-                        break
+                    val dot = f.lastIndexOf('.')
+                    val stem = if (dot > 0) f.substring(0, dot) else f
+                    when {
+                        exactFullTarget != null && stem == exactFullTarget -> { exact = f }
+                        exactMajorMinorTarget != null && stem == exactMajorMinorTarget -> { majorMinorMatch = f }
+                        stem == configValue -> { generic = f }
                     }
-                    if (f.startsWith("$configValue.")) generic = f
+                    if (exact != null) break
                 }
 
-                val chosen = exact ?: generic
+                val chosen = exact ?: majorMinorMatch ?: generic
+                val kernel = kernelFull
                 if (chosen == null) {
                     callback.onResult(
                         true,
-                        "No bundled kernel module for \"$configValue\"" +
-                            (if (kernel.isEmpty()) "" else " on kernel $kernel") +
-                            " — config.json alone will drive it"
+                        "Driver Loaded Successfully — \"$configValue\" applied" +
+                            (if (kernel.isEmpty()) "" else " (kernel $kernel)") +
+                            ", no extra module needed"
                     )
                     return@Thread
                 }
@@ -151,11 +175,12 @@ object DriverConfig {
 
                 if (chosen.endsWith(".sh")) {
                     // Self-extracting loader script (embeds a base64 .ko and
-                    // insmod's it itself, e.g. the Paradise driver packages) —
-                    // run it with "sh", never insmod the script file directly.
+                    // insmod's it itself, e.g. the Paradise/RT-DEV driver
+                    // packages) — run it with "sh", never insmod the script
+                    // file directly.
                     val sh = runRoot("sh ${out.absolutePath}")
                     if (sh.exitCode == 0) {
-                        callback.onResult(true, "Loaded $chosen$kernelTag")
+                        callback.onResult(true, "Driver Loaded Successfully — $chosen$kernelTag")
                     } else {
                         callback.onResult(false, "Script failed ($chosen): ${firstLine(sh.stdout)}")
                     }
@@ -164,14 +189,14 @@ object DriverConfig {
 
                 val insmod = runRoot("insmod ${out.absolutePath}")
                 if (insmod.exitCode == 0) {
-                    callback.onResult(true, "Loaded $chosen$kernelTag")
+                    callback.onResult(true, "Driver Loaded Successfully — $chosen$kernelTag")
                     return@Thread
                 }
                 // Not every bundled file is a .ko module — some are plain
                 // executables. Fall back to direct execute, same pattern
                 // used everywhere else in this app for driver files.
                 runRoot("${out.absolutePath} >/dev/null 2>&1 &")
-                callback.onResult(true, "Executed $chosen$kernelTag")
+                callback.onResult(true, "Driver Loaded Successfully — $chosen$kernelTag")
             } catch (e: Exception) {
                 Log.e(TAG, "loadMatchingAsset failed", e)
                 callback.onResult(false, "Kernel-module load failed: ${e.message}")

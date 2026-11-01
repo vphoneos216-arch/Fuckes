@@ -61,7 +61,11 @@ class LaunchMenuActivity : Activity() {
         // Transparent overlay — show above everything including lock screen edge
         window.addFlags(
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                // [APP PROTECTION] Same screenshot/recording/recents-thumbnail
+                // block as MainActivity — this overlay shows the driver list,
+                // key, and expiry too.
+                WindowManager.LayoutParams.FLAG_SECURE
         )
         setContentView(R.layout.activity_launch_menu)
 

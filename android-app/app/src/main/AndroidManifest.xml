@@ -12,6 +12,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- [BUG FIX] Android 11+ (API 30+) package visibility: without this,
+         PackageManager.getLaunchIntentForPackage()/getPackageInfo() return
+         null for another app's package even when it IS installed on the
+         device — this was the exact cause of Launch Game reporting
+         "not installed" for a genuinely-installed Free Fire MAX. Declaring
+         the package here is required to see it at all. -->
+    <queries>
+        <package android:name="com.dts.freefiremax" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_app_icon"

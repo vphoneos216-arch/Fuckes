@@ -94,8 +94,10 @@ class HomeFragment : Fragment() {
     // ── Launch Game → attach engine ────────────────────────────
 
     /**
-     * LAUNCH GAME: open Free Fire MAX, give it a moment to come up, then
-     * run through the exact same mandatory gate as every other entry
+     * LAUNCH GAME: check root FIRST (no root → the game never opens, so
+     * the user isn't left sitting in-game waiting for an attach that can
+     * never succeed) → open Free Fire MAX → give it a moment to come up
+     * → run through the exact same mandatory gate as every other entry
      * point (Tile, Driver, LaunchMenu) — AuthManager.securityGate() —
      * before BinaryExecutor.extractAndExecute() ever runs. The game
      * launching first does NOT skip or weaken that gate in any way; it
@@ -104,23 +106,39 @@ class HomeFragment : Fragment() {
     private fun attemptLaunchGame() {
         val b = binding ?: return
 
-        val launchIntent = requireContext().packageManager
-            .getLaunchIntentForPackage(GAME_PACKAGE)
+        b.btnLaunchGame.isEnabled = false
+        b.progressLaunchGame.visibility = View.VISIBLE
+        showGameStatus(getString(R.string.checking_root), null)
+
+        // Root check happens off the UI thread and BEFORE the game ever
+        // opens — BinaryExecutor.isRootAvailable() runs "su -c id" with a
+        // short timeout, same probe BinaryExecutor itself uses.
+        Thread {
+            val rootOk = BinaryExecutor.isRootAvailable()
+            mainHandler.post {
+                if (!isAdded) return@post
+                if (!rootOk) {
+                    finishGameLaunch(getString(R.string.root_required_for_launch), false)
+                    return@post
+                }
+                launchGameThenAttach()
+            }
+        }.start()
+    }
+
+    private fun launchGameThenAttach() {
+        val b = binding ?: return
+        val launchIntent = requireContext().packageManager.getLaunchIntentForPackage(GAME_PACKAGE)
         if (launchIntent == null) {
-            showGameStatus(getString(R.string.game_not_installed), false)
+            finishGameLaunch(getString(R.string.game_not_installed), false)
             return
         }
 
-        b.btnLaunchGame.isEnabled = false
-        b.progressLaunchGame.visibility = View.VISIBLE
         showGameStatus(getString(R.string.game_launching), null)
-
         try {
             startActivity(launchIntent)
         } catch (e: Exception) {
-            b.btnLaunchGame.isEnabled = true
-            b.progressLaunchGame.visibility = View.GONE
-            showGameStatus(getString(R.string.game_launch_failed), false)
+            finishGameLaunch(getString(R.string.game_launch_failed), false)
             return
         }
 
