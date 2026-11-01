@@ -52,6 +52,7 @@
    ============================================================ */
 
 #include <cstdio>
+#include <cstdarg>
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
@@ -231,7 +232,21 @@ static void load_driver(const std::string& driver_field) {
 }
 
 // ─── binary start / stop ─────────────────────────────────────
-static bool start_binary(const std::string& bin_name) {
+// NOTE (fixed bug): optimum_bar/optimum_vol run their OWN independent
+// login (Authentication::run_silent(argv[1])) — same dual-login
+// contract main.cpp documents. They were being launched here with NO
+// argv[1], so main.cpp fell back to kd_load_saved_key(), which resolves
+// a writable dir from a candidate list that includes $HOME/.kd_store.
+// inx_login_@api (launched from the WebUI via a DIFFERENT root shell
+// context than this boot daemon) can end up with a different $HOME,
+// so the two binaries silently disagree on where the saved key lives —
+// optimum_bar/optimum_vol then fails its own login and prints
+// "Auth/runtime gate failed" with no indication why. Fix: always pass
+// the already-verified key from config.json's "key" field (written by
+// inx_login_@api on success) straight through as argv[1], so the
+// binary verifies the exact same key with zero dependency on shared
+// filesystem state.
+static bool start_binary(const std::string& bin_name, const std::string& key) {
     if (is_running(bin_name)) return true;
 
     std::string bin_path = std::string(BIN_DIR) + "/" + bin_name;
@@ -252,7 +267,11 @@ static bool start_binary(const std::string& bin_name) {
         setsid();
         int devnull = open("/dev/null", O_RDWR);
         if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
-        execl(bin_path.c_str(), bin_path.c_str(), (char*)nullptr);
+        if (!key.empty()) {
+            execl(bin_path.c_str(), bin_path.c_str(), key.c_str(), (char*)nullptr);
+        } else {
+            execl(bin_path.c_str(), bin_path.c_str(), (char*)nullptr);
+        }
         _exit(127);
     }
 
@@ -331,11 +350,19 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // Driver selection
         std::string driver = cfg.value("driver", "");
 
+        // Verified license key — written by inx_login_@api on success.
+        // Passed straight through to the binary's own argv[1] so it
+        // re-verifies the EXACT key already accepted, with no dependency
+        // on the two binaries agreeing on a shared on-disk key location.
+        std::string saved_key   = cfg.value("key", "");
+        std::string login_state = cfg.value("status", "");
+        const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
+
         const std::string fg = foreground_package();
         const bool inTarget  = (fg == target);
         const bool running   = is_running(bin_name);
 
-        if (inTarget && !running) {
+        if (inTarget && !running && loggedIn) {
             daemon_log("Target %s in foreground — starting binary", target.c_str());
 
             // Load driver first (if configured)
@@ -343,10 +370,20 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 load_driver(driver);
             }
 
-            // Launch binary
-            if (start_binary(bin_name)) {
+            // Launch binary (key forwarded as argv[1] — see start_binary() note)
+            if (start_binary(bin_name, saved_key)) {
                 launchedByDaemon = true;
                 lastBinaryName   = bin_name;
+            }
+        } else if (inTarget && !running && !loggedIn) {
+            // Target is open but no verified key yet — don't spawn a
+            // doomed process every poll cycle. Log once per foreground
+            // session so the WebUI "Daemon Logs" panel explains why
+            // nothing launched.
+            static std::string lastWarnedTarget;
+            if (lastWarnedTarget != target) {
+                daemon_log("Target %s in foreground but not logged in — login first via WebUI", target.c_str());
+                lastWarnedTarget = target;
             }
         } else if (!inTarget && launchedByDaemon && !lastBinaryName.empty()) {
             if (is_running(lastBinaryName)) {
