@@ -44,6 +44,23 @@
 #define COL_SHADOW(a)        IM_COL32(  0,   0,   0, (a))   // soft shadow
 #define COL_HAIRLINE(a)      IM_COL32( 54,  54,  68, (a))   // subtle border
 
+// ── LAYOUT GRID ─────────────────────────────────────────────
+// The panel is split into a content column and an art zone. Everything
+// interactive lives inside the column; nothing is drawn over the artwork.
+//
+// The pages used to centre 780-wide cards in an 860-wide panel, so they
+// covered 91% of it. The artwork was then almost entirely hidden behind
+// them and only a sliver showed at the edge, which is why enabling the
+// background made the menu look broken rather than finished.
+//
+// Values are in design units (SM_W x SM_H) and multiplied by `scale`.
+#define LAY_COL_X     32.0f    // content column left edge
+#define LAY_COL_W    516.0f    // content column width  (0.60 of SM_W)
+#define LAY_BODY_Y   100.0f    // first row below the header
+#define LAY_BODY_B   524.0f    // bottom of the content area
+#define LAY_GAP       14.0f    // gap between cards
+#define LAY_ROUND     12.0f    // card corner radius
+
 // ── Soft shadow helper (purely visual, drawn behind surfaces) ──
 static inline void SM_SoftShadow(ImDrawList* dl, ImVec2 a, ImVec2 b,
                                  float rnd, float alpha) {
@@ -494,7 +511,7 @@ inline void RenderSingleMenuWindow() {
 
                     // Right column
                     float Rx1 = Lx2 + 间隔;
-                    float Rx2 = p.x + windowSize.x - 38 * scale;
+                    float Rx2 = p.x + (LAY_COL_X + LAY_COL_W) * scale;  /* column edge, not panel edge */
                     float CenterX = (Rx1 + Rx2) * 0.5f;
                     float Ry1 = p.y + 80 * scale, Ry2 = p.y + 220 * scale;
                     dl->AddRectFilled(ImVec2(Rx1, Ry1), ImVec2(Rx2, Ry2), COL_CARD((int)(235 * uiAlpha)), 22 * scale);
@@ -545,53 +562,62 @@ inline void RenderSingleMenuWindow() {
                         dl->AddText(NULL, 24.f * scale, ImVec2(p.x+(windowSize.x-tw)*0.5f, cy),
                                     COL_TXT_MID((int)(220*uiAlpha)), msg);
                     } else {
-                    float contentY = p.y + 95 * scale;
-                    float centerX  = p.x + windowSize.x * 0.5f;
-                    float cardW    = 780 * scale;
-                    float cardH1   = 215 * scale;
-                    float cardH2   = 190 * scale;
-                    float cardRound = 22 * scale;
-                    ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
+                    // Content column only — the artwork keeps the right side.
+                    const float colX  = p.x + LAY_COL_X * scale;
+                    const float colW  = LAY_COL_W * scale;
+                    const float gap   = LAY_GAP * scale;
+                    const float round = LAY_ROUND * scale;
+                    const float bodyY = p.y + LAY_BODY_Y * scale;
+                    const float bodyB = p.y + LAY_BODY_B * scale;
+                    const ImU32 cardBg = COL_CARD((int)(210 * uiAlpha));
 
-                    ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + cardH1);
-                    dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
+                    // Seven switches in two columns, then the Text Size card.
+                    // Row height is solved from the body box so the page fills
+                    // it exactly instead of leaving a gap at the bottom.
+                    const float sliderH = 86 * scale;
+                    const float rowH    = (bodyB - bodyY - 4 * gap - sliderH) / 4.0f;
+                    const float halfW   = (colW - gap) * 0.5f;
 
-                    float startX   = c1Min.x + 25 * scale;
-                    float startY   = c1Min.y + 20 * scale;
-                    float rowSpace = 50 * scale;
-                    float colSpace = 240 * scale;
+                    struct EspRow { const char* label; bool* value; };
+                    EspRow espRows[7] = {
+                        { "Box",       &g_Cfg.showBox      },
+                        { "Skeleton",  &g_Cfg.showSkeleton },
+                        { "Name",      &g_Cfg.showName     },
+                        { "Health",    &g_Cfg.showHealth   },
+                        { "Distance",  &g_Cfg.showDistance },
+                        { "ESP Line",  &g_Cfg.showLine     },
+                        { "360 Alert", &g_Cfg.is3600       }
+                    };
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY));
-                    ImGui::Checkbox1("ESP Line",  &g_Cfg.showLine);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + colSpace, startY));
-                    ImGui::Checkbox1("Skeleton",  &g_Cfg.showSkeleton);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + colSpace * 2, startY));
-                    ImGui::Checkbox1("Box",       &g_Cfg.showBox);
+                    for (int i = 0; i < 7; ++i) {
+                        const bool  wide = (i == 6);           // last one spans the column
+                        const float cw   = wide ? colW : halfW;
+                        const float cx   = colX + (wide ? 0.0f : (i % 2) * (halfW + gap));
+                        const float cy   = bodyY + (float)(wide ? 3 : i / 2) * (rowH + gap);
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + rowSpace));
-                    ImGui::Checkbox1("Health",    &g_Cfg.showHealth);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + colSpace, startY + rowSpace));
-                    ImGui::Checkbox1("Distance",  &g_Cfg.showDistance);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + colSpace * 2, startY + rowSpace));
-                    ImGui::Checkbox1("Name",      &g_Cfg.showName);
+                        dl->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + cw, cy + rowH), cardBg, round);
+                        dl->AddRect(ImVec2(cx, cy), ImVec2(cx + cw, cy + rowH),
+                                    COL_HAIRLINE((int)(150 * uiAlpha)), round, 0, 1.0f);
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + rowSpace * 2));
-                    ImGui::Checkbox1("360 Alert", &g_Cfg.is3600);
+                        // The switch draws its own label, so it is placed where
+                        // the label should start and sized by Checkbox1 itself.
+                        ImGui::SetCursorScreenPos(ImVec2(cx + 16 * scale,
+                                                         cy + (rowH - 36 * scale) * 0.5f));
+                        ImGui::Checkbox1(espRows[i].label, espRows[i].value);
+                    }
 
-                    // Second card
-                    ImVec2 c2Min = ImVec2(centerX - cardW * 0.5f, contentY + cardH1 + 25 * scale);
-                    ImVec2 c2Max = ImVec2(centerX + cardW * 0.5f, contentY + cardH1 + 25 * scale + cardH2);
-                    dl->AddRectFilled(c2Min, c2Max, cardBg, cardRound);
-                    dl->AddText(NULL, 28.0f * scale, ImVec2(centerX - 70 * scale, c2Min.y + 20 * scale),
-                                COL_ACCENT((int)(255 * uiAlpha)), "Text");
+                    // Text Size
+                    const float sy = bodyY + 4 * (rowH + gap);
+                    dl->AddRectFilled(ImVec2(colX, sy), ImVec2(colX + colW, sy + sliderH), cardBg, round);
+                    dl->AddRect(ImVec2(colX, sy), ImVec2(colX + colW, sy + sliderH),
+                                COL_HAIRLINE((int)(150 * uiAlpha)), round, 0, 1.0f);
+                    dl->AddText(NULL, 22.0f * scale, ImVec2(colX + 16 * scale, sy + 14 * scale),
+                                COL_TXT_HI((int)(255 * uiAlpha)), "Text Size");
 
-                    float pStartX = c2Min.x + 25 * scale;
-                    float pStartY = c2Min.y + 60 * scale;
-                    ImGui::SetCursorScreenPos(ImVec2(pStartX, pStartY));
-                    ImGui::SetNextItemWidth(cardW - 60 * scale);
+                    ImGui::SetCursorScreenPos(ImVec2(colX + 16 * scale, sy + 48 * scale));
+                    ImGui::SetNextItemWidth(colW - 32 * scale);
                     float ts = (float)textSize;
-                    if (ImGui::SliderFloat("Text Size", &ts, 10.0f, 50.0f, "%.0f")) textSize = (int)ts;
+                    if (ImGui::SliderFloat("##TextSize", &ts, 10.0f, 50.0f, "%.0f")) textSize = (int)ts;
 
                     // Sync
                     showLine     = g_Cfg.showLine;
@@ -615,8 +641,11 @@ inline void RenderSingleMenuWindow() {
                                     COL_TXT_MID((int)(220*uiAlpha)), msg);
                     } else {
                     float contentY = p.y + 95 * scale;
-                    float centerX  = p.x + windowSize.x * 0.5f;
-                    float cardW    = 780 * scale;
+                    // Card geometry moved into the content column so the
+                    // artwork on the right stays visible. Controls inside are
+                    // unchanged; only the box they sit in is narrower.
+                    float centerX  = p.x + (LAY_COL_X + LAY_COL_W * 0.5f) * scale;
+                    float cardW    = LAY_COL_W * scale;
                     float cardRound = 22 * scale;
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
 
@@ -627,7 +656,7 @@ inline void RenderSingleMenuWindow() {
                     float startX = c1Min.x + 25 * scale;
                     float startY = c1Min.y + 20 * scale;
                     float row    = 48 * scale;
-                    float col    = 250 * scale;
+                    float col    = 236 * scale;  /* fits the content column */
 
                     // Row 0 — Silent Aim (Aim Lock + Aimbot removed from UI)
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
@@ -655,7 +684,7 @@ inline void RenderSingleMenuWindow() {
                     const char* btModes[] = { "Body", "Legit" };
                     const int btVals[] = { 2, 3 };
                     float modeY = startY + row * 3.75f;
-                    float modeW = 160 * scale;
+                    float modeW = 150 * scale;
                     float modeH = 36 * scale;
                     float modeGap = 20 * scale;
                     for (int mi = 0; mi < 2; mi++) {
@@ -731,8 +760,11 @@ inline void RenderSingleMenuWindow() {
                                     COL_TXT_MID((int)(220*uiAlpha)), msg);
                     } else {
                     float contentY = p.y + 95 * scale;
-                    float centerX  = p.x + windowSize.x * 0.5f;
-                    float cardW    = 780 * scale;
+                    // Card geometry moved into the content column so the
+                    // artwork on the right stays visible. Controls inside are
+                    // unchanged; only the box they sit in is narrower.
+                    float centerX  = p.x + (LAY_COL_X + LAY_COL_W * 0.5f) * scale;
+                    float cardW    = LAY_COL_W * scale;
                     float cardRound = 22 * scale;
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
 
@@ -749,7 +781,7 @@ inline void RenderSingleMenuWindow() {
                     float startX = c1Min.x + 28 * scale;
                     float startY = c1Min.y + 58 * scale;
                     float row    = 52 * scale;   /* spacing between rows */
-                    float col    = 280 * scale;  /* left / right column gap */
+                    float col    = 236 * scale;  /* fits the content column */
 
                     /* Row 0 */
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
@@ -777,8 +809,11 @@ inline void RenderSingleMenuWindow() {
                     } /* feat gate exploit */
                 else if (现在页面 == 4) {
                     float contentY  = p.y + 95 * scale;
-                    float centerX   = p.x + windowSize.x * 0.5f;
-                    float cardW     = 780 * scale;
+                    // Card geometry moved into the content column so the
+                    // artwork on the right stays visible. Controls inside are
+                    // unchanged; only the box they sit in is narrower.
+                    float centerX   = p.x + (LAY_COL_X + LAY_COL_W * 0.5f) * scale;
+                    float cardW     = LAY_COL_W * scale;
                     float cardRound = 22 * scale;
                     ImU32 cardBg    = COL_CARD((int)(235 * uiAlpha));
 
