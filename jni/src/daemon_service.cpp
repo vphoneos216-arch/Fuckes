@@ -51,6 +51,7 @@
      -DINX_MODULE_DIR="/data/adb/modules/inx_mods"
    ============================================================ */
 
+#include <cctype>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -95,6 +96,14 @@ static const char* CHEAT_LOG = INX_MODULE_DIR "/webroot/cheat.log";
 // full server login, so a binary that keeps exiting must not be relaunched
 // every poll cycle.
 static const int RESTART_BACKOFF_SECS = 60;
+
+// Consecutive polls the target must be missing from the foreground before the
+// game counts as closed. Focus flickers for a poll during dialogs and system
+// windows; without this the menu was killed in the middle of a match.
+static const int LEAVE_MISS_POLLS = 4;
+
+// Poll interval. 1.5 s with heavy dumpsys calls kept the CPU busy all the time.
+static const useconds_t POLL_USEC = 2000 * 1000;
 
 // ─── logging ─────────────────────────────────────────────────
 #define LOG_MAX_LINES 200
@@ -160,26 +169,28 @@ static json load_config() {
 }
 
 // ─── foreground app detection ────────────────────────────────
+// Pulls "<pkg>" out of the first line containing `key`, where the line has
+// the form "... <pkg>/<activity> ...". grep -m1 means only one line ever
+// reaches us, so no multi-megabyte dumpsys dump is read or regex-scanned.
+static std::string pkg_from_dumpsys(const std::string& dumpsys_cmd, const char* key) {
+    const std::string line = run_shell(dumpsys_cmd + " 2>/dev/null | grep -m1 '" + key + "'");
+    const size_t k = line.find(key);
+    if (k == std::string::npos) return "";
+    const size_t slash = line.find('/', k);
+    if (slash == std::string::npos) return "";
+    size_t start = slash;
+    while (start > 0) {
+        const unsigned char c = (unsigned char)line[start - 1];
+        if (!(isalnum(c) || c == '_' || c == '.')) break;
+        --start;
+    }
+    return line.substr(start, slash - start);
+}
+
 static std::string foreground_package() {
-    static const std::regex re1("mCurrentFocus=.*?\\s([A-Za-z0-9_.]+)/");
-    static const std::regex re2("mResumedActivity:.*?\\s([A-Za-z0-9_.]+)/");
-    static const std::regex re3("mFocusedApp=.*?\\s([A-Za-z0-9_.]+)/");
-    static const std::regex re4("ACTIVITY\\s+([A-Za-z0-9_.]+)/");
-
-    std::smatch m;
-    std::string out = run_shell("dumpsys window windows 2>/dev/null");
-    if (std::regex_search(out, m, re1) && m.size() > 1) return m[1].str();
-    if (std::regex_search(out, m, re3) && m.size() > 1) return m[1].str();
-
-    out = run_shell("dumpsys activity activities 2>/dev/null");
-    if (std::regex_search(out, m, re2) && m.size() > 1) return m[1].str();
-
-    // Some ROMs omit the two sections above; "activity top" always lists
-    // the top activity as "ACTIVITY <pkg>/<class> ...".
-    out = run_shell("dumpsys activity top 2>/dev/null");
-    if (std::regex_search(out, m, re4) && m.size() > 1) return m[1].str();
-
-    return "";
+    std::string pkg = pkg_from_dumpsys("dumpsys window", "mCurrentFocus=");
+    if (pkg.empty()) pkg = pkg_from_dumpsys("dumpsys activity top", "ACTIVITY ");
+    return pkg;
 }
 
 // ─── PID helpers ─────────────────────────────────────────────
@@ -372,6 +383,8 @@ int main(int /*argc*/, char* /*argv*/[]) {
     time_t lastStartAttempt = 0;
     time_t launchedAt       = 0;
     bool   wasInTarget      = false;
+    bool   inGame           = false;
+    int    missCount        = 0;
 
     for (;;) {
         json cfg = load_config();
@@ -396,9 +409,16 @@ int main(int /*argc*/, char* /*argv*/[]) {
         std::string login_state = cfg.value("status", "");
         const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
 
-        const std::string fg = foreground_package();
-        const bool inTarget  = (fg == target);
-        const bool running   = is_running(bin_name);
+        // Debounced game state: the game is "closed" only after
+        // LEAVE_MISS_POLLS polls in a row without it in the foreground.
+        if (foreground_package() == target) {
+            missCount = 0;
+            inGame    = true;
+        } else if (++missCount >= LEAVE_MISS_POLLS) {
+            inGame = false;
+        }
+        const bool inTarget = inGame;
+        const bool running  = is_running(bin_name);
 
         // Binary that exited on its own (driver missing, auth gate failed,
         // crash): log it once, then wait RESTART_BACKOFF_SECS before retrying.
@@ -465,7 +485,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
             }
         }
 
-        usleep(1500 * 1000); // 1.5s poll interval
+        usleep(POLL_USEC);
     }
 
     return 0; // unreachable
