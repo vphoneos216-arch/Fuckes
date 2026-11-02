@@ -364,9 +364,9 @@ int main(int /*argc*/, char* /*argv*/[]) {
         if (target.empty()) target = DEFAULT_TARGET;
 
         // Determine which binary to run
-        std::string bin_name = cfg.value("binary", "optimum_bar");
-        if (bin_name != "optimum_bar" && bin_name != "optimum_vol")
-            bin_name = "optimum_bar"; // safe default
+        // One binary only. Bar vs Volume is config "menu_open", which the
+        // binary reads itself.
+        const std::string bin_name = "optimum_bar";
 
         // Driver selection
         std::string driver = cfg.value("driver", "");

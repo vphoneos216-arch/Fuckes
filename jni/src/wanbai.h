@@ -896,46 +896,21 @@ public:
     }
 
     c_driver() {
-        int choice = g_driver_choice;
-
-        // Forced WebUI choice 1-10: try it; on failure fall through to AUTO
-        if (choice >= 1 && choice <= 10) {
-            printf("\033[92m[INX] Trying driver mode %d (WebUI/config)\033[0m\n", choice);
+        // Manual only: the driver is the one chosen in the WebUI
+        // (config.json "driver", read into g_driver_choice by main).
+        // No automatic scan of other backends.
+        const int choice = g_driver_choice;
+        if (choice < 1 || choice > 10) {
+            printf("[-] No driver selected. Choose one in the WebUI and launch again.\n");
             fflush(stdout);
-            _init_from_choice(choice);
-            if (any_backend_ready()) {
-                g_driver_choice = choice;
-                return;
-            }
-            printf("\033[33m[INX] Mode %d failed — switching to AUTO detect\033[0m\n", choice);
-            fflush(stdout);
-            _reset_backend_flags();
+            exit(0);
         }
-
-        // AUTO (default -1/0, or after forced fail)
-        choice = auto_detect_driver();
-        if (choice < 1) {
-            /* Last chance: Paradise API only (node names often differ) */
-            printf("[INX] Last chance: Paradise API...\n");
-            fflush(stdout);
-            if (ix_paradise_alive()) {
-                choice = 10;
-                printf("[INX] OK  Paradise (last-chance API)\n");
-            } else if (proKpm::is_available()) {
-                choice = 7;
-                printf("[INX] OK  DitPro KPM (last-chance)\n");
-            } else {
-                printf("[-] Please insert or load driver\n");
-                printf("    Supported: RT drive | Paradise | DitPro KPM\n");
-                exit(0);
-            }
-        }
-        g_driver_choice = choice;
-        printf("\033[92m[INX] Auto-selected driver mode %d\033[0m\n", choice);
+        printf("\033[92m[INX] Driver mode %d (WebUI selected)\033[0m\n", choice);
         fflush(stdout);
         _init_from_choice(choice);
         if (!any_backend_ready()) {
-            printf("[-] Driver init failed. Please insert or load driver\n");
+            printf("[-] Selected driver %d failed to initialise. Check it is loaded.\n", choice);
+            fflush(stdout);
             exit(0);
         }
     }
