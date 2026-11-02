@@ -63,6 +63,64 @@ static inline float EaseOutBack(float t) {
     return 1.0f + c3 * powf(t - 1.0f, 3.0f) + c1 * powf(t - 1.0f, 2.0f);
 }
 
+
+// ── INX mark ────────────────────────────────────────────────
+// Drawn with the draw list rather than loaded from an image, so it stays
+// crisp at any panel scale and costs nothing to ship.
+//
+// A pointy-top hexagon in the accent red over a dark fill, a soft outer
+// glow built from concentric outlines, a tick on the top and bottom vertex,
+// and the wordmark with the X in accent red.
+static inline void SM_HexPoints(ImVec2* out, ImVec2 c, float r) {
+    for (int i = 0; i < 6; ++i) {
+        const float a = (3.14159265f / 180.0f) * (60.0f * (float)i - 90.0f);
+        out[i] = ImVec2(c.x + r * cosf(a), c.y + r * sinf(a));
+    }
+}
+
+static inline void SM_DrawInxMark(ImDrawList* dl, ImVec2 center, float size, float a01) {
+    if (a01 <= 0.0f) return;
+    const int   A    = (int)(255.0f * a01);
+    const float r    = size * 0.5f * 0.850f;   // hex radius, leaves room for the glow
+    const float th   = size * 0.019f;          // outline thickness
+    ImVec2 pts[6];
+
+    // Outer glow: concentric outlines, faintest first.
+    for (int i = 4; i >= 1; --i) {
+        SM_HexPoints(pts, center, r + (float)i * size * 0.016f);
+        const int ga = (int)(14.0f * (float)(5 - i) * a01);
+        if (ga <= 0) continue;
+        dl->AddPolyline(pts, 6, COL_ACCENT(ga), ImDrawFlags_Closed, th * 0.7f);
+    }
+
+    // Body + accent border.
+    SM_HexPoints(pts, center, r);
+    dl->AddConvexPolyFilled(pts, 6, COL_CARD_INNER(A));
+    dl->AddPolyline(pts, 6, COL_ACCENT(A), ImDrawFlags_Closed, th);
+
+    // Ticks across the top and bottom vertices.
+    const float tw = size * 0.082f;
+    dl->AddLine(ImVec2(center.x - tw, center.y - r), ImVec2(center.x + tw, center.y - r),
+                COL_ACCENT(A), th * 1.25f);
+    dl->AddLine(ImVec2(center.x - tw, center.y + r), ImVec2(center.x + tw, center.y + r),
+                COL_ACCENT(A), th * 1.25f);
+
+    // Wordmark: "IN" white, "X" accent, measured as one unit so it is centred
+    // whatever font is bound.
+    const float   fs = size * 0.253f;
+    ImFont* const f  = ImGui::GetFont();
+    const float wIN  = f->CalcTextSizeA(fs, FLT_MAX, -1.0f, "IN").x;
+    const float wX   = f->CalcTextSizeA(fs, FLT_MAX, -1.0f, "X").x;
+    const float sx   = center.x - (wIN + wX) * 0.5f;
+    const float ty   = center.y - fs * 0.5f;
+    const float sh   = size * 0.013f;          // shadow offset
+
+    dl->AddText(NULL, fs, ImVec2(sx + sh, ty + sh),       IM_COL32(0, 0, 0, (int)(140 * a01)), "IN");
+    dl->AddText(NULL, fs, ImVec2(sx + wIN + sh, ty + sh), IM_COL32(0, 0, 0, (int)(140 * a01)), "X");
+    dl->AddText(NULL, fs, ImVec2(sx, ty),                 COL_TXT_HI(A),  "IN");
+    dl->AddText(NULL, fs, ImVec2(sx + wIN, ty),           COL_ACCENT(A),  "X");
+}
+
 // ── State — source 菜单.cpp ─────────────────────────────────
 static int   现在页面     = 0;
 static bool  已初始化随机 = false;
@@ -159,13 +217,13 @@ inline void RenderSingleMenuWindow() {
     float deltaTime = io.DeltaTime;
     if (deltaTime <= 0.0f || deltaTime > 0.1f) deltaTime = 0.016f; // clamp
 
-    /* Smooth open/close animation — ease-in-out */
-    float animTarget = 窗口显示状态 ? 1.0f : 0.0f;
-    float animSpeed  = 8.0f; // higher = faster (reciprocal of ~125 ms half-life)
-    openAnim += (animTarget - openAnim) * (1.0f - expf(-animSpeed * deltaTime));
-    if (openAnim < 0.005f) openAnim = 0.0f;
-    if (openAnim > 0.995f) openAnim = 1.0f;
+    /* No open/close animation: the panel is simply there or not there.
+       openAnim jumps straight to its target, which makes animScale 1.0 and
+       animAlpha 1.0 below, so the panel is drawn at full size and full
+       opacity on the very first frame after the toggle. */
+    openAnim    = 窗口显示状态 ? 1.0f : 0.0f;
     prevVisible = 窗口显示状态;
+    (void)deltaTime;
 
     当前动画 = 动画_无;
     动画进度 = 1.0f;
@@ -344,38 +402,16 @@ inline void RenderSingleMenuWindow() {
                     ImVec2 scaledHalfSize = ImVec2(avatarSize.x * 0.5f * avatarHoverScale, avatarSize.y * 0.5f * avatarHoverScale);
                     ImVec2 scaledP0 = ImVec2(avatarCenter.x - scaledHalfSize.x, avatarCenter.y - scaledHalfSize.y);
                     ImVec2 scaledP1 = ImVec2(avatarCenter.x + scaledHalfSize.x, avatarCenter.y + scaledHalfSize.y);
+                    // The INX mark, drawn as vectors. The old build shipped a
+                    // 3.7 MB PNG for this and fell back to a plain "IX" when the
+                    // texture was missing; the mark now needs neither.
                     ImU32 avatarBgColor = isAvatarHovered ? COL_BTN_IDLE((int)(255 * uiAlpha))
                                                           : COL_CARD((int)(255 * uiAlpha));
                     float avatarRounding = 25.0f * scale;
                     dl->AddRectFilled(scaledP0, scaledP1, avatarBgColor, avatarRounding);
-                    if (g_AvatarTex) {
-                        dl->AddImageRounded(g_AvatarTex, scaledP0, scaledP1, ImVec2(0, 0), ImVec2(1, 1),
-                                            IM_COL32(255, 255, 255, (int)(255 * uiAlpha)), avatarRounding);
-                    } else {
-                        // No avatar texture — draw a styled "IX" logo placeholder
-                        // Outer accent ring
-                        float ringR = avatarSize.x * 0.5f * avatarHoverScale * 0.88f;
-                        dl->AddCircle(avatarCenter, ringR, COL_ACCENT((int)(180 * uiAlpha)), 48, 2.0f * scale);
+                    SM_DrawInxMark(dl, avatarCenter,
+                                   (scaledP1.x - scaledP0.x), uiAlpha);
 
-                        // "I" letter (left half)
-                        float fontSize = 64.0f * scale;
-                        ImFont* f = ImGui::GetFont();
-                        float tw_I  = f->CalcTextSizeA(fontSize, FLT_MAX, -1.f, "I").x;
-                        float tw_X  = f->CalcTextSizeA(fontSize, FLT_MAX, -1.f, "X").x;
-                        float totalW = tw_I + tw_X;
-                        float startLx = avatarCenter.x - totalW * 0.5f;
-                        float textY   = avatarCenter.y - fontSize * 0.5f;
-                        // shadow
-                        dl->AddText(NULL, fontSize, ImVec2(startLx + 2*scale, textY + 2*scale),
-                                    IM_COL32(0,0,0,(int)(120*uiAlpha)), "I");
-                        dl->AddText(NULL, fontSize, ImVec2(startLx + tw_I + 2*scale, textY + 2*scale),
-                                    IM_COL32(0,0,0,(int)(120*uiAlpha)), "X");
-                        // "I" white, "X" red
-                        dl->AddText(NULL, fontSize, ImVec2(startLx, textY),
-                                    COL_TXT_HI((int)(255 * uiAlpha)), "I");
-                        dl->AddText(NULL, fontSize, ImVec2(startLx + tw_I, textY),
-                                    COL_ACCENT((int)(255 * uiAlpha)), "X");
-                    }
                     dl->AddText(NULL, 30.0f * scale, ImVec2(cardCenter.x - 70 * scale, cardCenter.y + 90 * scale),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Welcome back");
 

@@ -44,7 +44,6 @@ static void LoadMenuOpenMode() {
 
 // ── Source UI Assets ─────────────────────────────────────────
 #include "stb_image.h"
-#include "UI/images/Avatar.h"
 #include "UI/images/Background.h"
 
 // Helper: create OpenGL texture from PNG bytes in memory
@@ -65,13 +64,11 @@ static ImTextureID CreateTextureFromMemory(const unsigned char* data, int len) {
 }
 
 static ImTextureID g_BgTex     = nullptr;
-static ImTextureID g_AvatarTex = nullptr;
 static bool        g_TexLoaded = false;
 
 static void LoadEmbeddedTextures() {
     if (g_TexLoaded) return;
     g_BgTex     = CreateTextureFromMemory(背景图_data,  sizeof(背景图_data));
-    g_AvatarTex = CreateTextureFromMemory(头像_data,    sizeof(头像_data));
     g_TexLoaded = true;
 }
 
