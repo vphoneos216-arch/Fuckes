@@ -224,7 +224,6 @@ ImColor 随机彩色() {
         default: return ImColor(232, 38, 58, 180);
     }
 }
-}
 
 void 初始化落叶纹理系统() {
     if (落叶纹理查找完成) return;
