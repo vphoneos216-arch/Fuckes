@@ -428,7 +428,13 @@ namespace android {
                 Functionals::GetInstance().RefBase__IncStrong(data, this);
             }
 
-            SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool hide, bool secure) {
+            // trustedOverlay: on Android 12+ this layer was always marked a
+            // trusted overlay. SurfaceFlinger leaves trusted overlays out of
+            // screen captures, so the overlay never appeared in a screenshot
+            // or a recording however the screenshot flag was set. It is a
+            // switch now: off, the layer is an ordinary one and is captured.
+            SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool hide, bool secure,
+                                         bool trustedOverlay = true) {
                 void *parentHandle = nullptr;
                 String8 windowName(name);
                 LayerMetadata layerMetadata;
@@ -466,7 +472,7 @@ namespace android {
                                                                                              layerMetadata, nullptr);
                 }
 
-                if (12 <= Functionals::GetInstance().systemVersion) {
+                if (trustedOverlay && 12 <= Functionals::GetInstance().systemVersion) {
                     static SurfaceComposerClientTransaction transaction;
 
                     transaction.SetTrustedOverlay(result, true);
@@ -560,7 +566,8 @@ namespace android {
         }
 
         static ANativeWindow *
-        Create(const char *name, int32_t width = -1, int32_t height = -1, bool hide = true, bool secure = false) {
+        Create(const char *name, int32_t width = -1, int32_t height = -1, bool hide = true, bool secure = false,
+               bool trustedOverlay = true) {
             auto &surfaceComposerClient = GetComposerInstance();
 
             while (-1 == width || -1 == height) {
@@ -585,7 +592,7 @@ namespace android {
                 break;
             }
 
-            auto surfaceControl = surfaceComposerClient.CreateSurface(name, width, height, hide, secure);
+            auto surfaceControl = surfaceComposerClient.CreateSurface(name, width, height, hide, secure, trustedOverlay);
             auto nativeWindow = reinterpret_cast<ANativeWindow *>(surfaceControl.GetSurface());
 
             m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);

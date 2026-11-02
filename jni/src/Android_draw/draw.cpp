@@ -29,12 +29,18 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     #else
         InitVulkan();
         SetupVulkan();
-    // 4th argument is `hide`: on Android 12+ it makes the layer
-    // eSkipScreenshot (0x40), so the overlay is left out of screenshots and
-    // recordings. The menu's "Show" switch writes config.json, which is read
-    // here, so the choice applies the next time the overlay starts.
+    // Two separate things keep the overlay out of a screenshot, and both have
+    // to go for "Show" to work:
+    //   hide          -> on Android 12+ sets eSkipScreenshot (0x40)
+    //   trustedOverlay-> SurfaceFlinger leaves trusted overlays out of captures
+    // The second was applied unconditionally, which is why clearing the first
+    // alone changed nothing. Read from config.json, so the menu's "Show"
+    // switch decides; it takes effect the next time the overlay starts.
+    //
+    // Note: a trusted overlay is also exempt from the "touch obscured" flag,
+    // so with Show on the game may see the menu as an obscuring window.
     const bool ix_show_capture = ix_get_show_in_capture();
-        ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture);
+        ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture, false, !ix_show_capture);
         SetupVulkanWindow(::native_window, (int) _screen_x, (int) _screen_y);
     #endif
     if (!ImGui_init()) {
@@ -49,12 +55,18 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
 }
 
 bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
-    // 4th argument is `hide`: on Android 12+ it makes the layer
-    // eSkipScreenshot (0x40), so the overlay is left out of screenshots and
-    // recordings. The menu's "Show" switch writes config.json, which is read
-    // here, so the choice applies the next time the overlay starts.
+    // Two separate things keep the overlay out of a screenshot, and both have
+    // to go for "Show" to work:
+    //   hide          -> on Android 12+ sets eSkipScreenshot (0x40)
+    //   trustedOverlay-> SurfaceFlinger leaves trusted overlays out of captures
+    // The second was applied unconditionally, which is why clearing the first
+    // alone changed nothing. Read from config.json, so the menu's "Show"
+    // switch decides; it takes effect the next time the overlay starts.
+    //
+    // Note: a trusted overlay is also exempt from the "touch obscured" flag,
+    // so with Show on the game may see the menu as an obscuring window.
     const bool ix_show_capture = ix_get_show_in_capture();
-    ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture);
+    ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture, false, !ix_show_capture);
 
     ANativeWindow_acquire(native_window);
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
