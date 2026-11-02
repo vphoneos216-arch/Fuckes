@@ -32,6 +32,14 @@
 
 using json = nlohmann::json;
 
+// Server-provided strings can contain bytes that are not valid UTF-8.
+// Plain dump() then throws type_error and aborts the process (exit 134)
+// right after a successful verification. The replace handler swaps bad
+// bytes for U+FFFD instead of crashing.
+static std::string dump_safe(const json& j, int indent = -1) {
+    return j.dump(indent, ' ', false, json::error_handler_t::replace);
+}
+
 #ifndef INX_MODULE_DIR
 #define INX_MODULE_DIR "/data/adb/modules/inx_mods"
 #endif
@@ -43,7 +51,7 @@ static const char* WEB_CFG = INX_MODULE_DIR "/webroot/config.json";
 // -------------------------------------------------------------
 static void print_error(const std::string& msg) {
     json out = { {"status", "error"}, {"message", msg} };
-    printf("%s\n", out.dump().c_str());
+    printf("%s\n", dump_safe(out).c_str());
 }
 
 // -------------------------------------------------------------
@@ -76,7 +84,7 @@ static std::string update_web_config(const std::string& key,
     if (!out.good()) {
         return std::string("open failed: ") + strerror(errno) + " (" + WEB_CFG + ")";
     }
-    out << cfg.dump(4);
+    out << dump_safe(cfg, 4);
     out.close();
     if (out.fail()) {
         return std::string("write failed: ") + strerror(errno) + " (" + WEB_CFG + ")";
@@ -126,7 +134,7 @@ int main(int argc, char* argv[]) {
             {"saved",      save_error.empty()},
             {"save_error", save_error}
         };
-        printf("%s\n", out.dump().c_str());
+        printf("%s\n", dump_safe(out).c_str());
         return 0;
     }
 
@@ -140,7 +148,7 @@ int main(int argc, char* argv[]) {
         }
         cfg["status"] = "error";
         std::ofstream out(WEB_CFG, std::ios::trunc);
-        if (out.good()) { out << cfg.dump(4); chmod(WEB_CFG, 0644); }
+        if (out.good()) { out << dump_safe(cfg, 4); chmod(WEB_CFG, 0644); }
     }
 
     print_error("Login failed. Please check your key and try again.");
