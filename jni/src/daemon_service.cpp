@@ -66,6 +66,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <time.h>
@@ -103,14 +104,18 @@ static const int RESTART_BACKOFF_SECS = 60;
 // windows; without this the menu was killed in the middle of a match.
 static const int LEAVE_MISS_POLLS = 4;
 
-// Poll interval while the game process exists. 1.5 s with heavy dumpsys calls
-// kept the CPU busy all the time.
-static const useconds_t POLL_BUSY_USEC = 2000 * 1000;
+// One tick. Each tick only scans /proc in process, which costs no fork and a
+// couple of milliseconds, so the game can be caught the moment it starts.
+static const useconds_t TICK_USEC = 1000 * 1000;
 
-// Poll interval while the game is not even running. Checking whether its
-// process exists is a cheap pgrep, so over a 24 h day almost no dumpsys call
-// is made at all — that is where the heat and battery drain came from.
-static const useconds_t POLL_IDLE_USEC = 5000 * 1000;
+// dumpsys is the expensive call (system_server builds the whole dump), so it
+// runs once every this many ticks, and only while the game is alive. It is
+// needed solely to take the menu down when the player leaves the game.
+static const unsigned FOREGROUND_EVERY_TICKS = 3;
+
+// Heartbeat is written at most this often, to avoid writing to flash every
+// second for a whole day. The watchdog's stale window is far longer.
+static const unsigned HEARTBEAT_EVERY_TICKS = 5;
 
 // Heartbeat + state for the WebUI. The page reads this file with fetch(), so
 // the status card needs no shell call: a shell call on a timer was flooding
@@ -170,14 +175,27 @@ static std::string run_shell(const std::string& cmd) {
 }
 
 // ─── config ──────────────────────────────────────────────────
-static json load_config() {
+// Re-parses config.json only when it has been written since the last read.
+// At a one-second tick, parsing it every time is pure waste.
+static json load_config_cached() {
+    static json   cached = json::object();
+    static time_t cachedMtime = 0;
+    static bool   loaded = false;
+
+    struct stat st;
+    if (stat(WEB_CFG, &st) != 0) return cached;
+    if (loaded && st.st_mtime == cachedMtime) return cached;
+
     std::ifstream f(WEB_CFG);
-    if (!f.good()) return json::object();
-    try {
-        json j; f >> j;
-        if (j.is_object()) return j;
-    } catch (...) {}
-    return json::object();
+    if (f.good()) {
+        try {
+            json j; f >> j;
+            if (j.is_object()) cached = j;
+        } catch (...) {}
+    }
+    cachedMtime = st.st_mtime;
+    loaded = true;
+    return cached;
 }
 
 // ─── foreground app detection ────────────────────────────────
@@ -205,24 +223,45 @@ static std::string foreground_package() {
     return pkg;
 }
 
-// ─── cheap target-process check ──────────────────────────────
-// Whether the game is running at all. A pgrep over /proc costs almost
-// nothing next to dumpsys, which has to build its whole dump inside
-// system_server. The expensive foreground check is skipped entirely unless
-// this says the game is alive.
+// ─── target-process check, in process ────────────────────────
+// Scans /proc directly instead of shelling out to pgrep. popen() forks a
+// shell for every call, and at a one-second tick that is 86,400 shells a day
+// for nothing. Reading a few hundred small cmdline files costs a couple of
+// milliseconds and no process at all, so the game can be spotted the moment
+// it starts without costing battery while it is not running.
 //
-// The package is wrapped as com.dts[.]freefiremax so the helper shell, whose
-// own command line contains the pattern, is never matched as a hit.
-static std::string bracket_first_dot(const std::string& pkg) {
-    const size_t dot = pkg.find('.');
-    if (dot == std::string::npos) return pkg;
-    return pkg.substr(0, dot) + "[.]" + pkg.substr(dot + 1);
-}
+// An Android app's cmdline is exactly its package name, sometimes with a
+// ":suffix" for an extra process, so argv[0] is compared on that basis.
+static pid_t find_target_pid(const std::string& pkg) {
+    if (pkg.empty()) return -1;
 
-static bool target_process_exists(const std::string& pkg) {
-    if (pkg.empty()) return false;
-    const std::string cmd = "pgrep -f '" + bracket_first_dot(pkg) + "' 2>/dev/null";
-    return !run_shell(cmd).empty();
+    DIR* d = opendir("/proc");
+    if (!d) return -1;
+
+    pid_t found = -1;
+    char path[320];
+    char buf[256];
+
+    while (struct dirent* e = readdir(d)) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", e->d_name);
+        const int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        const ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        // argv[0] is the first NUL-terminated string in the buffer.
+        if (pkg.compare(0, std::string::npos, buf, strnlen(buf, (size_t)n)) == 0 ||
+            (strncmp(buf, pkg.c_str(), pkg.size()) == 0 && buf[pkg.size()] == ':')) {
+            found = (pid_t)atoi(e->d_name);
+            break;
+        }
+    }
+    closedir(d);
+    return found;
 }
 
 // ─── status file for the WebUI ───────────────────────────────
@@ -470,102 +509,104 @@ int main(int /*argc*/, char* /*argv*/[]) {
     unsigned pollTick       = 0;
 
     for (;;) {
-        json cfg = load_config();
+        json cfg = load_config_cached();
 
         // Determine target package (default: com.dts.freefiremax)
         std::string target = cfg.value("target_package", DEFAULT_TARGET);
         if (target.empty()) target = DEFAULT_TARGET;
 
-        // Determine which binary to run
         // One binary only. Bar vs Volume is config "menu_open", which the
         // binary reads itself.
         const std::string bin_name = "optimum_bar";
 
-        // Driver selection
         std::string driver = cfg.value("driver", "");
 
-        // Verified license key — written by inx_login_@api on success.
-        // Passed straight through to the binary's own argv[1] so it
-        // re-verifies the EXACT key already accepted, with no dependency
-        // on the two binaries agreeing on a shared on-disk key location.
+        // Verified license key — written by inx_login_@api on success, and
+        // re-verified by the binary itself against the server. Both logins
+        // stay in place; this only decides whether launching is worth trying.
         std::string saved_key   = cfg.value("key", "");
         std::string login_state = cfg.value("status", "");
         const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
 
-        // The game not being alive at all is the common case over a day, and
-        // answering that costs one pgrep. dumpsys is only asked once the game
-        // actually exists.
-        const bool targetAlive = target_process_exists(target);
+        // The cheap part, every tick: is the game running at all.
+        const pid_t targetPid   = find_target_pid(target);
+        const bool  targetAlive = (targetPid > 0);
+        const bool  justAppeared = targetAlive && !wasInTarget;
+        wasInTarget = targetAlive;
 
-        // Debounced game state: the game is "closed" only after
-        // LEAVE_MISS_POLLS polls in a row without it in the foreground.
-        if (targetAlive && foreground_package() == target) {
-            missCount = 0;
-            inGame    = true;
-        } else if (++missCount >= LEAVE_MISS_POLLS) {
-            inGame = false;
-        }
-        const bool inTarget = inGame;
-        const bool running  = is_running(bin_name);
+        const bool running = is_running(bin_name);
 
-        // Binary that exited on its own (driver missing, auth gate failed,
-        // crash): log it once, then wait RESTART_BACKOFF_SECS before retrying.
+        // The binary exited by itself (driver missing, auth gate failed,
+        // crash): log it once, then hold off before trying again.
         if (launchedByDaemon && !lastBinaryName.empty() && !is_running(lastBinaryName)) {
             daemon_log("%s exited on its own — reason in webroot/cheat.log", lastBinaryName.c_str());
             unlink(pid_file_path(lastBinaryName).c_str());
-            // Quick exit = a failure, so back off. A long run that ended is
-            // a normal stop and must relaunch on the next game open.
             if (time(nullptr) - launchedAt < 30) lastStartAttempt = time(nullptr);
             launchedByDaemon = false;
             lastBinaryName.clear();
         }
 
-        // A new game session (target just came to the foreground) always gets
-        // a fresh launch attempt. Backoff only throttles retries inside one
-        // session, so a failed launch can't block the menu on the next open.
-        if (inTarget && !wasInTarget) {
+        // A fresh game launch always gets an attempt, whatever happened last
+        // time, so a past failure can never block the menu on the next open.
+        if (justAppeared) {
             lastStartAttempt = 0;
-            daemon_log("Target %s came to foreground", target.c_str());
+            missCount        = 0;
+            inGame           = true;   // the game it just started is on top
+            daemon_log("Game process appeared (pid %d) — starting binary now", (int)targetPid);
         }
-        wasInTarget = inTarget;
+
+        // The expensive part, only while the game is alive and only every few
+        // ticks. It exists to notice the player leaving, nothing else.
+        if (targetAlive && !justAppeared && (pollTick % FOREGROUND_EVERY_TICKS == 0)) {
+            const bool fgIsTarget = (foreground_package() == target);
+            if (fgIsTarget) {
+                missCount = 0;
+                inGame    = true;
+            } else if (++missCount >= LEAVE_MISS_POLLS) {
+                inGame = false;
+            }
+        }
+        if (!targetAlive) {
+            inGame    = false;
+            missCount = 0;
+        }
 
         const time_t now = time(nullptr);
         const bool backoffOver = (now - lastStartAttempt) >= RESTART_BACKOFF_SECS;
 
-        if (inTarget && !running && loggedIn && backoffOver) {
+        // Launch as soon as the game process exists. The binary needs a few
+        // seconds for its own login and driver init, and the game needs far
+        // longer to load, so by the time the player can see anything the menu
+        // is already up. Waiting for the foreground check first is what made
+        // the menu show up late.
+        if (targetAlive && !running && loggedIn && backoffOver) {
             lastStartAttempt = now;
-            daemon_log("Target %s in foreground — starting binary", target.c_str());
 
-            // Driver handling:
-            //  - Absolute path  -> external driver executable, run here.
-            //  - Name (rtdev, qx1, paradise, ditpro, ...) -> the binary
-            //    itself selects that in-process backend from config.json
-            //    "driver", so nothing is executed here.
+            // Absolute path -> an external driver executable, run here.
+            // A name -> the binary picks that backend itself from config.json.
             if (!driver.empty() && driver[0] == '/') {
                 load_driver(driver);
             } else if (!driver.empty()) {
                 daemon_log("Driver '%s' selected — handled inside binary", driver.c_str());
             }
 
-            // Launch binary (key forwarded as argv[1] — see start_binary() note)
             if (start_binary(bin_name, saved_key)) {
                 launchedByDaemon = true;
                 lastBinaryName   = bin_name;
                 launchedAt       = time(nullptr);
             }
-        } else if (inTarget && !running && !loggedIn) {
-            // Target is open but no verified key yet — don't spawn a
-            // doomed process every poll cycle. Log once per foreground
-            // session so the WebUI "Daemon Logs" panel explains why
-            // nothing launched.
+        } else if (targetAlive && !running && !loggedIn) {
             static std::string lastWarnedTarget;
             if (lastWarnedTarget != target) {
-                daemon_log("Target %s in foreground but not logged in — login first via WebUI", target.c_str());
+                daemon_log("Game is open but no verified key — log in from the WebUI first");
                 lastWarnedTarget = target;
             }
-        } else if (!inTarget && launchedByDaemon && !lastBinaryName.empty()) {
+        } else if (launchedByDaemon && !lastBinaryName.empty() &&
+                   (!targetAlive || !inGame)) {
+            // The game closed, or the player left it for long enough.
             if (is_running(lastBinaryName)) {
-                daemon_log("Target %s left foreground — stopping binary", target.c_str());
+                daemon_log(targetAlive ? "Player left the game — stopping binary"
+                                       : "Game closed — stopping binary");
                 stop_binary(lastBinaryName);
                 lastStartAttempt = 0;
                 launchedByDaemon = false;
@@ -573,29 +614,30 @@ int main(int /*argc*/, char* /*argv*/[]) {
             }
         }
 
-        // Check the watchdog roughly every 15 s rather than every poll, so the
-        // supervision costs one cheap pgrep instead of a constant one.
-        if (++pollTick % 8 == 0) ensure_watchdog_running();
+        ++pollTick;
+
+        // Keep the watchdog alive, roughly every 15 s.
+        if (pollTick % 15 == 0) ensure_watchdog_running();
 
         // Heartbeat for the WebUI and for the watchdog. "updated" is what
         // proves this loop is still turning: a daemon wedged on a hung
         // dumpsys keeps its process alive but stops updating this, and the
         // watchdog restarts it on that basis.
-        {
+        if (pollTick % HEARTBEAT_EVERY_TICKS == 0) {
             json st;
-            st["updated"]       = (long long)time(nullptr);
-            st["pid"]           = (int)getpid();
-            st["target"]        = target;
-            st["target_alive"]  = targetAlive;
-            st["in_game"]       = inTarget;
-            st["logged_in"]     = loggedIn;
-            st["binary"]        = bin_name;
-            st["binary_running"]= running;
-            st["driver"]        = driver;
+            st["updated"]        = (long long)time(nullptr);
+            st["pid"]            = (int)getpid();
+            st["target"]         = target;
+            st["target_alive"]   = targetAlive;
+            st["in_game"]        = inGame;
+            st["logged_in"]      = loggedIn;
+            st["binary"]         = bin_name;
+            st["binary_running"] = running;
+            st["driver"]         = driver;
             write_status(st);
         }
 
-        usleep(targetAlive ? POLL_BUSY_USEC : POLL_IDLE_USEC);
+        usleep(TICK_USEC);
     }
 
     return 0; // unreachable
