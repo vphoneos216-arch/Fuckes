@@ -18,23 +18,31 @@
 #include <cstdlib>
 #include <string>
 
-// ── PREMIUM RED + BLACK PALETTE ─────────────────────────────
+// ── SAKURA PALETTE — sampled from the background artwork ────
+// The tones below were measured from UI/images/Background.h itself, not
+// invented: sakura #D8C0C0/#F0D8D8/#C09090, silver #C0C0C0/#D8D8D8 and
+// periwinkle #9090A8/#A8A8C0 are the art's dominant colours. The UI is
+// built from those so the panel and the artwork read as one piece; the
+// previous hard #FF2D2D red clashed with every one of them.
+//
 // Function-like colour macros: alpha is supplied per call site.
 // Colour tokens only — no geometry, size, spacing or layout value
 // is affected by anything in this block.
-#define COL_ACCENT(a)        IM_COL32(255,  45,  45, (a))   // #FF2D2D premium red
-#define COL_ACCENT_HOVER(a)  IM_COL32(255,  77,  77, (a))   // #FF4D4D red hover
-#define COL_ACCENT_DEEP(a)   IM_COL32(170,  22,  22, (a))   // #AA1616 deep red
-#define COL_PANEL(a)         IM_COL32( 20,  20,  20, (a))   // #141414 glass panel
-#define COL_CARD(a)          IM_COL32( 26,  26,  26, (a))   // #1A1A1A card surface
-#define COL_CARD_INNER(a)    IM_COL32( 15,  15,  15, (a))   // #0F0F0F inner card
-#define COL_BTN_IDLE(a)      IM_COL32( 38,  38,  38, (a))   // #262626 inactive button
-#define COL_TOGGLE_OFF(a)    IM_COL32( 42,  42,  42, (a))   // #2A2A2A toggle off
-#define COL_TXT_HI(a)        IM_COL32(255, 255, 255, (a))   // primary text
-#define COL_TXT_MID(a)       IM_COL32(165, 165, 165, (a))   // secondary text
-#define COL_TXT_LOW(a)       IM_COL32(115, 115, 115, (a))   // muted text
+#define COL_ACCENT(a)        IM_COL32(240, 131, 158, (a))   // #F0839E sakura
+#define COL_ACCENT_HOVER(a)  IM_COL32(255, 168, 190, (a))   // #FFA8BE sakura light
+#define COL_ACCENT_DEEP(a)   IM_COL32(184,  86, 110, (a))   // #B8566E sakura deep
+#define COL_ACCENT_ALT(a)    IM_COL32(201, 143, 216, (a))   // #C98FD8 lilac
+#define COL_COOL(a)          IM_COL32(169, 180, 234, (a))   // #A9B4EA periwinkle
+#define COL_PANEL(a)         IM_COL32( 12,  13,  18, (a))   // #0C0D12 cool black
+#define COL_CARD(a)          IM_COL32( 23,  24,  32, (a))   // #171820 card surface
+#define COL_CARD_INNER(a)    IM_COL32( 16,  16,  23, (a))   // #101017 inner card
+#define COL_BTN_IDLE(a)      IM_COL32( 33,  34,  44, (a))   // #21222C inactive button
+#define COL_TOGGLE_OFF(a)    IM_COL32( 38,  39,  50, (a))   // #262732 toggle off
+#define COL_TXT_HI(a)        IM_COL32(244, 242, 247, (a))   // #F4F2F7 primary text
+#define COL_TXT_MID(a)       IM_COL32(170, 168, 182, (a))   // secondary text
+#define COL_TXT_LOW(a)       IM_COL32(118, 117, 130, (a))   // muted text
 #define COL_SHADOW(a)        IM_COL32(  0,   0,   0, (a))   // soft shadow
-#define COL_HAIRLINE(a)      IM_COL32( 48,  48,  48, (a))   // subtle border
+#define COL_HAIRLINE(a)      IM_COL32( 54,  54,  68, (a))   // subtle border
 
 // ── Soft shadow helper (purely visual, drawn behind surfaces) ──
 static inline void SM_SoftShadow(ImDrawList* dl, ImVec2 a, ImVec2 b,
@@ -315,6 +323,75 @@ inline void RenderSingleMenuWindow() {
             // Glass panel — soft shadow, fill, subtle hairline border
             SM_SoftShadow(dl, p, p_end, rounding, uiAlpha);
             dl->AddRectFilled(p, p_end, COL_PANEL((int)(242 * uiAlpha)), rounding);
+
+            // ── Background artwork ───────────────────────────────
+            // UI/images/Background.h was embedded and loaded into g_BgTex
+            // but never drawn anywhere, which is why the artwork never
+            // appeared. It is framed deliberately: the character's face
+            // sits at about (0.44, 0.30) of the source, and the UV window
+            // below places it in the open right-hand side of the panel,
+            // clear of the content column. The window is derived from the
+            // panel's own aspect ratio, so it holds on any screen.
+            if (g_BgTex) {
+                const float FACE_U = 0.44f, FACE_V = 0.30f;  // face in source UV
+                const float TARGET_X = 0.75f, TARGET_Y = 0.38f;  // where it lands
+                const float U_SPAN = 0.40f;                   // how much width to show
+
+                const float srcW_px = U_SPAN * 1920.0f;
+                const float srcH_px = srcW_px * (windowSize.y / windowSize.x);
+                float v_span = srcH_px / 1080.0f;
+                if (v_span > 1.0f) v_span = 1.0f;
+
+                float u0 = FACE_U - TARGET_X * U_SPAN;
+                float v0 = FACE_V - TARGET_Y * v_span;
+                if (u0 < 0.0f) u0 = 0.0f;
+                if (u0 > 1.0f - U_SPAN) u0 = 1.0f - U_SPAN;
+                if (v0 < 0.0f) v0 = 0.0f;
+                if (v0 > 1.0f - v_span) v0 = 1.0f - v_span;
+
+                dl->AddImageRounded(g_BgTex, p, p_end,
+                                    ImVec2(u0, v0), ImVec2(u0 + U_SPAN, v0 + v_span),
+                                    IM_COL32(255, 255, 255, (int)(255 * uiAlpha)), rounding);
+
+                // Scrim: nearly opaque over the content column, clearing to
+                // almost nothing over the artwork, so text stays readable
+                // without hiding the picture.
+                const int aL = (int)(247 * uiAlpha);
+                const int aM = (int)(153 * uiAlpha);
+                const int aR = (int)( 61 * uiAlpha);
+                const float x1 = p.x + windowSize.x * 0.56f;
+                const float x2 = p.x + windowSize.x * 0.80f;
+
+                dl->AddRectFilled(p, ImVec2(x1, p_end.y), COL_PANEL(aL), rounding,
+                                  ImDrawFlags_RoundCornersLeft);
+                dl->AddRectFilledMultiColor(ImVec2(x1, p.y), ImVec2(x2, p_end.y),
+                                            COL_PANEL(aL), COL_PANEL(aM),
+                                            COL_PANEL(aM), COL_PANEL(aL));
+                dl->AddRectFilledMultiColor(ImVec2(x2, p.y), ImVec2(p_end.x - rounding, p_end.y),
+                                            COL_PANEL(aM), COL_PANEL(aR),
+                                            COL_PANEL(aR), COL_PANEL(aM));
+                dl->AddRectFilled(ImVec2(p_end.x - rounding, p.y), p_end, COL_PANEL(aR), rounding,
+                                  ImDrawFlags_RoundCornersRight);
+
+                // Vertical falloff so the header and footer stay legible.
+                const int vt = (int)(82 * uiAlpha), vb = (int)(107 * uiAlpha);
+                dl->AddRectFilledMultiColor(p, ImVec2(p_end.x, p.y + windowSize.y * 0.34f),
+                                            COL_SHADOW(vt), COL_SHADOW(vt),
+                                            COL_SHADOW(0), COL_SHADOW(0));
+                dl->AddRectFilledMultiColor(ImVec2(p.x, p_end.y - windowSize.y * 0.30f), p_end,
+                                            COL_SHADOW(0), COL_SHADOW(0),
+                                            COL_SHADOW(vb), COL_SHADOW(vb));
+            }
+
+            // ── Drifting sakura ──────────────────────────────────
+            // main.cpp already carries a particle system; like the artwork
+            // it was written but never called from the menu. Clipped to the
+            // panel so nothing drifts outside it.
+            dl->PushClipRect(p, p_end, true);
+            更新粒子系统(p, windowSize, true);
+            绘制粒子系统(true);
+            dl->PopClipRect();
+
             dl->AddRect(p, p_end, COL_HAIRLINE((int)(200 * uiAlpha)), rounding, 0, 1.2f);
 
             ImVec2 barMin = ImVec2(p.x, p.y);

@@ -208,18 +208,20 @@ static TextureInfo 落叶纹理[3] = {0};
 static bool 落叶纹理已加载 = false;
 static bool 落叶纹理查找完成 = false;
 
+// Sakura palette, sampled from UI/images/Background.h — the same tones the
+// menu is themed with. The previous rainbow (pure red, green, blue, yellow,
+// magenta, cyan) fought the artwork instead of belonging to it.
 ImColor 随机彩色() {
-    int 颜色类型 = rand() % 8;
-    switch (颜色类型) {
-        case 0: return ImColor(255, 50, 50, 200);   
-        case 1: return ImColor(50, 255, 50, 200);   
-        case 2: return ImColor(50, 50, 255, 200);   
-        case 3: return ImColor(255, 255, 50, 200);  
-        case 4: return ImColor(255, 50, 255, 200);  
-        case 5: return ImColor(50, 255, 255, 200);  
-        case 6: return ImColor(255, 150, 50, 200);  
-        case 7: return ImColor(50, 150, 255, 200);  
-        default: return ImColor(200, 50, 150, 200); 
+    switch (rand() % 8) {
+        case 0: return ImColor(240, 131, 158, 190);  // #F0839E sakura
+        case 1: return ImColor(255, 168, 190, 170);  // #FFA8BE sakura light
+        case 2: return ImColor(240, 216, 216, 160);  // #F0D8D8 pale blossom
+        case 3: return ImColor(201, 143, 216, 175);  // #C98FD8 lilac
+        case 4: return ImColor(169, 180, 234, 170);  // #A9B4EA periwinkle
+        case 5: return ImColor(216, 216, 216, 150);  // #D8D8D8 silver
+        case 6: return ImColor(192, 144, 144, 170);  // #C09090 dusty rose
+        case 7: return ImColor(255, 255, 255, 140);  // highlight
+        default: return ImColor(240, 131, 158, 180);
     }
 }
 

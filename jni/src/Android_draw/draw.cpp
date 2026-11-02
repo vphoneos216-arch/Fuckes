@@ -123,9 +123,9 @@ bool ImGui_init() {
     ImGui::StyleColorsDark();
     {
         ImVec4* c = ImGui::GetStyle().Colors;
-        const ImVec4 RED      = ImVec4(1.00f, 0.176f, 0.176f, 1.00f);  // #FF2D2D
-        const ImVec4 RED_HOV  = ImVec4(1.00f, 0.302f, 0.302f, 1.00f);  // #FF4D4D
-        const ImVec4 RED_ACT  = ImVec4(0.667f, 0.086f, 0.086f, 1.00f); // #AA1616
+        const ImVec4 RED      = ImVec4(0.941f, 0.514f, 0.620f, 1.00f); // #F0839E sakura
+        const ImVec4 RED_HOV  = ImVec4(1.000f, 0.659f, 0.745f, 1.00f); // #FFA8BE sakura light
+        const ImVec4 RED_ACT  = ImVec4(0.722f, 0.337f, 0.431f, 1.00f); // #B8566E sakura deep
         const ImVec4 BLACK    = ImVec4(0.051f, 0.051f, 0.051f, 1.00f); // #0D0D0D
         const ImVec4 SURF     = ImVec4(0.102f, 0.102f, 0.102f, 1.00f); // #1A1A1A
         const ImVec4 IDLE     = ImVec4(0.149f, 0.149f, 0.149f, 1.00f); // #262626

@@ -8993,14 +8993,44 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
         anim_progress = *v ? 1.0f : 0.0f;
     }
 
-    // 未开启：浅灰白圆角底座 | 鼠标悬浮不变色（和截图UI一致）
-    ImVec4 bgOff = ImVec4(42/255.0f, 42/255.0f, 42/255.0f, 1.0f);
-    // 开启：苹果清新绿底座
-    ImVec4 bgOn = ImVec4(255/255.0f, 45/255.0f, 45/255.0f, 1.0f);
-    ImVec4 current_bg = ImLerp(bgOff, bgOn, anim_progress);
+    // Track colours come from the sakura palette the rest of the menu uses
+    // (sampled from the background artwork). On is a horizontal sakura ->
+    // lilac gradient rather than a flat fill, with a soft glow underneath,
+    // so an enabled switch reads as lit instead of merely coloured.
+    const ImVec2 sw_max = ImVec2(switch_pos.x + switch_width, switch_pos.y + switch_height);
 
-    // 绘制圆角长条开关背景
-    draw_list->AddRectFilled(switch_pos, ImVec2(switch_pos.x + switch_width, switch_pos.y + switch_height), ImGui::GetColorU32(current_bg), switch_radius);
+    ImVec4 bgOff = ImVec4(38/255.0f, 39/255.0f, 50/255.0f, 1.0f);   // #262732
+    draw_list->AddRectFilled(switch_pos, sw_max, ImGui::GetColorU32(bgOff), switch_radius);
+
+    if (anim_progress > 0.001f)
+    {
+        // Glow: concentric rounded rects, faintest first. Scaled by the
+        // animation so it grows in with the slide rather than popping.
+        for (int gi = 3; gi >= 1; --gi)
+        {
+            const float o  = (float)gi * 2.0f;
+            const int   ga = (int)(16.0f * (float)(4 - gi) * anim_progress);
+            if (ga <= 0) continue;
+            draw_list->AddRectFilled(ImVec2(switch_pos.x - o, switch_pos.y - o),
+                                     ImVec2(sw_max.x + o, sw_max.y + o),
+                                     IM_COL32(240, 131, 158, ga), switch_radius + o);
+        }
+
+        const int   A  = (int)(255.0f * anim_progress);
+        const ImU32 cL = IM_COL32(240, 131, 158, A);   // #F0839E sakura
+        const ImU32 cR = IM_COL32(201, 143, 216, A);   // #C98FD8 lilac
+
+        // Rounded ends drawn flat, straight middle drawn as the gradient:
+        // AddRectFilledMultiColor cannot round its corners.
+        draw_list->AddRectFilled(switch_pos, ImVec2(switch_pos.x + switch_radius * 2.0f, sw_max.y),
+                                 cL, switch_radius);
+        draw_list->AddRectFilled(ImVec2(sw_max.x - switch_radius * 2.0f, switch_pos.y), sw_max,
+                                 cR, switch_radius);
+        draw_list->AddRectFilledMultiColor(
+            ImVec2(switch_pos.x + switch_radius, switch_pos.y),
+            ImVec2(sw_max.x - switch_radius, sw_max.y),
+            cL, cR, cR, cL);
+    }
 
     // 白色圆形滑块
     float ball_x = switch_pos.x + switch_radius + anim_progress * (switch_width - switch_radius * 2.0f);
