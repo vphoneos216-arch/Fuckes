@@ -8950,8 +8950,10 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-    // 适配截图圆角长条开关尺寸
-    float switch_height = 36;
+    // Switch size follows the current font so it scales with the UI. It was
+    // a fixed 36 px, which looked oversized next to the label on a scaled
+    // panel and undersized on a large one.
+    float switch_height = ImMax(26.0f, ImGui::GetFontSize() * 1.45f);
     float switch_width = switch_height * 1.75f;
     float switch_radius = switch_height * 0.5f;
 

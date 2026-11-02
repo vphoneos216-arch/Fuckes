@@ -351,8 +351,11 @@ inline void RenderSingleMenuWindow() {
             // panel's own aspect ratio, so it holds on any screen.
             if (g_BgTex) {
                 const float FACE_U = 0.44f, FACE_V = 0.30f;  // face in source UV
-                const float TARGET_X = 0.75f, TARGET_Y = 0.38f;  // where it lands
-                const float U_SPAN = 0.40f;                   // how much width to show
+                const float TARGET_X = 0.72f, TARGET_Y = 0.34f;  // where it lands
+                // Show enough of the composition that the hair and blossoms
+                // read too — a narrow span zoomed into the cheek and looked
+                // like a crop accident rather than a backdrop.
+                const float U_SPAN = 0.58f;
 
                 const float srcW_px = U_SPAN * 1920.0f;
                 const float srcH_px = srcW_px * (windowSize.y / windowSize.x);
@@ -373,29 +376,34 @@ inline void RenderSingleMenuWindow() {
                 // Scrim: nearly opaque over the content column, clearing to
                 // almost nothing over the artwork, so text stays readable
                 // without hiding the picture.
-                const int aL = (int)(247 * uiAlpha);
-                const int aM = (int)(153 * uiAlpha);
-                const int aR = (int)( 61 * uiAlpha);
-                const float x1 = p.x + windowSize.x * 0.56f;
-                const float x2 = p.x + windowSize.x * 0.80f;
+                // Two flat veils instead of a gradient. A stepped gradient
+                // banded visibly across the panel, and a wide one hazed the
+                // artwork out; flat fills cannot band at all.
+                //
+                //  1. a light veil over everything, so the art reads as a
+                //     backdrop rather than competing with the controls
+                //  2. a near-solid surface under the content column, so every
+                //     card and label sits on an even background
+                dl->AddRectFilled(p, p_end, COL_PANEL((int)(96 * uiAlpha)), rounding);
 
-                dl->AddRectFilled(p, ImVec2(x1, p_end.y), COL_PANEL(aL), rounding,
+                const float colEdge = p.x + (LAY_COL_X + LAY_COL_W + 16.0f) * scale;
+                dl->AddRectFilled(p, ImVec2(colEdge, p_end.y),
+                                  COL_PANEL((int)(232 * uiAlpha)), rounding,
                                   ImDrawFlags_RoundCornersLeft);
-                dl->AddRectFilledMultiColor(ImVec2(x1, p.y), ImVec2(x2, p_end.y),
-                                            COL_PANEL(aL), COL_PANEL(aM),
-                                            COL_PANEL(aM), COL_PANEL(aL));
-                dl->AddRectFilledMultiColor(ImVec2(x2, p.y), ImVec2(p_end.x - rounding, p_end.y),
-                                            COL_PANEL(aM), COL_PANEL(aR),
-                                            COL_PANEL(aR), COL_PANEL(aM));
-                dl->AddRectFilled(ImVec2(p_end.x - rounding, p.y), p_end, COL_PANEL(aR), rounding,
-                                  ImDrawFlags_RoundCornersRight);
 
-                // Vertical falloff so the header and footer stay legible.
-                const int vt = (int)(82 * uiAlpha), vb = (int)(107 * uiAlpha);
-                dl->AddRectFilledMultiColor(p, ImVec2(p_end.x, p.y + windowSize.y * 0.34f),
+                // A soft edge where the column meets the art, so the join does
+                // not read as a hard line.
+                dl->AddRectFilledMultiColor(
+                    ImVec2(colEdge, p.y), ImVec2(colEdge + 56.0f * scale, p_end.y),
+                    COL_PANEL((int)(232 * uiAlpha)), COL_PANEL(0),
+                    COL_PANEL(0), COL_PANEL((int)(232 * uiAlpha)));
+
+                // Keep the header and footer legible over the art.
+                const int vt = (int)(92 * uiAlpha), vb = (int)(112 * uiAlpha);
+                dl->AddRectFilledMultiColor(p, ImVec2(p_end.x, p.y + windowSize.y * 0.22f),
                                             COL_SHADOW(vt), COL_SHADOW(vt),
                                             COL_SHADOW(0), COL_SHADOW(0));
-                dl->AddRectFilledMultiColor(ImVec2(p.x, p_end.y - windowSize.y * 0.30f), p_end,
+                dl->AddRectFilledMultiColor(ImVec2(p.x, p_end.y - windowSize.y * 0.22f), p_end,
                                             COL_SHADOW(0), COL_SHADOW(0),
                                             COL_SHADOW(vb), COL_SHADOW(vb));
             }
@@ -415,8 +423,11 @@ inline void RenderSingleMenuWindow() {
             ImVec2 barMax = ImVec2(p.x + windowSize.x, p.y + 72 * scale);
             dl->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 0), rounding);
 
-            // Header title — "Invisible" white + "X" red
-            float  titleSize  = 44.0f * scale;
+            // Header title — "Invisible" white + "X" red.
+            // 44px collided with the tab bar and hid the "X" behind the first
+            // pill, so the title is smaller and the tabs are placed after its
+            // measured width rather than at a fixed 250.
+            float  titleSize  = 26.0f * scale;
             ImVec2 textPos    = ImVec2(p.x + 40 * scale, p.y + 14 * scale);
             const char* titlePart1 = "Invisible";
             const char* titlePart2 = "X";
@@ -434,22 +445,46 @@ inline void RenderSingleMenuWindow() {
 
             // ── TAB BAR — exact source geometry ──────────────
             if (scale > 0.5f) {
-                float btnStartX = p.x + 250 * scale;
-                float btnCenterY = p.y + 36 * scale;
-                float btnW = 62 * scale, btnH = 34 * scale;
                 const char* btnList[] = { "Home", "ESP", "Aim", "Exploit", "Config" };
                 int 按钮总数 = 5;
+                float btnCenterY = p.y + 36 * scale;
+                float btnH = 34 * scale;
+                const float btnFontSize = 20.0f * scale;
+                const float btnPadX     = 14.0f * scale;
+                const float btnGap      =  8.0f * scale;
+
+                // Start clear of the title, and give every pill the width its
+                // own label needs — a fixed 62 clipped "Exploit" to "Exploi".
+                ImFont* const btnFont = ImGui::GetFont();
+                float titleEndX = p.x + 40 * scale
+                                + btnFont->CalcTextSizeA(titleSize, FLT_MAX, -1.f, "InvisibleX").x;
+                float btnStartX = titleEndX + 28 * scale;
+
+                float btnWidths[5];
+                for (int i = 0; i < 按钮总数; i++)
+                    btnWidths[i] = btnFont->CalcTextSizeA(btnFontSize, FLT_MAX, -1.f, btnList[i]).x
+                                 + btnPadX * 2.0f;
+
+                // Keep the row clear of the close button on narrow panels.
+                float rowW = 0.0f;
+                for (int i = 0; i < 按钮总数; i++) rowW += btnWidths[i] + (i ? btnGap : 0.0f);
+                const float rowLimit = p.x + windowSize.x - 72 * scale;
+                if (btnStartX + rowW > rowLimit) btnStartX = rowLimit - rowW;
+
+                float btnX = btnStartX;
                 for (int i = 0; i < 按钮总数; i++) {
-                    ImVec2 btnMin = ImVec2(btnStartX + i * (btnW + 8 * scale), btnCenterY - btnH / 2);
+                    const float btnW = btnWidths[i];
+                    ImVec2 btnMin = ImVec2(btnX, btnCenterY - btnH / 2);
                     ImVec2 btnMax = ImVec2(btnMin.x + btnW, btnMin.y + btnH);
+                    btnX += btnW + btnGap;
                     ImU32 btnBg  = (i == 现在页面) ? COL_ACCENT((int)(255 * uiAlpha))
                                                    : COL_BTN_IDLE((int)(235 * uiAlpha));
                     ImU32 txtCol = (i == 现在页面) ? IM_COL32(255, 255, 255, (int)(255 * uiAlpha))
                                                    : COL_TXT_MID((int)(255 * uiAlpha));
-                    dl->AddRectFilled(btnMin, btnMax, btnBg, 18 * scale);
-                    float btnFontSize = 20.0f * scale;
-                    float tw = ImGui::CalcTextSize(btnList[i]).x * scale;
-                    dl->AddText(NULL, btnFontSize, ImVec2(btnMin.x + (btnW - tw) / 2, btnCenterY - 10 * scale),
+                    dl->AddRectFilled(btnMin, btnMax, btnBg, btnH * 0.5f);
+                    const float tw = btnFont->CalcTextSizeA(btnFontSize, FLT_MAX, -1.f, btnList[i]).x;
+                    dl->AddText(NULL, btnFontSize,
+                                ImVec2(btnMin.x + (btnW - tw) * 0.5f, btnCenterY - btnFontSize * 0.5f),
                                 txtCol, btnList[i]);
                     ImGui::SetCursorScreenPos(btnMin);
                     if (ImGui::InvisibleButton(btnList[i], ImVec2(btnW, btnH))) 现在页面 = i;
@@ -506,8 +541,15 @@ inline void RenderSingleMenuWindow() {
                     SM_DrawInxMark(dl, avatarCenter,
                                    (scaledP1.x - scaledP0.x), uiAlpha);
 
-                    dl->AddText(NULL, 30.0f * scale, ImVec2(cardCenter.x - 70 * scale, cardCenter.y + 90 * scale),
-                                COL_TXT_HI((int)(255 * uiAlpha)), "Welcome back");
+                    {   // Centred under the mark, inside the card — it used to
+                        // be offset by a fixed 70 and sat on the card's edge.
+                        const float wSize = 24.0f * scale;
+                        const float wTw = ImGui::GetFont()->CalcTextSizeA(wSize, FLT_MAX, -1.f,
+                                                                         "Welcome back").x;
+                        dl->AddText(NULL, wSize,
+                                    ImVec2(cardCenter.x - wTw * 0.5f, cardCenter.y + 108 * scale),
+                                    COL_TXT_HI((int)(255 * uiAlpha)), "Welcome back");
+                    }
 
                     // Right column
                     float Rx1 = Lx2 + 间隔;
@@ -535,10 +577,19 @@ inline void RenderSingleMenuWindow() {
                     float Ry3 = p.y + 236 * scale, Ry4 = p.y + 330 * scale;
                     dl->AddRectFilled(ImVec2(Rx1, Ry3), ImVec2(Rx2, Ry4), COL_CARD((int)(235 * uiAlpha)), 22 * scale);
                     float tw_h = font->CalcTextSizeA(24.0f * scale, FLT_MAX, -1.f, "Daily").x;
-                    float tw_s = font->CalcTextSizeA(22.0f * scale, FLT_MAX, -1.f, 当前固定欢迎语).x;
+                    // Fit the quote to the card. At a fixed 22 it ran past the
+                    // card edge and over the artwork once the cards narrowed.
+                    float quoteSize = 22.0f * scale;
+                    const float quoteMaxW = (Rx2 - Rx1) - 28.0f * scale;
+                    float tw_s = font->CalcTextSizeA(quoteSize, FLT_MAX, -1.f, 当前固定欢迎语).x;
+                    if (tw_s > quoteMaxW && tw_s > 0.0f) {
+                        quoteSize *= quoteMaxW / tw_s;
+                        if (quoteSize < 11.0f * scale) quoteSize = 11.0f * scale;
+                        tw_s = font->CalcTextSizeA(quoteSize, FLT_MAX, -1.f, 当前固定欢迎语).x;
+                    }
                     dl->AddText(NULL, 24.0f * scale, ImVec2(CenterX - tw_h * 0.5f, Ry3 + 25 * scale),
                                 COL_ACCENT((int)(255 * uiAlpha)), "Daily");
-                    dl->AddText(NULL, 22.0f * scale, ImVec2(CenterX - tw_s * 0.5f, Ry3 + 60 * scale),
+                    dl->AddText(NULL, quoteSize, ImVec2(CenterX - tw_s * 0.5f, Ry3 + 60 * scale),
                                 COL_TXT_HI((int)(255 * uiAlpha)), 当前固定欢迎语);
 
                     float Ry5 = p.y + 346 * scale, Ry6 = p.y + windowSize.y - 38 * scale;
@@ -650,7 +701,7 @@ inline void RenderSingleMenuWindow() {
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 560 * scale);
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 400 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -726,8 +777,15 @@ inline void RenderSingleMenuWindow() {
                                 COL_TXT_MID((int)(180 * uiAlpha)),
                                 "Aim Silent = head only | Hardware BT = Body/Legit");
 
-                    ImGui::SetCursorScreenPos(ImVec2(startX, modeY + modeH + 60 * scale));
-                    ImGui::SliderFloat("FOV Range", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
+                    // Label drawn here rather than by the slider: ImGui puts an
+                    // inline label to the RIGHT of the widget, which pushed
+                    // "FOV Range" outside the card and over the artwork.
+                    dl->AddText(NULL, 20.0f * scale,
+                                ImVec2(startX, modeY + modeH + 56 * scale),
+                                COL_TXT_HI((int)(255 * uiAlpha)), "FOV Range");
+                    ImGui::SetCursorScreenPos(ImVec2(startX, modeY + modeH + 86 * scale));
+                    ImGui::SetNextItemWidth(cardW - 50 * scale);
+                    ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
                     // Sync → hook globals
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
@@ -802,9 +860,12 @@ inline void RenderSingleMenuWindow() {
                     ImGui::Checkbox1("Float: Ghost", &g_ExploitFloatGhost);
 
                     /* Row 3 — slider */
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3));
-                    ImGui::SetNextItemWidth(cardW - 90 * scale);
-                    ImGui::SliderFloat("pull range ", &MagnetMaxDist, 1.0f, 8.0f, "%.1f m");
+                    dl->AddText(NULL, 20.0f * scale,
+                                ImVec2(startX, startY + row * 3),
+                                COL_TXT_HI((int)(255 * uiAlpha)), "Pull Range");
+                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3 + 30 * scale));
+                    ImGui::SetNextItemWidth(cardW - 50 * scale);
+                    ImGui::SliderFloat("##PullRange", &MagnetMaxDist, 1.0f, 8.0f, "%.1f m");
                 }
                     } /* feat gate exploit */
                 else if (现在页面 == 4) {
