@@ -86,6 +86,15 @@ static const char* DRIVER_DIR   = INX_MODULE_DIR "/drivers";
 // Default target package when config has none
 static const char* DEFAULT_TARGET = "com.dts.freefiremax";
 
+// The launched binary's stdout/stderr go here (overwritten each start), so a
+// failure reason is visible instead of vanishing into /dev/null.
+static const char* CHEAT_LOG = INX_MODULE_DIR "/webroot/cheat.log";
+
+// After a launch, wait this long before trying again. Every launch does a
+// full server login, so a binary that keeps exiting must not be relaunched
+// every poll cycle.
+static const int RESTART_BACKOFF_SECS = 60;
+
 // ─── logging ─────────────────────────────────────────────────
 #define LOG_MAX_LINES 200
 
@@ -266,7 +275,17 @@ static bool start_binary(const std::string& bin_name, const std::string& key) {
     if (child == 0) {
         setsid();
         int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
+        if (devnull >= 0) dup2(devnull, 0);
+        int logfd = open(CHEAT_LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (logfd >= 0) {
+            dup2(logfd, 1);
+            dup2(logfd, 2);
+            close(logfd);
+        } else if (devnull >= 0) {
+            dup2(devnull, 1);
+            dup2(devnull, 2);
+        }
+        if (devnull >= 0) close(devnull);
         if (!key.empty()) {
             execl(bin_path.c_str(), bin_path.c_str(), key.c_str(), (char*)nullptr);
         } else {
@@ -334,6 +353,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     bool launchedByDaemon = false;
     std::string lastBinaryName; // tracks which binary we launched
+    time_t lastStartAttempt = 0;
 
     for (;;) {
         json cfg = load_config();
@@ -362,7 +382,18 @@ int main(int /*argc*/, char* /*argv*/[]) {
         const bool inTarget  = (fg == target);
         const bool running   = is_running(bin_name);
 
-        if (inTarget && !running && loggedIn) {
+        // Binary that exited on its own (driver missing, auth gate failed,
+        // crash): log it once, then wait RESTART_BACKOFF_SECS before retrying.
+        if (launchedByDaemon && !lastBinaryName.empty() && !is_running(lastBinaryName)) {
+            daemon_log("%s exited on its own — reason in webroot/cheat.log", lastBinaryName.c_str());
+            launchedByDaemon = false;
+            lastBinaryName.clear();
+        }
+        const time_t now = time(nullptr);
+        const bool backoffOver = (now - lastStartAttempt) >= RESTART_BACKOFF_SECS;
+
+        if (inTarget && !running && loggedIn && backoffOver) {
+            lastStartAttempt = now;
             daemon_log("Target %s in foreground — starting binary", target.c_str());
 
             // Driver handling:
