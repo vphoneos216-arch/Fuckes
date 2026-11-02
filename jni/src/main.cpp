@@ -208,21 +208,22 @@ static TextureInfo 落叶纹理[3] = {0};
 static bool 落叶纹理已加载 = false;
 static bool 落叶纹理查找完成 = false;
 
-// Sakura palette, sampled from UI/images/Background.h — the same tones the
-// menu is themed with. The previous rainbow (pure red, green, blue, yellow,
-// magenta, cyan) fought the artwork instead of belonging to it.
+// Embers in the menu's red family, with a few pale sparks so the drift is
+// not a single flat colour. The original rainbow (pure green, blue, cyan,
+// yellow) had nothing to do with the theme.
 ImColor 随机彩色() {
     switch (rand() % 8) {
-        case 0: return ImColor(240, 131, 158, 190);  // #F0839E sakura
-        case 1: return ImColor(255, 168, 190, 170);  // #FFA8BE sakura light
-        case 2: return ImColor(240, 216, 216, 160);  // #F0D8D8 pale blossom
-        case 3: return ImColor(201, 143, 216, 175);  // #C98FD8 lilac
-        case 4: return ImColor(169, 180, 234, 170);  // #A9B4EA periwinkle
-        case 5: return ImColor(216, 216, 216, 150);  // #D8D8D8 silver
-        case 6: return ImColor(192, 144, 144, 170);  // #C09090 dusty rose
-        case 7: return ImColor(255, 255, 255, 140);  // highlight
-        default: return ImColor(240, 131, 158, 180);
+        case 0: return ImColor(232,  38,  58, 190);  // #E8263A core red
+        case 1: return ImColor(255,  74,  92, 170);  // #FF4A5C red light
+        case 2: return ImColor(255, 110,  80, 175);  // #FF6E50 ember
+        case 3: return ImColor(255, 160, 130, 150);  // warm spark
+        case 4: return ImColor(150,  18,  32, 180);  // #961220 deep
+        case 5: return ImColor(228, 228, 232, 130);  // pale spark
+        case 6: return ImColor(255, 200, 190, 140);  // faint ember
+        case 7: return ImColor(255, 255, 255, 110);  // highlight
+        default: return ImColor(232, 38, 58, 180);
     }
+}
 }
 
 void 初始化落叶纹理系统() {

@@ -8995,10 +8995,9 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
         anim_progress = *v ? 1.0f : 0.0f;
     }
 
-    // Track colours come from the sakura palette the rest of the menu uses
-    // (sampled from the background artwork). On is a horizontal sakura ->
-    // lilac gradient rather than a flat fill, with a soft glow underneath,
-    // so an enabled switch reads as lit instead of merely coloured.
+    // Track colours come from the palette the rest of the menu uses. On is a
+    // horizontal red -> ember gradient rather than a flat fill, with a soft
+    // glow underneath, so an enabled switch reads as lit, not just coloured.
     const ImVec2 sw_max = ImVec2(switch_pos.x + switch_width, switch_pos.y + switch_height);
 
     ImVec4 bgOff = ImVec4(38/255.0f, 39/255.0f, 50/255.0f, 1.0f);   // #262732
@@ -9015,12 +9014,12 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
             if (ga <= 0) continue;
             draw_list->AddRectFilled(ImVec2(switch_pos.x - o, switch_pos.y - o),
                                      ImVec2(sw_max.x + o, sw_max.y + o),
-                                     IM_COL32(240, 131, 158, ga), switch_radius + o);
+                                     IM_COL32(232, 38, 58, ga), switch_radius + o);
         }
 
         const int   A  = (int)(255.0f * anim_progress);
-        const ImU32 cL = IM_COL32(240, 131, 158, A);   // #F0839E sakura
-        const ImU32 cR = IM_COL32(201, 143, 216, A);   // #C98FD8 lilac
+        const ImU32 cL = IM_COL32(232,  38,  58, A);   // #E8263A core red
+        const ImU32 cR = IM_COL32(255, 110,  80, A);   // #FF6E50 ember
 
         // Rounded ends drawn flat, straight middle drawn as the gradient:
         // AddRectFilledMultiColor cannot round its corners.

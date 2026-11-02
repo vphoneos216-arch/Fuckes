@@ -1,4 +1,5 @@
 #include "Android_draw/draw.h"
+#include "ix_driver_init.h"
 #include <chrono>
 // Source project fonts (方正粗等线 + icomoon icons)
 #include "UI/fonts/YuluFont.h"
@@ -28,7 +29,12 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     #else
         InitVulkan();
         SetupVulkan();
-        ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, false);
+    // 4th argument is `hide`: on Android 12+ it makes the layer
+    // eSkipScreenshot (0x40), so the overlay is left out of screenshots and
+    // recordings. The menu's "Show" switch writes config.json, which is read
+    // here, so the choice applies the next time the overlay starts.
+    const bool ix_show_capture = ix_get_show_in_capture();
+        ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture);
         SetupVulkanWindow(::native_window, (int) _screen_x, (int) _screen_y);
     #endif
     if (!ImGui_init()) {
@@ -43,7 +49,12 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
 }
 
 bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
-    ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, false);
+    // 4th argument is `hide`: on Android 12+ it makes the layer
+    // eSkipScreenshot (0x40), so the overlay is left out of screenshots and
+    // recordings. The menu's "Show" switch writes config.json, which is read
+    // here, so the choice applies the next time the overlay starts.
+    const bool ix_show_capture = ix_get_show_in_capture();
+    ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, !ix_show_capture);
 
     ANativeWindow_acquire(native_window);
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -123,9 +134,9 @@ bool ImGui_init() {
     ImGui::StyleColorsDark();
     {
         ImVec4* c = ImGui::GetStyle().Colors;
-        const ImVec4 RED      = ImVec4(0.941f, 0.514f, 0.620f, 1.00f); // #F0839E sakura
-        const ImVec4 RED_HOV  = ImVec4(1.000f, 0.659f, 0.745f, 1.00f); // #FFA8BE sakura light
-        const ImVec4 RED_ACT  = ImVec4(0.722f, 0.337f, 0.431f, 1.00f); // #B8566E sakura deep
+        const ImVec4 RED      = ImVec4(0.910f, 0.149f, 0.227f, 1.00f); // #E8263A core red
+        const ImVec4 RED_HOV  = ImVec4(1.000f, 0.290f, 0.361f, 1.00f); // #FF4A5C red light
+        const ImVec4 RED_ACT  = ImVec4(0.588f, 0.071f, 0.125f, 1.00f); // #961220 red deep
         const ImVec4 BLACK    = ImVec4(0.051f, 0.051f, 0.051f, 1.00f); // #0D0D0D
         const ImVec4 SURF     = ImVec4(0.102f, 0.102f, 0.102f, 1.00f); // #1A1A1A
         const ImVec4 IDLE     = ImVec4(0.149f, 0.149f, 0.149f, 1.00f); // #262626

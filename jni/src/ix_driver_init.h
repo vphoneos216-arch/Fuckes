@@ -105,6 +105,75 @@ static inline std::string ix_get_menu_open_mode() {
     return (v == "vol" || v == "bar") ? v : "bar";
 }
 
+// ── SCREENSHOT VISIBILITY — same config.json, key "show_in_capture" ──
+// The overlay layer is created with eSkipScreenshot (0x40) unless this is
+// on, which is why the menu never shows up in a screenshot or a recording.
+// draw.cpp reads this when it creates the surface, so a change takes effect
+// the next time the overlay starts.
+static inline bool ix_get_show_in_capture() {
+    if (const char* e = getenv("IX_SHOW_IN_CAPTURE"))
+        if (*e) return (*e == '1' || *e == 't' || *e == 'T');
+
+    const char* p = getenv("IX_CONFIG");
+    std::ifstream f(p && *p ? p : IX_CONFIG_PATH);
+    if (!f.good()) return false;
+
+    std::string all((std::istreambuf_iterator<char>(f)),
+                    std::istreambuf_iterator<char>());
+    size_t k = all.find("\"show_in_capture\"");
+    if (k == std::string::npos) return false;
+    size_t c = all.find(':', k);
+    if (c == std::string::npos) return false;
+    // accept true/false and 1/0
+    for (size_t i = c + 1; i < all.size(); ++i) {
+        const char ch = all[i];
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '"') continue;
+        return (ch == 't' || ch == 'T' || ch == '1');
+    }
+    return false;
+}
+
+// Writes the key back, preserving the rest of the file. Used by the menu's
+// "Show" switch; a missing key is appended before the closing brace.
+static inline bool ix_set_show_in_capture(bool on) {
+    const char* envp = getenv("IX_CONFIG");
+    const std::string path = (envp && *envp) ? envp : IX_CONFIG_PATH;
+
+    std::string all;
+    {
+        std::ifstream f(path);
+        if (!f.good()) return false;
+        all.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    if (all.empty()) return false;
+
+    const std::string val = on ? "true" : "false";
+    size_t k = all.find("\"show_in_capture\"");
+    if (k != std::string::npos) {
+        size_t c = all.find(':', k);
+        if (c == std::string::npos) return false;
+        size_t b = c + 1;
+        while (b < all.size() && (all[b] == ' ' || all[b] == '\t')) ++b;
+        size_t e = b;
+        while (e < all.size() && all[e] != ',' && all[e] != '}' && all[e] != '\n') ++e;
+        all.replace(b, e - b, val);
+    } else {
+        size_t close = all.rfind('}');
+        if (close == std::string::npos) return false;
+        size_t prev = all.find_last_not_of(" \t\r\n", close - 1);
+        if (prev == std::string::npos) return false;
+        // Insert straight after the last value so the comma stays on its line.
+        const bool needComma = (all[prev] != '{');
+        all.insert(prev + 1, std::string(needComma ? "," : "") +
+                             "\n    \"show_in_capture\": " + val);
+    }
+
+    std::ofstream out(path, std::ios::trunc);
+    if (!out.good()) return false;
+    out << all;
+    return out.good();
+}
+
 static inline std::string ix_get_selected_driver() {
     int n = ix_get_driver_choice();
     switch (n) {

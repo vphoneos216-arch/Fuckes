@@ -18,31 +18,30 @@
 #include <cstdlib>
 #include <string>
 
-// ── SAKURA PALETTE — sampled from the background artwork ────
-// The tones below were measured from UI/images/Background.h itself, not
-// invented: sakura #D8C0C0/#F0D8D8/#C09090, silver #C0C0C0/#D8D8D8 and
-// periwinkle #9090A8/#A8A8C0 are the art's dominant colours. The UI is
-// built from those so the panel and the artwork read as one piece; the
-// previous hard #FF2D2D red clashed with every one of them.
+// ── RED PALETTE ─────────────────────────────────────────────
+// Red accent on a cool near-black. The neutral surfaces carry a trace of
+// blue so they sit under the artwork without looking muddy, and the reds
+// are stepped (bright -> base -> deep) so the accent has depth instead of
+// one flat tone.
 //
 // Function-like colour macros: alpha is supplied per call site.
 // Colour tokens only — no geometry, size, spacing or layout value
 // is affected by anything in this block.
-#define COL_ACCENT(a)        IM_COL32(240, 131, 158, (a))   // #F0839E sakura
-#define COL_ACCENT_HOVER(a)  IM_COL32(255, 168, 190, (a))   // #FFA8BE sakura light
-#define COL_ACCENT_DEEP(a)   IM_COL32(184,  86, 110, (a))   // #B8566E sakura deep
-#define COL_ACCENT_ALT(a)    IM_COL32(201, 143, 216, (a))   // #C98FD8 lilac
-#define COL_COOL(a)          IM_COL32(169, 180, 234, (a))   // #A9B4EA periwinkle
-#define COL_PANEL(a)         IM_COL32( 12,  13,  18, (a))   // #0C0D12 cool black
-#define COL_CARD(a)          IM_COL32( 23,  24,  32, (a))   // #171820 card surface
-#define COL_CARD_INNER(a)    IM_COL32( 16,  16,  23, (a))   // #101017 inner card
-#define COL_BTN_IDLE(a)      IM_COL32( 33,  34,  44, (a))   // #21222C inactive button
-#define COL_TOGGLE_OFF(a)    IM_COL32( 38,  39,  50, (a))   // #262732 toggle off
-#define COL_TXT_HI(a)        IM_COL32(244, 242, 247, (a))   // #F4F2F7 primary text
-#define COL_TXT_MID(a)       IM_COL32(170, 168, 182, (a))   // secondary text
-#define COL_TXT_LOW(a)       IM_COL32(118, 117, 130, (a))   // muted text
+#define COL_ACCENT(a)        IM_COL32(232,  38,  58, (a))   // #E8263A core red
+#define COL_ACCENT_HOVER(a)  IM_COL32(255,  74,  92, (a))   // #FF4A5C red light
+#define COL_ACCENT_DEEP(a)   IM_COL32(150,  18,  32, (a))   // #961220 red deep
+#define COL_ACCENT_ALT(a)    IM_COL32(255, 110,  80, (a))   // #FF6E50 ember
+#define COL_COOL(a)          IM_COL32(118, 196, 160, (a))   // #76C4A0 status
+#define COL_PANEL(a)         IM_COL32( 11,  11,  14, (a))   // #0B0B0E panel
+#define COL_CARD(a)          IM_COL32( 22,  22,  27, (a))   // #16161B card surface
+#define COL_CARD_INNER(a)    IM_COL32( 15,  15,  19, (a))   // #0F0F13 inner card
+#define COL_BTN_IDLE(a)      IM_COL32( 32,  32,  39, (a))   // #202027 inactive button
+#define COL_TOGGLE_OFF(a)    IM_COL32( 38,  38,  46, (a))   // #26262E toggle off
+#define COL_TXT_HI(a)        IM_COL32(245, 245, 248, (a))   // primary text
+#define COL_TXT_MID(a)       IM_COL32(168, 168, 178, (a))   // secondary text
+#define COL_TXT_LOW(a)       IM_COL32(112, 112, 122, (a))   // muted text
 #define COL_SHADOW(a)        IM_COL32(  0,   0,   0, (a))   // soft shadow
-#define COL_HAIRLINE(a)      IM_COL32( 54,  54,  68, (a))   // subtle border
+#define COL_HAIRLINE(a)      IM_COL32( 52,  52,  62, (a))   // subtle border
 
 // ── LAYOUT GRID ─────────────────────────────────────────────
 // The panel is split into a content column and an art zone. Everything
@@ -423,6 +422,16 @@ inline void RenderSingleMenuWindow() {
             ImVec2 barMax = ImVec2(p.x + windowSize.x, p.y + 72 * scale);
             dl->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 0), rounding);
 
+            // A hairline under the header with a short accent run at the left,
+            // so the chrome reads as a separate band from the content.
+            {
+                const float hy = p.y + 72 * scale;
+                dl->AddLine(ImVec2(p.x + 32 * scale, hy), ImVec2(p_end.x - 32 * scale, hy),
+                            COL_HAIRLINE((int)(130 * uiAlpha)), 1.0f);
+                dl->AddLine(ImVec2(p.x + 32 * scale, hy), ImVec2(p.x + 96 * scale, hy),
+                            COL_ACCENT((int)(220 * uiAlpha)), 2.0f);
+            }
+
             // Header title — "Invisible" white + "X" red.
             // 44px collided with the tab bar and hid the "X" behind the first
             // pill, so the title is smaller and the tabs are placed after its
@@ -481,7 +490,32 @@ inline void RenderSingleMenuWindow() {
                                                    : COL_BTN_IDLE((int)(235 * uiAlpha));
                     ImU32 txtCol = (i == 现在页面) ? IM_COL32(255, 255, 255, (int)(255 * uiAlpha))
                                                    : COL_TXT_MID((int)(255 * uiAlpha));
-                    dl->AddRectFilled(btnMin, btnMax, btnBg, btnH * 0.5f);
+                    if (i == 现在页面) {
+                        // Glow under the active pill, then a red -> ember
+                        // gradient across it. A flat fill read as a plain
+                        // coloured box next to the artwork.
+                        for (int gi = 3; gi >= 1; --gi) {
+                            const float o  = (float)gi * 2.0f * scale;
+                            const int   ga = (int)(15.0f * (float)(4 - gi) * uiAlpha);
+                            if (ga <= 0) continue;
+                            dl->AddRectFilled(ImVec2(btnMin.x - o, btnMin.y - o),
+                                              ImVec2(btnMax.x + o, btnMax.y + o),
+                                              COL_ACCENT(ga), btnH * 0.5f + o);
+                        }
+                        const float cr = btnH * 0.5f;
+                        dl->AddRectFilled(btnMin, ImVec2(btnMin.x + cr * 2.0f, btnMax.y),
+                                          COL_ACCENT((int)(255 * uiAlpha)), cr);
+                        dl->AddRectFilled(ImVec2(btnMax.x - cr * 2.0f, btnMin.y), btnMax,
+                                          COL_ACCENT_ALT((int)(255 * uiAlpha)), cr);
+                        dl->AddRectFilledMultiColor(
+                            ImVec2(btnMin.x + cr, btnMin.y), ImVec2(btnMax.x - cr, btnMax.y),
+                            COL_ACCENT((int)(255 * uiAlpha)), COL_ACCENT_ALT((int)(255 * uiAlpha)),
+                            COL_ACCENT_ALT((int)(255 * uiAlpha)), COL_ACCENT((int)(255 * uiAlpha)));
+                    } else {
+                        dl->AddRectFilled(btnMin, btnMax, btnBg, btnH * 0.5f);
+                        dl->AddRect(btnMin, btnMax, COL_HAIRLINE((int)(160 * uiAlpha)),
+                                    btnH * 0.5f, 0, 1.0f);
+                    }
                     const float tw = btnFont->CalcTextSizeA(btnFontSize, FLT_MAX, -1.f, btnList[i]).x;
                     dl->AddText(NULL, btnFontSize,
                                 ImVec2(btnMin.x + (btnW - tw) * 0.5f, btnCenterY - btnFontSize * 0.5f),
@@ -699,6 +733,8 @@ inline void RenderSingleMenuWindow() {
                     float cardW    = LAY_COL_W * scale;
                     float cardRound = 22 * scale;
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
+                    /* Taller than the other pages: this one carries the Show
+                       switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
                     ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 400 * scale);
@@ -826,9 +862,10 @@ inline void RenderSingleMenuWindow() {
                     float cardRound = 22 * scale;
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
 
-                    /* taller card so rows never overlap */
+                    /* taller card so rows never overlap, with room for the
+                       Show switch and its two state lines */
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 360 * scale);
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 418 * scale);
                     SM_SoftShadow(dl, c1Min, c1Max, cardRound, uiAlpha);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
@@ -866,6 +903,31 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3 + 30 * scale));
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##PullRange", &MagnetMaxDist, 1.0f, 8.0f, "%.1f m");
+
+                    /* Row 4 — Show: let the overlay appear in screenshots and
+                       screen recordings. Off, the layer is created with
+                       eSkipScreenshot and capture leaves it out; on, it is
+                       created without that flag. draw.cpp reads the setting
+                       when it makes the surface, so it takes hold the next
+                       time the overlay starts. The state is read from
+                       config.json once and written back on each change. */
+                    static bool showInCapture       = ix_get_show_in_capture();
+                    static bool showInCaptureLoaded = true;
+                    (void)showInCaptureLoaded;
+
+                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 4 + 24 * scale));
+                    if (ImGui::Checkbox1("Show", &showInCapture))
+                        ix_set_show_in_capture(showInCapture);
+
+                    dl->AddText(NULL, 16.0f * scale,
+                                ImVec2(startX, startY + row * 5 + 14 * scale),
+                                COL_TXT_LOW((int)(200 * uiAlpha)),
+                                showInCapture ? "Visible in screenshots and recordings"
+                                              : "Hidden from screenshots and recordings");
+                    dl->AddText(NULL, 16.0f * scale,
+                                ImVec2(startX, startY + row * 5 + 36 * scale),
+                                COL_TXT_LOW((int)(150 * uiAlpha)),
+                                "Applies when the menu next starts");
                 }
                     } /* feat gate exploit */
                 else if (现在页面 == 4) {
