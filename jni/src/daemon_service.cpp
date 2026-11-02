@@ -56,6 +56,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -163,6 +164,7 @@ static std::string foreground_package() {
     static const std::regex re1("mCurrentFocus=.*?\\s([A-Za-z0-9_.]+)/");
     static const std::regex re2("mResumedActivity:.*?\\s([A-Za-z0-9_.]+)/");
     static const std::regex re3("mFocusedApp=.*?\\s([A-Za-z0-9_.]+)/");
+    static const std::regex re4("ACTIVITY\\s+([A-Za-z0-9_.]+)/");
 
     std::smatch m;
     std::string out = run_shell("dumpsys window windows 2>/dev/null");
@@ -171,6 +173,11 @@ static std::string foreground_package() {
 
     out = run_shell("dumpsys activity activities 2>/dev/null");
     if (std::regex_search(out, m, re2) && m.size() > 1) return m[1].str();
+
+    // Some ROMs omit the two sections above; "activity top" always lists
+    // the top activity as "ACTIVITY <pkg>/<class> ...".
+    out = run_shell("dumpsys activity top 2>/dev/null");
+    if (std::regex_search(out, m, re4) && m.size() > 1) return m[1].str();
 
     return "";
 }
@@ -193,8 +200,17 @@ static bool pid_alive(pid_t p) {
     return kill(p, 0) == 0;
 }
 
+// A stale pid file can point at a PID the kernel has since handed to an
+// unrelated process. Android recycles PIDs quickly, so a bare kill(p,0)
+// check reports "running" and the binary is never launched again. The
+// process must also still be executing our binary (cmdline match).
 static bool is_running(const std::string& bin_name) {
-    return pid_alive(read_pid(pid_file_path(bin_name)));
+    const pid_t p = read_pid(pid_file_path(bin_name));
+    if (!pid_alive(p)) return false;
+
+    std::ifstream cl("/proc/" + std::to_string((int)p) + "/cmdline", std::ios::binary);
+    std::string cmd((std::istreambuf_iterator<char>(cl)), std::istreambuf_iterator<char>());
+    return cmd.find(bin_name) != std::string::npos;
 }
 
 // ─── driver loading ──────────────────────────────────────────
@@ -355,6 +371,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     std::string lastBinaryName; // tracks which binary we launched
     time_t lastStartAttempt = 0;
     time_t launchedAt       = 0;
+    bool   wasInTarget      = false;
 
     for (;;) {
         json cfg = load_config();
@@ -387,12 +404,23 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // crash): log it once, then wait RESTART_BACKOFF_SECS before retrying.
         if (launchedByDaemon && !lastBinaryName.empty() && !is_running(lastBinaryName)) {
             daemon_log("%s exited on its own — reason in webroot/cheat.log", lastBinaryName.c_str());
+            unlink(pid_file_path(lastBinaryName).c_str());
             // Quick exit = a failure, so back off. A long run that ended is
             // a normal stop and must relaunch on the next game open.
             if (time(nullptr) - launchedAt < 30) lastStartAttempt = time(nullptr);
             launchedByDaemon = false;
             lastBinaryName.clear();
         }
+
+        // A new game session (target just came to the foreground) always gets
+        // a fresh launch attempt. Backoff only throttles retries inside one
+        // session, so a failed launch can't block the menu on the next open.
+        if (inTarget && !wasInTarget) {
+            lastStartAttempt = 0;
+            daemon_log("Target %s came to foreground", target.c_str());
+        }
+        wasInTarget = inTarget;
+
         const time_t now = time(nullptr);
         const bool backoffOver = (now - lastStartAttempt) >= RESTART_BACKOFF_SECS;
 
