@@ -103,8 +103,19 @@ static const int RESTART_BACKOFF_SECS = 60;
 // windows; without this the menu was killed in the middle of a match.
 static const int LEAVE_MISS_POLLS = 4;
 
-// Poll interval. 1.5 s with heavy dumpsys calls kept the CPU busy all the time.
-static const useconds_t POLL_USEC = 2000 * 1000;
+// Poll interval while the game process exists. 1.5 s with heavy dumpsys calls
+// kept the CPU busy all the time.
+static const useconds_t POLL_BUSY_USEC = 2000 * 1000;
+
+// Poll interval while the game is not even running. Checking whether its
+// process exists is a cheap pgrep, so over a 24 h day almost no dumpsys call
+// is made at all — that is where the heat and battery drain came from.
+static const useconds_t POLL_IDLE_USEC = 5000 * 1000;
+
+// Heartbeat + state for the WebUI. The page reads this file with fetch(), so
+// the status card needs no shell call: a shell call on a timer was flooding
+// the WebUI bridge and is why the page froze after pressing Install.
+static const char* STATUS_JSON = INX_MODULE_DIR "/webroot/status.json";
 
 // ─── logging ─────────────────────────────────────────────────
 #define LOG_MAX_LINES 200
@@ -192,6 +203,40 @@ static std::string foreground_package() {
     std::string pkg = pkg_from_dumpsys("dumpsys window", "mCurrentFocus=");
     if (pkg.empty()) pkg = pkg_from_dumpsys("dumpsys activity top", "ACTIVITY ");
     return pkg;
+}
+
+// ─── cheap target-process check ──────────────────────────────
+// Whether the game is running at all. A pgrep over /proc costs almost
+// nothing next to dumpsys, which has to build its whole dump inside
+// system_server. The expensive foreground check is skipped entirely unless
+// this says the game is alive.
+//
+// The package is wrapped as com.dts[.]freefiremax so the helper shell, whose
+// own command line contains the pattern, is never matched as a hit.
+static std::string bracket_first_dot(const std::string& pkg) {
+    const size_t dot = pkg.find('.');
+    if (dot == std::string::npos) return pkg;
+    return pkg.substr(0, dot) + "[.]" + pkg.substr(dot + 1);
+}
+
+static bool target_process_exists(const std::string& pkg) {
+    if (pkg.empty()) return false;
+    const std::string cmd = "pgrep -f '" + bracket_first_dot(pkg) + "' 2>/dev/null";
+    return !run_shell(cmd).empty();
+}
+
+// ─── status file for the WebUI ───────────────────────────────
+// Written to a temp file and renamed, so the page never reads half a file.
+static void write_status(const json& st) {
+    const std::string tmp = std::string(STATUS_JSON) + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        if (!f.good()) return;
+        f << st.dump(2, ' ', false, json::error_handler_t::replace);
+        if (!f.good()) return;
+    }
+    chmod(tmp.c_str(), 0644);
+    rename(tmp.c_str(), STATUS_JSON);
 }
 
 // ─── PID helpers ─────────────────────────────────────────────
@@ -447,9 +492,14 @@ int main(int /*argc*/, char* /*argv*/[]) {
         std::string login_state = cfg.value("status", "");
         const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
 
+        // The game not being alive at all is the common case over a day, and
+        // answering that costs one pgrep. dumpsys is only asked once the game
+        // actually exists.
+        const bool targetAlive = target_process_exists(target);
+
         // Debounced game state: the game is "closed" only after
         // LEAVE_MISS_POLLS polls in a row without it in the foreground.
-        if (foreground_package() == target) {
+        if (targetAlive && foreground_package() == target) {
             missCount = 0;
             inGame    = true;
         } else if (++missCount >= LEAVE_MISS_POLLS) {
@@ -527,7 +577,25 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // supervision costs one cheap pgrep instead of a constant one.
         if (++pollTick % 8 == 0) ensure_watchdog_running();
 
-        usleep(POLL_USEC);
+        // Heartbeat for the WebUI and for the watchdog. "updated" is what
+        // proves this loop is still turning: a daemon wedged on a hung
+        // dumpsys keeps its process alive but stops updating this, and the
+        // watchdog restarts it on that basis.
+        {
+            json st;
+            st["updated"]       = (long long)time(nullptr);
+            st["pid"]           = (int)getpid();
+            st["target"]        = target;
+            st["target_alive"]  = targetAlive;
+            st["in_game"]       = inTarget;
+            st["logged_in"]     = loggedIn;
+            st["binary"]        = bin_name;
+            st["binary_running"]= running;
+            st["driver"]        = driver;
+            write_status(st);
+        }
+
+        usleep(targetAlive ? POLL_BUSY_USEC : POLL_IDLE_USEC);
     }
 
     return 0; // unreachable
