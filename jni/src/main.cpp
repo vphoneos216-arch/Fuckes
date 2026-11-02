@@ -2242,9 +2242,13 @@ int main(int argc,char* argv[]){
             // Now portrait must be seen on several consecutive polls
             // before we tear anything down, and readings with bogus
             // dimensions are ignored outright.
-            static int  s_PortraitStreak = 0;
+            // screen_config() is now throttled (~4 Hz), so a poll count no
+            // longer means a time span. Portrait must persist for PORTRAIT_CONFIRM_MS
+            // before anything is torn down.
+            static std::chrono::steady_clock::time_point s_PortraitSince{};
+            static bool                                  s_PortraitActive = false;
             static bool s_LastGoodLS     = true;
-            const int   PORTRAIT_CONFIRM = 8;   // ~110ms of agreement
+            const auto  PORTRAIT_CONFIRM_MS = std::chrono::milliseconds(1500);
 
             bool rawLS = IsScreenLandscape();
             bool dimsValid = (displayInfo.width > 0 && displayInfo.height > 0);
@@ -2255,10 +2259,15 @@ int main(int argc,char* argv[]){
                 s_LastGoodLS = rawLS;
             }
 
-            if(rawLS) s_PortraitStreak = 0;
-            else      s_PortraitStreak++;
+            const auto nowLS = chrono::steady_clock::now();
+            if(rawLS){
+                s_PortraitActive = false;
+            } else if(!s_PortraitActive){
+                s_PortraitActive = true;
+                s_PortraitSince  = nowLS;
+            }
 
-            bool curLS = (s_PortraitStreak < PORTRAIT_CONFIRM);
+            bool curLS = !(s_PortraitActive && (nowLS - s_PortraitSince) >= PORTRAIT_CONFIRM_MS);
             if(!curLS){
                 if(g_FloatingSystemReady){
                     if(!lpms){lpms=true;lrms=false;}
@@ -2304,10 +2313,14 @@ int main(int argc,char* argv[]){
         }
         drawEnd();
 
+        // Frame cap: 60 fps while the menu is open, 30 fps otherwise. The
+        // full-rate ImGui + EGL swap loop running all the time was the main
+        // source of heat while playing.
         static auto lft=chrono::steady_clock::now();
+        const long long frameUs = g_MenuVis ? 16000LL : 33000LL;
         auto fd=chrono::duration_cast<chrono::microseconds>(
             chrono::steady_clock::now()-lft).count();
-        if(fd<14000) usleep(14000-fd);
+        if(fd<frameUs) usleep((useconds_t)(frameUs-fd));
         lft=chrono::steady_clock::now();
     }
 

@@ -1,4 +1,5 @@
 #include "Android_draw/draw.h"
+#include <chrono>
 // Source project fonts (方正粗等线 + icomoon icons)
 #include "UI/fonts/YuluFont.h"
 #include "UI/fonts/YuluFontIcons.h"
@@ -94,7 +95,17 @@ bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     return true;
 }
 
+// Every GetDisplayInfo() is a binder call into SurfaceFlinger. The render
+// loop calls this several times per frame (~70 fps), which was hundreds of
+// IPC calls per second: the main cause of phone heat and game stutter. The
+// screen size and rotation change rarely, so refresh at most 4 times a second.
 void screen_config() {
+    static std::chrono::steady_clock::time_point lastQuery{};
+    static bool queried = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (queried && now - lastQuery < std::chrono::milliseconds(250)) return;
+    queried   = true;
+    lastQuery = now;
     displayInfo = android::ANativeWindowCreator::GetDisplayInfo();
 }
 

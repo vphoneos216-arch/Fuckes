@@ -67,6 +67,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <time.h>
 #include <errno.h>
 #include <json.hpp>
@@ -352,6 +353,7 @@ static void reap_children(int /*sig*/) {
 
 // ─── daemon pidfile ──────────────────────────────────────────
 static const char* DAEMON_PIDFILE = INX_MODULE_DIR "/config/daemon_service.pid";
+static const char* DAEMON_LOCK    = INX_MODULE_DIR "/config/daemon_service.lock";
 
 // ===============================================================
 int main(int /*argc*/, char* /*argv*/[]) {
@@ -363,6 +365,18 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     // Ignore SIGHUP
     signal(SIGHUP, SIG_IGN);
+
+    // Single instance. A second copy (watchdog restarting a daemon it could
+    // not see, or a duplicate boot start) would run its own poll loop and fight
+    // over the binary, which is what made the phone hot and the menu flicker.
+    // The lock is held by this process only: O_CLOEXEC keeps it from leaking
+    // into the binary it launches, so the lock frees when the daemon dies.
+    mkdir(CFG_DIR, 0755);
+    const int lockFd = open(DAEMON_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (lockFd < 0 || flock(lockFd, LOCK_EX | LOCK_NB) != 0) {
+        daemon_log("daemon_service_@api already running — this copy exits");
+        return 0;
+    }
 
     // Write our own PID
     {
