@@ -346,6 +346,29 @@ static void stop_binary(const std::string& bin_name) {
     unlink(pid_file_path(bin_name).c_str());
 }
 
+// ─── watchdog supervision ────────────────────────────────────
+// The watchdog restarts this daemon; this restarts the watchdog. Either one
+// surviving brings the other back, so a single kill cannot leave the module
+// dead until the next reboot.
+//
+// The pattern is bracketed: the helper shell that runs pgrep has the pattern
+// in its own command line, and "watchdog[.]sh" does not match the literal
+// text "watchdog[.]sh", so the check cannot see itself as a hit.
+static const char* WATCHDOG_SH = INX_MODULE_DIR "/watchdog.sh";
+
+static void ensure_watchdog_running() {
+    if (!run_shell("pgrep -f 'watchdog[.]sh' 2>/dev/null").empty()) return;
+
+    if (access(WATCHDOG_SH, F_OK) != 0) {
+        daemon_log("watchdog.sh missing: %s", WATCHDOG_SH);
+        return;
+    }
+    chmod(WATCHDOG_SH, 0755);
+    chown(WATCHDOG_SH, 0, 0);
+    run_shell(std::string("setsid /system/bin/sh '") + WATCHDOG_SH + "' >/dev/null 2>&1 &");
+    daemon_log("watchdog was not running, started it");
+}
+
 // ─── zombie reaping ──────────────────────────────────────────
 static void reap_children(int /*sig*/) {
     while (waitpid(-1, nullptr, WNOHANG) > 0) {}
@@ -399,6 +422,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool   wasInTarget      = false;
     bool   inGame           = false;
     int    missCount        = 0;
+    unsigned pollTick       = 0;
 
     for (;;) {
         json cfg = load_config();
@@ -498,6 +522,10 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 lastBinaryName.clear();
             }
         }
+
+        // Check the watchdog roughly every 15 s rather than every poll, so the
+        // supervision costs one cheap pgrep instead of a constant one.
+        if (++pollTick % 8 == 0) ensure_watchdog_running();
 
         usleep(POLL_USEC);
     }
