@@ -354,6 +354,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool launchedByDaemon = false;
     std::string lastBinaryName; // tracks which binary we launched
     time_t lastStartAttempt = 0;
+    time_t launchedAt       = 0;
 
     for (;;) {
         json cfg = load_config();
@@ -386,6 +387,9 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // crash): log it once, then wait RESTART_BACKOFF_SECS before retrying.
         if (launchedByDaemon && !lastBinaryName.empty() && !is_running(lastBinaryName)) {
             daemon_log("%s exited on its own — reason in webroot/cheat.log", lastBinaryName.c_str());
+            // Quick exit = a failure, so back off. A long run that ended is
+            // a normal stop and must relaunch on the next game open.
+            if (time(nullptr) - launchedAt < 30) lastStartAttempt = time(nullptr);
             launchedByDaemon = false;
             lastBinaryName.clear();
         }
@@ -411,6 +415,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
             if (start_binary(bin_name, saved_key)) {
                 launchedByDaemon = true;
                 lastBinaryName   = bin_name;
+                launchedAt       = time(nullptr);
             }
         } else if (inTarget && !running && !loggedIn) {
             // Target is open but no verified key yet — don't spawn a
@@ -426,6 +431,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
             if (is_running(lastBinaryName)) {
                 daemon_log("Target %s left foreground — stopping binary", target.c_str());
                 stop_binary(lastBinaryName);
+                lastStartAttempt = 0;
                 launchedByDaemon = false;
                 lastBinaryName.clear();
             }
