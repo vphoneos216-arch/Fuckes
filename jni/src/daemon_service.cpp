@@ -579,28 +579,11 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     daemon_log("daemon_service_@api started (pid %d)", (int)getpid());
 
-    // Remote control. Started here, not in the overlay, so the page keeps
-    // answering when the game is closed or Android reclaims it.
+    // Remote control is started from inside the poll loop, not here: the
+    // daemon comes up at boot, long before anyone flips the switch in the
+    // module, and reading the setting once at startup meant turning it on did
+    // nothing until the next reboot.
     bool remoteStarted = false;
-    {
-        json cfg0 = load_config_cached();
-        if (cfg0.value("remote_control", false)) {
-            ix_controls_load(g_ctlState);          // pick up where it left off
-            remote_register_controls();
-            if (ix_remote_start()) {
-                remoteStarted = true;
-                char url[160];
-                snprintf(url, sizeof(url), "http://127.0.0.1:%d/?t=%s",
-                         IX_REMOTE_PORT, ix_remote_token().c_str());
-                ix_write_remote_url(url);
-                daemon_log("Remote control listening on 127.0.0.1:%d", IX_REMOTE_PORT);
-                ix_controls_save(g_ctlState);      // make sure the file exists
-            } else {
-                daemon_log("Remote control could not listen on port %d (%s)",
-                           IX_REMOTE_PORT, strerror(errno));
-            }
-        }
-    }
 
     bool launchedByDaemon = false;
     std::string lastBinaryName; // tracks which binary we launched
@@ -611,6 +594,9 @@ int main(int /*argc*/, char* /*argv*/[]) {
     int    missCount        = 0;
     unsigned pollTick       = 0;
     int      driverRetries  = 0;
+    // Set when the player leaves a running game; cleared when the game is
+    // back on top, so the binary is not relaunched into the background.
+    bool     awaitingForeground = false;
 
     for (;;) {
         json cfg = load_config_cached();
@@ -690,8 +676,9 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // A fresh game launch always gets an attempt, whatever happened last
         // time, so a past failure can never block the menu on the next open.
         if (justAppeared) {
-            lastStartAttempt = 0;
-            driverRetries    = 0;   // a new game session starts fresh
+            lastStartAttempt   = 0;
+            driverRetries      = 0;   // a new game session starts fresh
+            awaitingForeground = false;
             missCount        = 0;
             inGame           = true;   // the game it just started is on top
             daemon_log("Game process appeared (pid %d) — starting binary now", (int)targetPid);
@@ -704,13 +691,21 @@ int main(int /*argc*/, char* /*argv*/[]) {
             if (fgIsTarget) {
                 missCount = 0;
                 inGame    = true;
+                if (awaitingForeground) {
+                    // Coming back to the game is a fresh start, not a retry
+                    // after a failure, so it should not sit out the backoff
+                    // that throttles a binary which keeps dying.
+                    awaitingForeground = false;
+                    lastStartAttempt   = 0;
+                }
             } else if (++missCount >= LEAVE_MISS_POLLS) {
                 inGame = false;
             }
         }
         if (!targetAlive) {
-            inGame    = false;
-            missCount = 0;
+            inGame             = false;
+            missCount          = 0;
+            awaitingForeground = false;   // the game is gone; next open is fresh
         }
 
         const time_t now = time(nullptr);
@@ -721,7 +716,13 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // longer to load, so by the time the player can see anything the menu
         // is already up. Waiting for the foreground check first is what made
         // the menu show up late.
-        if (targetAlive && !running && loggedIn && backoffOver) {
+        // Launching is gated on the game's PROCESS existing, so the menu is
+        // ready before the player can see anything. Stopping is gated on the
+        // game being in the FOREGROUND. While the game is alive but in the
+        // background both were true at once, so the binary was started and
+        // stopped once a second. After a "player left" stop the game has to
+        // come back to the foreground before it is launched again.
+        if (targetAlive && !running && loggedIn && backoffOver && !awaitingForeground) {
             lastStartAttempt = now;
 
             // Absolute path -> an external driver executable, run here.
@@ -752,9 +753,36 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 daemon_log(targetAlive ? "Player left the game — stopping binary"
                                        : "Game closed — stopping binary");
                 stop_binary(lastBinaryName);
-                lastStartAttempt = 0;
+                // Only a closed game clears the backoff. Leaving the game is
+                // not a failure, and zeroing it here is what let the next
+                // tick relaunch immediately.
+                if (!targetAlive) lastStartAttempt = 0;
+                else              awaitingForeground = true;
                 launchedByDaemon = false;
                 lastBinaryName.clear();
+            }
+        }
+
+        // Start the server the first time the module asks for it, whenever
+        // that happens — no reboot needed.
+        if (!remoteStarted && cfg.value("remote_control", false)) {
+            ix_controls_load(g_ctlState);          // pick up where it left off
+            remote_register_controls();
+            if (ix_remote_start()) {
+                remoteStarted = true;
+                char url[160];
+                snprintf(url, sizeof(url), "http://127.0.0.1:%d/?t=%s",
+                         IX_REMOTE_PORT, ix_remote_token().c_str());
+                ix_write_remote_url(url);
+                ix_controls_save(g_ctlState);      // make sure the file exists
+                daemon_log("Remote control listening on 127.0.0.1:%d", IX_REMOTE_PORT);
+            } else {
+                static time_t lastMoan = 0;
+                if (time(nullptr) - lastMoan > 30) {   // do not spam the log
+                    lastMoan = time(nullptr);
+                    daemon_log("Remote control could not listen on port %d (%s)",
+                               IX_REMOTE_PORT, strerror(errno));
+                }
             }
         }
 
