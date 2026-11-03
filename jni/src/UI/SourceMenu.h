@@ -13,6 +13,9 @@
 #include "imgui_widgets.h"
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
+#ifndef IX_PREVIEW_NO_AUDIO
+#include "ix_audio.h"
+#endif
 #include <ctime>
 #include <cmath>
 #include <cstdlib>
@@ -206,6 +209,7 @@ inline bool IsMenuWindowVisible() {
 inline void ShowMenuWindow() {
     if (!窗口显示状态) {
         窗口显示状态 = true;
+        ix_sound_welcome_once();   // once per process, on first open
         当前动画     = 动画_无;
         动画进度     = 1.0f;
         停留计时器   = 0.0f;
@@ -862,10 +866,9 @@ inline void RenderSingleMenuWindow() {
                     float cardRound = 22 * scale;
                     ImU32 cardBg = COL_CARD((int)(235 * uiAlpha));
 
-                    /* taller card so rows never overlap, with room for the
-                       Show switch and its two state lines */
+                    /* taller card so rows never overlap */
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 418 * scale);
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 360 * scale);
                     SM_SoftShadow(dl, c1Min, c1Max, cardRound, uiAlpha);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
@@ -903,31 +906,6 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3 + 30 * scale));
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##PullRange", &MagnetMaxDist, 1.0f, 8.0f, "%.1f m");
-
-                    /* Row 4 — Show: let the overlay appear in screenshots and
-                       screen recordings. Off, the layer is created with
-                       eSkipScreenshot and capture leaves it out; on, it is
-                       created without that flag. draw.cpp reads the setting
-                       when it makes the surface, so it takes hold the next
-                       time the overlay starts. The state is read from
-                       config.json once and written back on each change. */
-                    static bool showInCapture       = ix_get_show_in_capture();
-                    static bool showInCaptureLoaded = true;
-                    (void)showInCaptureLoaded;
-
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 4 + 24 * scale));
-                    if (ImGui::Checkbox1("Show", &showInCapture))
-                        ix_set_show_in_capture(showInCapture);
-
-                    dl->AddText(NULL, 16.0f * scale,
-                                ImVec2(startX, startY + row * 5 + 14 * scale),
-                                COL_TXT_LOW((int)(200 * uiAlpha)),
-                                showInCapture ? "Visible in screenshots and recordings"
-                                              : "Hidden from screenshots and recordings");
-                    dl->AddText(NULL, 16.0f * scale,
-                                ImVec2(startX, startY + row * 5 + 36 * scale),
-                                COL_TXT_LOW((int)(150 * uiAlpha)),
-                                "Applies when the menu next starts");
                 }
                     } /* feat gate exploit */
                 else if (现在页面 == 4) {

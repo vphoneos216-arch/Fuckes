@@ -45,8 +45,15 @@ static void LoadMenuOpenMode() {
 // ── Source UI Assets ─────────────────────────────────────────
 #include "stb_image.h"
 #include "UI/images/Background.h"
+#include "ix_audio.h"
 
 // Helper: create OpenGL texture from PNG bytes in memory
+// Switch sounds. ImGui exposes a plain function pointer so it keeps no
+// dependency on the audio code; it is filled in once, here.
+extern void (*GImGuiToggleSound)(bool on);
+static void ix_toggle_sound(bool on) { ix_sound_play(on ? IX_SND_ON : IX_SND_OFF); }
+static const bool ix_toggle_sound_installed = (GImGuiToggleSound = ix_toggle_sound, true);
+
 static ImTextureID CreateTextureFromMemory(const unsigned char* data, int len) {
     int w=0, h=0, n=0;
     unsigned char* img = stbi_load_from_memory(data, len, &w, &h, &n, STBI_rgb_alpha);

@@ -243,6 +243,10 @@ LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/l
 LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libssl.a
 LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libcrypto.a
 
+# AAudio — menu sounds. Part of the NDK from API 26; APP_PLATFORM is
+# android-28, so it is always present.
+LOCAL_LDLIBS += -laaudio
+
 # KPM 8 (KMA) + KPM 9 (LDK) + Paradise + sodium (+ Ed448's private OpenSSL,
 # only when build-ed448-lib produced it — see the wildcard guard above)
 LOCAL_STATIC_LIBRARIES := kma_kpm_driver ldg_kpm_driver paradise_driver sodium

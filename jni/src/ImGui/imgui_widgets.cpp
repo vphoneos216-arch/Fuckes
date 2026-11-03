@@ -8944,6 +8944,10 @@ void ImGui::TabItemLabelAndCloseButton(ImDrawList* draw_list, const ImRect& bb, 
 // [SECTION] Widgets: Checkbox1 (source project custom toggle switch)
 //-------------------------------------------------------------------------
 
+// Set by the application so a switch can make a sound. Left null, nothing
+// happens; ImGui keeps no dependency on the audio code either way.
+void (*GImGuiToggleSound)(bool on) = nullptr;
+
 bool ImGui::Checkbox1(const char* str_id, bool* v)
 {
     bool ret = false;
@@ -8975,25 +8979,32 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
     {
         *v = !*v;
         ret = true;
+        if (GImGuiToggleSound) GImGuiToggleSound(*v);
         GImGui->LastActiveId = GImGui->CurrentWindow->GetID(str_id);
         GImGui->LastActiveIdTimer = 0.0f;
     }
 
-    // 开关滑动动画
+    // Slide animation. The raw timer is linear, which reads as a mechanical
+    // jump; easing it out makes the knob leave quickly and settle softly.
     ImGuiContext& gg = *GImGui;
-    const float ANIM_SPEED = 0.12f;
+    const float ANIM_SPEED = 0.20f;   // a touch longer, so the ease is visible
     ImGuiID id = gg.CurrentWindow->GetID(str_id);
     float anim_progress = 0.0f;
 
     if (gg.LastActiveId == id)
     {
-        float t = ImSaturate(gg.LastActiveIdTimer / ANIM_SPEED);
-        anim_progress = *v ? t : 1.0f - t;
+        const float t = ImSaturate(gg.LastActiveIdTimer / ANIM_SPEED);
+        const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);  // ease-out cubic
+        anim_progress = *v ? eased : 1.0f - eased;
     }
     else
     {
         anim_progress = *v ? 1.0f : 0.0f;
     }
+
+    // Knob squash: widest mid-travel, round at both ends, so the movement
+    // reads as one flowing motion rather than a dot being teleported.
+    const float travel = 1.0f - ImFabs(anim_progress * 2.0f - 1.0f);  // 0..1..0
 
     // Track colours come from the palette the rest of the menu uses. On is a
     // horizontal red -> ember gradient rather than a flat fill, with a soft
@@ -9034,11 +9045,19 @@ bool ImGui::Checkbox1(const char* str_id, bool* v)
     }
 
     // 白色圆形滑块
-    float ball_x = switch_pos.x + switch_radius + anim_progress * (switch_width - switch_radius * 2.0f);
-    ImVec2 ball_pos = ImVec2(ball_x, switch_pos.y + switch_radius);
-    ImU32 ballColor = IM_COL32(255, 255, 255, 255);
+    const float ball_x = switch_pos.x + switch_radius +
+                         anim_progress * (switch_width - switch_radius * 2.0f);
+    const float ball_y = switch_pos.y + switch_radius;
+    const float ball_r = switch_radius - 2.5f;
+    const ImU32 ballColor = IM_COL32(255, 255, 255, 255);
 
-    draw_list->AddCircleFilled(ball_pos, switch_radius - 2.5f, ballColor);
+    // Stretched along the direction of travel by up to 35% at the midpoint.
+    const float stretch = 1.0f + 0.35f * travel;
+    const float halfW   = ball_r * stretch;
+    const float halfH   = ball_r / (1.0f + 0.14f * travel);
+    draw_list->AddRectFilled(ImVec2(ball_x - halfW, ball_y - halfH),
+                             ImVec2(ball_x + halfW, ball_y + halfH),
+                             ballColor, halfH);
 
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + line_height));
     return ret;
