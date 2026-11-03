@@ -71,7 +71,11 @@
 #include <sys/file.h>
 #include <time.h>
 #include <errno.h>
+#include <cstring>
 #include <json.hpp>
+#include "ix_controls.h"
+#include "ix_driver_init.h"   // ix_write_remote_url
+#include "ix_remote.h"
 
 using json = nlohmann::json;
 
@@ -469,6 +473,66 @@ static void ensure_watchdog_running() {
     daemon_log("watchdog was not running, started it");
 }
 
+// ── Remote control server ───────────────────────────────────
+// Hosted here rather than in the overlay binary: the overlay only lives
+// while the game is open, so switching to a browser could take it — and the
+// server — away with it. The daemon is kept alive by the watchdog, so the
+// page answers whether the game is running or not.
+//
+// The daemon owns the values. The overlay picks them up from controls.json
+// on its next frame, which is also how a change made with the game closed
+// takes effect as soon as it opens.
+static IxControls g_ctlState;
+
+static void remote_register_controls() {
+    ix_remote_add("esp_box",       "ESP", "Box",       IXC_BOOL, &g_ctlState.esp_box);
+    ix_remote_add("esp_skeleton",  "ESP", "Skeleton",  IXC_BOOL, &g_ctlState.esp_skeleton);
+    ix_remote_add("esp_name",      "ESP", "Name",      IXC_BOOL, &g_ctlState.esp_name);
+    ix_remote_add("esp_health",    "ESP", "Health",    IXC_BOOL, &g_ctlState.esp_health);
+    ix_remote_add("esp_distance",  "ESP", "Distance",  IXC_BOOL, &g_ctlState.esp_distance);
+    ix_remote_add("esp_line",      "ESP", "ESP Line",  IXC_BOOL, &g_ctlState.esp_line);
+    ix_remote_add("esp_360",       "ESP", "360 Alert", IXC_BOOL, &g_ctlState.esp_360);
+    ix_remote_add("esp_textsize",  "ESP", "Text Size", IXC_INT,  &g_ctlState.esp_textsize,
+                  10.f, 50.f, 1.f);
+
+    ix_remote_add("aim_silent",    "Aim", "Aim Silent",      IXC_BOOL, &g_ctlState.aim_silent,
+                  0, 1, 1, nullptr, "Head only");
+    ix_remote_add("aim_hwbt",      "Aim", "Hardware BT",     IXC_BOOL, &g_ctlState.aim_hwbt);
+    ix_remote_add("aim_fovcircle", "Aim", "Show FOV Circle", IXC_BOOL, &g_ctlState.aim_fovcircle);
+    ix_remote_add("aim_mode",      "Aim", "Hardware BT Mode", IXC_ENUM, &g_ctlState.aim_mode,
+                  1.f, 3.f, 1.f);
+    ix_remote_add("aim_fov",       "Aim", "FOV Range",       IXC_FLOAT, &g_ctlState.aim_fov,
+                  1.f, 360.f, 1.f);
+
+    ix_remote_add("exp_pull",       "Exploit", "Enemies pull", IXC_BOOL,  &g_ctlState.exp_pull);
+    ix_remote_add("exp_ghost",      "Exploit", "Ghost Hack",   IXC_BOOL,  &g_ctlState.exp_ghost);
+    ix_remote_add("exp_norecoil",   "Exploit", "No Recoil",    IXC_BOOL,  &g_ctlState.exp_norecoil);
+    ix_remote_add("exp_noreload",   "Exploit", "No Reload",    IXC_BOOL,  &g_ctlState.exp_noreload);
+    ix_remote_add("exp_floatpull",  "Exploit", "Float: pull",  IXC_BOOL,  &g_ctlState.exp_floatpull);
+    ix_remote_add("exp_floatghost", "Exploit", "Float: Ghost", IXC_BOOL,  &g_ctlState.exp_floatghost);
+    ix_remote_add("exp_pullrange",  "Exploit", "Pull Range",   IXC_FLOAT, &g_ctlState.exp_pullrange,
+                  1.f, 8.f, 0.1f, " m");
+}
+
+// Licence details for the page's Info tab, from the config the login binary
+// writes — the same values the module's WebUI shows.
+static void ix_remote_publish_info_from(const json& cfg) {
+    static std::string lastKey;
+    const std::string key = cfg.value("key", "");
+    const std::string seller = cfg.value("seller", "");
+    const std::string validity = cfg.value("validity", "");
+    const std::string sig = key + "|" + seller + "|" + validity;
+    if (sig == lastKey) return;            // only rebuild when it changes
+    lastKey = sig;
+
+    std::vector<IxInfoRow> rows;
+    rows.push_back({"Seller",   seller.empty()   ? "-" : seller});
+    rows.push_back({"Expiry",   validity.empty() ? "-" : validity});
+    rows.push_back({"Status",   cfg.value("status", "") == "success" ? "Active" : "Not logged in"});
+    rows.push_back({"Driver",   cfg.value("driver", "").empty() ? "none" : cfg.value("driver", "")});
+    ix_remote_set_info(rows);
+}
+
 // ─── zombie reaping ──────────────────────────────────────────
 static void reap_children(int /*sig*/) {
     while (waitpid(-1, nullptr, WNOHANG) > 0) {}
@@ -514,6 +578,29 @@ int main(int /*argc*/, char* /*argv*/[]) {
     }
 
     daemon_log("daemon_service_@api started (pid %d)", (int)getpid());
+
+    // Remote control. Started here, not in the overlay, so the page keeps
+    // answering when the game is closed or Android reclaims it.
+    bool remoteStarted = false;
+    {
+        json cfg0 = load_config_cached();
+        if (cfg0.value("remote_control", false)) {
+            ix_controls_load(g_ctlState);          // pick up where it left off
+            remote_register_controls();
+            if (ix_remote_start()) {
+                remoteStarted = true;
+                char url[160];
+                snprintf(url, sizeof(url), "http://127.0.0.1:%d/?t=%s",
+                         IX_REMOTE_PORT, ix_remote_token().c_str());
+                ix_write_remote_url(url);
+                daemon_log("Remote control listening on 127.0.0.1:%d", IX_REMOTE_PORT);
+                ix_controls_save(g_ctlState);      // make sure the file exists
+            } else {
+                daemon_log("Remote control could not listen on port %d (%s)",
+                           IX_REMOTE_PORT, strerror(errno));
+            }
+        }
+    }
 
     bool launchedByDaemon = false;
     std::string lastBinaryName; // tracks which binary we launched
@@ -669,6 +756,19 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 launchedByDaemon = false;
                 lastBinaryName.clear();
             }
+        }
+
+        // Anything the page changed: apply it to our copy and write the file
+        // the overlay reads. Saving only when something actually moved keeps
+        // this off the flash on an idle phone.
+        if (remoteStarted) {
+            const IxControls before = g_ctlState;
+            ix_remote_apply();
+            if (memcmp(&before, &g_ctlState, sizeof(IxControls)) != 0) {
+                ix_controls_save(g_ctlState);
+                daemon_log("Remote changed a setting");
+            }
+            ix_remote_publish_info_from(cfg);
         }
 
         ++pollTick;
