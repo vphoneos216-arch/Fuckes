@@ -418,11 +418,52 @@ static inline std::string kd_get_hwid() {
 // that is generated once, stored only on this device, and never sent over
 // the network — so the key file is unreadable even if persistence ever
 // lands on a less-private fallback path.
+// A file this process is willing to trust with key material: a real file
+// (not a symlink or a fifo swapped in underneath us), owned by us or by
+// root, and readable by nobody else. A key file that fails this was either
+// planted by another process or left world-readable, and is treated as if
+// it were not there -- which costs one re-login and never loads an
+// attacker-controlled blob.
+static inline bool kd_file_is_private(const std::string& path) {
+    struct stat st;
+    if (lstat(path.c_str(), &st) != 0)        return false;
+    if (!S_ISREG(st.st_mode))                 return false;
+    if (st.st_uid != geteuid() && st.st_uid != 0) return false;
+    if (st.st_mode & (S_IRWXG | S_IRWXO))     return false;
+    return true;
+}
+
+// ==================== KEY-AT-REST: SECOND FACTOR ====================
+// The stored master key file alone used to BE the at-rest key, and it sits
+// in the same directory, with the same 0600, as the encrypted key it
+// protects -- so whoever could read one could read the other, and the
+// encryption bought nothing against the very threat it was written for (a
+// fallback path like /data/local/tmp, which login.h already documents as
+// world-traversable). Copying both files to another device worked too.
+//
+// The real at-rest key is now BLAKE2b(key = file key, msg = ctx || hwid):
+// the file is one factor, this device's identity the other. The file alone
+// is useless, and the pair carried to another device decrypts nothing.
+// Same device, same files -> same key, so nothing changes for the user.
+static inline void kd_mix_master_key(unsigned char io[crypto_secretbox_KEYBYTES]) {
+    const std::string hwid = kd_get_hwid();
+    if (hwid.size() < 8) return;   // no second factor available: file key alone
+    static const char ctx[] = "kd-keyatrest-v2";
+    std::string msg(ctx, sizeof(ctx) - 1);
+    msg += hwid;
+    unsigned char mixed[crypto_secretbox_KEYBYTES];
+    crypto_generichash(mixed, sizeof(mixed),
+                       reinterpret_cast<const unsigned char*>(msg.data()), msg.size(),
+                       io, crypto_secretbox_KEYBYTES);
+    memcpy(io, mixed, sizeof(mixed));
+    sodium_memzero(mixed, sizeof(mixed));
+}
+
 static inline bool kd_load_or_create_master_key(unsigned char out[crypto_secretbox_KEYBYTES]) {
     if (sodium_init() < 0) return false;
     std::string path = kd_writable_dir() + "/" + MASTER_KEY_FILE_NAME;
 
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(kd_file_is_private(path) ? path : std::string("/nonexistent"), std::ios::binary);
     if (in.good()) {
         in.read(reinterpret_cast<char*>(out), crypto_secretbox_KEYBYTES);
         const bool okRead = (in.gcount() == (std::streamsize)crypto_secretbox_KEYBYTES);
@@ -445,6 +486,7 @@ static inline bool kd_load_or_create_master_key(unsigned char out[crypto_secretb
 static inline bool kd_save_key(const std::string& key) {
     unsigned char mk[crypto_secretbox_KEYBYTES];
     if (!kd_load_or_create_master_key(mk)) return false;
+    kd_mix_master_key(mk);          // file key + this device, never the file alone
 
     unsigned char nonce[crypto_secretbox_NONCEBYTES];
     randombytes_buf(nonce, sizeof(nonce));
@@ -472,6 +514,7 @@ static inline bool kd_save_key(const std::string& key) {
 
 static inline std::string kd_load_saved_key() {
     std::string path = kd_writable_dir() + "/" + KEY_FILE_NAME;
+    if (!kd_file_is_private(path)) return "";   // planted / loosened -> ignore
     std::ifstream f(path);
     if (!f.good()) return "";
     std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -489,17 +532,35 @@ static inline std::string kd_load_saved_key() {
     if (!kd_hex_decode_any(blob["c"].get<std::string>(), cipher) ||
         cipher.size() < crypto_secretbox_MACBYTES) return "";
 
+    unsigned char mkFile[crypto_secretbox_KEYBYTES];
+    if (!kd_load_or_create_master_key(mkFile)) return "";
+
     unsigned char mk[crypto_secretbox_KEYBYTES];
-    if (!kd_load_or_create_master_key(mk)) return "";
+    memcpy(mk, mkFile, sizeof(mk));
+    kd_mix_master_key(mk);
 
     std::vector<unsigned char> plain(cipher.size() - crypto_secretbox_MACBYTES);
-    const int rc = crypto_secretbox_open_easy(
+    int rc = crypto_secretbox_open_easy(
         plain.data(), cipher.data(), cipher.size(), nonce_v.data(), mk);
     sodium_memzero(mk, sizeof(mk));
+
+    // Legacy blob written before the device factor existed. Open it with the
+    // file key alone, exactly once, then re-save it bound to this device --
+    // an upgrade must never cost the user their saved login.
+    bool wasLegacy = false;
+    if (rc != 0) {
+        rc = crypto_secretbox_open_easy(
+            plain.data(), cipher.data(), cipher.size(), nonce_v.data(), mkFile);
+        wasLegacy = (rc == 0);
+    }
+    sodium_memzero(mkFile, sizeof(mkFile));
     if (rc != 0) return "";
 
     std::string k(reinterpret_cast<char*>(plain.data()), plain.size());
-    return kd_trim_upper(k);
+    sodium_memzero(plain.data(), plain.size());
+    const std::string out = kd_trim_upper(k);
+    if (wasLegacy && !out.empty()) kd_save_key(out);
+    return out;
 }
 
 // Note: intentionally NO delete_saved_key()/reset function exists.
@@ -783,7 +844,8 @@ static inline bool kd_seal_request(
 static inline bool kd_open_response(
     const std::string&     wireBody,
     const KdTransportKx&   kx,
-    json&                  outEnvelope
+    json&                  outEnvelope,
+    std::string*           outSpkHex = nullptr   // the transport key this reply used
 ) {
     json resp;
     try { resp = json::parse(wireBody); } catch (...) { return false; }
@@ -821,6 +883,7 @@ static inline bool kd_open_response(
 
     // ── LAYER 1 (outer) decrypt ──
     const std::string spkHex = resp["spk"].get<std::string>();
+    if (outSpkHex) *outSpkHex = spkHex;
     const auto*  ad    = reinterpret_cast<const unsigned char*>(spkHex.data());
     const size_t adLen = spkHex.size();
 
@@ -870,8 +933,10 @@ static inline bool kd_auth_post(
     json&              outEnvelope,
     std::string&       curlErr,
     long&              httpCode,
-    KdTransportKx&     kx
+    KdTransportKx&     kx,
+    std::string*       outSpkHex = nullptr
 ) {
+    if (outSpkHex) outSpkHex->clear();
     std::string wireBody;
     if (!kd_seal_request(innerBody.dump(), kx, wireBody)) {
         curlErr = "transport encryption failed";
@@ -907,7 +972,7 @@ static inline bool kd_auth_post(
         }
     }
 
-    if (!kd_open_response(rawResponse, kx, outEnvelope)) {
+    if (!kd_open_response(rawResponse, kx, outEnvelope, outSpkHex)) {
         curlErr = "transport decryption failed";
         return false;
     }
@@ -1521,7 +1586,7 @@ static inline LoginResult perform_auth(
     // envelope is opened with that instead and this extra keypair is gone.
 
     const long long ts = (long long)time(nullptr);
-    const std::string nonce = kd_random_hex(32);
+    std::string nonce = kd_random_hex(32);   // not const: the retry below takes a fresh one
 
     if (nonce.size() != 64) {
         result.message = oxorany("Secure random generator unavailable.");
@@ -1572,10 +1637,33 @@ static inline LoginResult perform_auth(
     //   2. The message itself no longer claims a capture was detected at
     //      all — connection failure is not evidence of one — so a genuine
     //      network problem now reads as a network problem.
-    bool posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, transportKx);
+    std::string wireSpkHex;
+    bool posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, transportKx, &wireSpkHex);
     if (!posted) {
-        KdTransportKx retryKx;
-        posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, retryKx);
+        // Two things were wrong with this retry.
+        //
+        // 1. It used a SEPARATE keypair (retryKx). kd_seal_request() fills
+        //    the keypair it is handed, so a successful retry sealed the reply
+        //    to retryKx while everything downstream -- above all
+        //    kd_open_secret() -- still used the stale transportKx. The
+        //    per-session secret could then never open, and the login died
+        //    with "Secure channel failed" even though the server had just
+        //    approved it. Reusing transportKx keeps one source of truth: it
+        //    is refilled in place, so the keypair that sealed the reply is
+        //    the keypair that opens it.
+        //
+        // 2. It reused the nonce. The nonce is the response's anti-replay
+        //    binding, so a server that rejects a repeated nonce -- which is
+        //    exactly the protection a licence server should have -- would
+        //    see the retry as a replay and deny a login that only stumbled
+        //    on a flaky connection. A fresh nonce per attempt lets the
+        //    server enforce single-use nonces without punishing bad signal.
+        const std::string nonceRetry = kd_random_hex(32);
+        if (nonceRetry.size() == 64) {
+            nonce = nonceRetry;
+            reqBody["nonce"] = nonce;
+        }
+        posted = kd_auth_post(reqBody, envelope, curlErr, httpCode, transportKx, &wireSpkHex);
     }
     if (!posted) {
         // Note: curl's raw reason (curlErr) is intentionally NOT shown.
@@ -1694,6 +1782,44 @@ static inline LoginResult perform_auth(
             std::string(oxorany("License is not valid."))
         ));
         return result;
+    }
+
+    // ══════════ RESPONSE BINDING (server opt-in, signed) ══════════
+    // What was already proven before this point: the server wrote this
+    // payload (Ed25519 + Ed448 + ML-DSA-65, all three enforced in this
+    // build) and wrote it for THIS request (the nonce is inside the signed
+    // message). What was NOT proven: that the payload belongs to this
+    // device, this licence key, and this transport key -- so a payload
+    // legitimately signed for one context could in principle be presented
+    // in another by whoever sits between the two.
+    //
+    // The server closes that by echoing, INSIDE the signed payload, the
+    // values it received, and switching the check on with "bind": 2. The
+    // marker lives inside the signature, so it cannot be stripped or
+    // forged -- removing it breaks the signature. Until the server sends
+    // it, nothing here changes: an old server keeps working unmodified.
+    const long long bindVer = payload.value("bind", (long long)0);
+    if (bindVer >= 2) {
+        const std::string cpkHex = kd_hex(transportKx.pk, sizeof(transportKx.pk));
+        auto mismatched = [&](const char* k, const std::string& mine) -> bool {
+            if (!payload.contains(k) || !payload[k].is_string()) return true;  // bind on -> required
+            return payload[k].get<std::string>() != mine;
+        };
+        const bool bad =
+            mismatched("nonce",     nonce)      ||   // this request
+            mismatched("cpk",       cpkHex)     ||   // this client keypair
+            mismatched("tspk",      wireSpkHex) ||   // the key that sealed this reply
+            mismatched("device_id", hwid)       ||   // this device
+            (mode == "key" && mismatched("key_name", kd_trim_upper(key)));
+        if (bad) {
+            kd_auth_dbg("response binding mismatch");
+            kd_set_kernel_ok(false);
+            ix_features_lock();
+            ix_rt_clear();
+            result.success = false;
+            result.message = oxorany("Response does not match this request.");
+            return result;
+        }
     }
 
     result.status = payload.value("status", std::string(""));
