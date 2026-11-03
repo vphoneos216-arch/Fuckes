@@ -62,6 +62,10 @@ struct IxCtl {
 
 struct IxInfoRow { std::string label, value; };
 
+// NOTE: every POSIX socket call below is written as ::name. main.cpp has
+// `using namespace std;` in scope, so an unqualified bind() resolves to
+// std::bind and the build fails; the same trap applies to the others.
+
 namespace ix_remote {
 
 inline std::vector<IxCtl>      g_ctls;
@@ -188,7 +192,7 @@ inline std::string query_param(const std::string& path, const char* key) {
 
 inline void send_all(int fd, const char* p, size_t n) {
     while (n) {
-        const ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
+        const ssize_t w = ::send(fd, p, n, MSG_NOSIGNAL);
         if (w <= 0) return;
         p += w; n -= (size_t)w;
     }
@@ -227,21 +231,21 @@ inline std::string wav_of(const int16_t* pcm, int32_t frames) {
 
 inline void handle(int fd) {
     char req[2048];
-    const ssize_t n = recv(fd, req, sizeof(req) - 1, 0);
-    if (n <= 0) { close(fd); return; }
+    const ssize_t n = ::recv(fd, req, sizeof(req) - 1, 0);
+    if (n <= 0) { ::close(fd); return; }
     req[n] = '\0';
 
     // request line: METHOD PATH HTTP/1.1
     const char* sp1 = strchr(req, ' ');
-    if (!sp1) { close(fd); return; }
+    if (!sp1) { ::close(fd); return; }
     const char* sp2 = strchr(sp1 + 1, ' ');
-    if (!sp2) { close(fd); return; }
+    if (!sp2) { ::close(fd); return; }
     const std::string path(sp1 + 1, sp2);
 
     if (query_param(path, "t") != g_token) {
         static const char* msg = "forbidden";
         respond(fd, "403 Forbidden", "text/plain", msg, strlen(msg));
-        close(fd);
+        ::close(fd);
         return;
     }
 
@@ -284,21 +288,21 @@ inline void handle(int fd) {
     } else {
         respond(fd, "404 Not Found", "text/plain", "", 0);
     }
-    close(fd);
+    ::close(fd);
 }
 
 inline void serve() {
     while (g_running.load(std::memory_order_acquire)) {
         sockaddr_in cli{};
         socklen_t cl = sizeof(cli);
-        const int fd = accept(g_listenFd, (sockaddr*)&cli, &cl);
+        const int fd = ::accept(g_listenFd, (sockaddr*)&cli, &cl);
         if (fd < 0) {
             if (!g_running.load(std::memory_order_acquire)) break;
             continue;
         }
         timeval tv{}; tv.tv_sec = 3;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         handle(fd);
     }
 }
@@ -356,17 +360,17 @@ inline bool ix_remote_start() {
     using namespace ix_remote;
     if (g_running.load(std::memory_order_acquire)) return true;
 
-    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return false;
     int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port   = htons(IX_REMOTE_PORT);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 only
-    if (bind(fd, (sockaddr*)&addr, sizeof(addr)) != 0) { close(fd); return false; }
-    if (listen(fd, 8) != 0) { close(fd); return false; }
+    addr.sin_port   = ::htons(IX_REMOTE_PORT);
+    addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);   // 127.0.0.1 only
+    if (::bind(fd, (sockaddr*)&addr, sizeof(addr)) != 0) { ::close(fd); return false; }
+    if (::listen(fd, 8) != 0) { ::close(fd); return false; }
 
     g_listenFd = fd;
     g_token = make_token();
