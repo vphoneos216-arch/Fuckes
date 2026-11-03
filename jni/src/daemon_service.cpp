@@ -99,6 +99,10 @@ static const char* CHEAT_LOG = INX_MODULE_DIR "/webroot/cheat.log";
 // every poll cycle.
 static const int RESTART_BACKOFF_SECS = 60;
 
+// How many times "Don't stop" reloads the driver and retries before it
+// gives up and lets the normal backoff take over.
+static const int MAX_DRIVER_RETRIES = 3;
+
 // Consecutive polls the target must be missing from the foreground before the
 // game counts as closed. Focus flickers for a poll during dialogs and system
 // windows; without this the menu was killed in the middle of a match.
@@ -352,6 +356,18 @@ static void load_driver(const std::string& driver_field) {
     usleep(500 * 1000); // 0.5s
 }
 
+// Did the binary quit because of the driver? wanbai.h prints exactly these
+// when no driver is chosen or the chosen one will not initialise, so the
+// daemon can tell a driver problem from any other exit.
+static bool cheat_log_blames_driver() {
+    std::ifstream f(CHEAT_LOG);
+    if (!f.good()) return false;
+    std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return all.find("No driver selected")        != std::string::npos
+        || all.find("failed to initialise")      != std::string::npos
+        || all.find("Please insert or load driver") != std::string::npos;
+}
+
 // ─── binary start / stop ─────────────────────────────────────
 // NOTE (fixed bug): optimum_bar/optimum_vol run their OWN independent
 // login (Authentication::run_silent(argv[1])) — same dual-login
@@ -507,6 +523,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool   inGame           = false;
     int    missCount        = 0;
     unsigned pollTick       = 0;
+    int      driverRetries  = 0;
 
     for (;;) {
         json cfg = load_config_cached();
@@ -526,6 +543,18 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // stay in place; this only decides whether launching is worth trying.
         std::string saved_key   = cfg.value("key", "");
         std::string login_state = cfg.value("status", "");
+
+        // Remote control: the whole point is to drive the menu from a browser,
+        // which means leaving the game. Stopping the binary on foreground loss
+        // would kill the server the browser is talking to — that is exactly
+        // why the page came back "connection refused". With remote on, the
+        // binary is only stopped when the game process itself is gone.
+        const bool remoteOn = cfg.value("remote_control", false);
+
+        // "Don't stop": if the binary quits because the driver is not there,
+        // run the driver and try again at once instead of waiting out the
+        // backoff.
+        const bool driverKeepAlive = cfg.value("driver_keep_alive", false);
         const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
 
         // The cheap part, every tick: is the game running at all.
@@ -541,7 +570,32 @@ int main(int /*argc*/, char* /*argv*/[]) {
         if (launchedByDaemon && !lastBinaryName.empty() && !is_running(lastBinaryName)) {
             daemon_log("%s exited on its own — reason in webroot/cheat.log", lastBinaryName.c_str());
             unlink(pid_file_path(lastBinaryName).c_str());
-            if (time(nullptr) - launchedAt < 30) lastStartAttempt = time(nullptr);
+
+            // "Don't stop": the binary ran without its driver. Load the driver
+            // and go straight round again rather than sitting out the backoff.
+            // Bounded, so a driver that can never load cannot spin forever.
+            bool retryNow = false;
+            if (driverKeepAlive && cheat_log_blames_driver()) {
+                if (driverRetries < MAX_DRIVER_RETRIES) {
+                    ++driverRetries;
+                    if (!driver.empty() && driver[0] == '/') {
+                        daemon_log("Binary had no driver — loading %s and retrying (%d/%d)",
+                                   driver.c_str(), driverRetries, MAX_DRIVER_RETRIES);
+                        load_driver(driver);
+                    } else {
+                        daemon_log("Binary had no driver — retrying (%d/%d)",
+                                   driverRetries, MAX_DRIVER_RETRIES);
+                    }
+                    retryNow = true;
+                } else {
+                    daemon_log("Driver still not ready after %d tries — backing off",
+                               MAX_DRIVER_RETRIES);
+                }
+            }
+
+            if (retryNow)                              lastStartAttempt = 0;
+            else if (time(nullptr) - launchedAt < 30)  lastStartAttempt = time(nullptr);
+
             launchedByDaemon = false;
             lastBinaryName.clear();
         }
@@ -550,6 +604,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // time, so a past failure can never block the menu on the next open.
         if (justAppeared) {
             lastStartAttempt = 0;
+            driverRetries    = 0;   // a new game session starts fresh
             missCount        = 0;
             inGame           = true;   // the game it just started is on top
             daemon_log("Game process appeared (pid %d) — starting binary now", (int)targetPid);
@@ -602,8 +657,10 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 lastWarnedTarget = target;
             }
         } else if (launchedByDaemon && !lastBinaryName.empty() &&
-                   (!targetAlive || !inGame)) {
-            // The game closed, or the player left it for long enough.
+                   (!targetAlive || (!inGame && !remoteOn))) {
+            // The game closed, or the player left it for long enough — but
+            // with remote control on, leaving the game is expected, so only a
+            // closed game stops the binary.
             if (is_running(lastBinaryName)) {
                 daemon_log(targetAlive ? "Player left the game — stopping binary"
                                        : "Game closed — stopping binary");
