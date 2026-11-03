@@ -44,7 +44,12 @@
    Binary control:
    ─────────────────
    Binaries live at /data/adb/modules/inx_mods/bin/arm64-v8a/<name>.
-   Launched with: chmod 777, chown 0:0, then execl detached child.
+   Launched with: chmod 0755, chown 0:0, then execl detached child.
+   0755 and not 777: anything this daemon executes, it executes as root.
+   A world-writable file that root then runs can be rewritten by any
+   process that can reach it (a driver usually sits somewhere like
+   /data/local/tmp), which hands that process root on the next launch.
+   Root-owned 0755 keeps it executable while only root can change it.
    PID written to /data/adb/modules/inx_mods/config/<name>.pid.
 
    Compile-time override:
@@ -335,8 +340,12 @@ static void load_driver(const std::string& driver_field) {
         return;
     }
 
-    // Ensure executable
-    chmod(driver_path.c_str(), 0777);
+    // Executable, root-owned, and NOT world-writable: this file is about to
+    // be run as root, and a driver path is user-supplied (typically under
+    // /data/local/tmp, which every process on the device can reach). At 0777
+    // any app could overwrite it between loads and get its own code run as
+    // root on the next game open.
+    chmod(driver_path.c_str(), 0755);
     chown(driver_path.c_str(), 0, 0);
 
     daemon_log("Loading driver: %s", driver_path.c_str());
@@ -396,7 +405,8 @@ static bool start_binary(const std::string& bin_name, const std::string& key) {
         return false;
     }
 
-    chmod(bin_path.c_str(), 0777);
+    // Root-owned 0755, same reasoning as load_driver() above.
+    chmod(bin_path.c_str(), 0755);
     chown(bin_path.c_str(), 0, 0);
 
     pid_t child = fork();
