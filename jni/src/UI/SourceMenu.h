@@ -741,7 +741,7 @@ inline void RenderSingleMenuWindow() {
                        switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 400 * scale);
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 450 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -749,18 +749,23 @@ inline void RenderSingleMenuWindow() {
                     float row    = 48 * scale;
                     float col    = 236 * scale;  /* fits the content column */
 
-                    // Row 0 — Silent Aim (Aim Lock + Aimbot removed from UI)
+                    // Row 0 — Silent Aim | Aim Lock
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
+                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
+                    ImGui::Checkbox1("Aim Lock", &AimLock);
+                    g_Cfg.aimCollider = AimLock;
+                    AimLockNew = AimLock;
 
-                    // Aimbot checkbox removed — feature disabled, forced off below.
-                    Aimbot = false;
-
-                    // Row 1 — Hardware BT + FOV Circle
+                    // Row 1 — Aimbot | Hardware BT
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
-                    ImGui::Checkbox1("Hardware BT", &HardwareBT);
+                    ImGui::Checkbox1("Aimbot", &Aimbot);
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
+                    ImGui::Checkbox1("Hardware BT", &HardwareBT);
+
+                    // Row 2 — FOV Circle (moved down one row)
+                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
                     ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
 
                     // ── Hardware BT mode: Headshot / Body / Legit ──
@@ -768,13 +773,13 @@ inline void RenderSingleMenuWindow() {
                         g_Cfg.chestRateSave = 1;
 
                     dl->AddText(NULL, 22.0f * scale,
-                                ImVec2(startX, startY + row * 3.1f),
+                                ImVec2(startX, startY + row * 4.1f),
                                 COL_TXT_MID((int)(255 * uiAlpha)), "Hardware BT Mode");
 
                     /* Hardware BT: Body + Legit only. Aim Silent alone = 10/10 headshot */
                     const char* btModes[] = { "Body", "Legit" };
                     const int btVals[] = { 2, 3 };
-                    float modeY = startY + row * 3.75f;
+                    float modeY = startY + row * 4.75f;
                     float modeW = 150 * scale;
                     float modeH = 36 * scale;
                     float modeGap = 20 * scale;
@@ -831,10 +836,7 @@ inline void RenderSingleMenuWindow() {
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
                     g_Cfg.aimSilent   = AimSilent;
-                    // Aim Lock removed from UI — keep collider off
-                    AimLock           = false;
-                    g_Cfg.aimCollider = false;
-                    AimLockNew        = false;
+                    // AimLock / AimLockNew / aimCollider synced from checkbox above
                     BrutalBT          = g_Cfg.brutalBT;
                     aimBotBoneIndex   = 0;
                     showAimLine       = g_Cfg.showAimLine;
@@ -843,7 +845,7 @@ inline void RenderSingleMenuWindow() {
                     if (chestRate > 3) chestRate = 3;
                     /* threads are idempotent (guarded by running flags) */
                     StartSilentAimThread();
-                    // Aimbot feature removed from the menu — never started.
+                    StartAimbotThread();
                     StartHardwareBTThread();
                 }
 
