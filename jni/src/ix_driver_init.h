@@ -174,6 +174,72 @@ static inline bool ix_set_show_in_capture(bool on) {
     return out.good();
 }
 
+// ── REMOTE CONTROL — same config.json, key "remote_control" ──
+// On, the in-game menu is not drawn and the controls are driven from the
+// page the binary serves on 127.0.0.1 instead. Read once at startup.
+static inline bool ix_get_remote_control() {
+    if (const char* e = getenv("IX_REMOTE_CONTROL"))
+        if (*e) return (*e == '1' || *e == 't' || *e == 'T');
+
+    const char* p = getenv("IX_CONFIG");
+    std::ifstream f(p && *p ? p : IX_CONFIG_PATH);
+    if (!f.good()) return false;
+
+    std::string all((std::istreambuf_iterator<char>(f)),
+                    std::istreambuf_iterator<char>());
+    size_t k = all.find("\"remote_control\"");
+    if (k == std::string::npos) return false;
+    size_t c = all.find(':', k);
+    if (c == std::string::npos) return false;
+    for (size_t i = c + 1; i < all.size(); ++i) {
+        const char ch = all[i];
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '"') continue;
+        return (ch == 't' || ch == 'T' || ch == '1');
+    }
+    return false;
+}
+
+// The page needs the token the binary generated, so it is written back for
+// the module's WebUI to read and show as a link.
+static inline bool ix_write_remote_url(const std::string& url) {
+    const char* envp = getenv("IX_CONFIG");
+    const std::string path = (envp && *envp) ? envp : IX_CONFIG_PATH;
+
+    std::string all;
+    {
+        std::ifstream f(path);
+        if (!f.good()) return false;
+        all.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    if (all.empty()) return false;
+
+    const std::string val = "\"" + url + "\"";
+    size_t k = all.find("\"remote_url\"");
+    if (k != std::string::npos) {
+        size_t c = all.find(':', k);
+        if (c == std::string::npos) return false;
+        size_t b = c + 1;
+        while (b < all.size() && (all[b] == ' ' || all[b] == '\t')) ++b;
+        size_t e = b;
+        if (e < all.size() && all[e] == '"') { ++e; while (e < all.size() && all[e] != '"') ++e; ++e; }
+        else while (e < all.size() && all[e] != ',' && all[e] != '}' && all[e] != '\n') ++e;
+        all.replace(b, e - b, val);
+    } else {
+        size_t close = all.rfind('}');
+        if (close == std::string::npos) return false;
+        size_t prev = all.find_last_not_of(" \t\r\n", close - 1);
+        if (prev == std::string::npos) return false;
+        const bool needComma = (all[prev] != '{');
+        all.insert(prev + 1, std::string(needComma ? "," : "") +
+                             "\n    \"remote_url\": " + val);
+    }
+
+    std::ofstream out(path, std::ios::trunc);
+    if (!out.good()) return false;
+    out << all;
+    return out.good();
+}
+
 static inline std::string ix_get_selected_driver() {
     int n = ix_get_driver_choice();
     switch (n) {

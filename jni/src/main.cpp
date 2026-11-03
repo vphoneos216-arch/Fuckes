@@ -2033,6 +2033,88 @@ static void settings_tab(float a){
 
 // ── Source project NEW UI ────────────────────────────────────
 #include "UI/SourceMenu.h"
+#include "ix_remote.h"
+
+// ── Remote control wiring ───────────────────────────────────
+// The table below is the menu's own control set, nothing more: every entry
+// points at the exact variable the corresponding switch or slider in
+// SourceMenu.h writes, with the same range. Adding something here that the
+// menu does not have would let the page drive a feature the menu cannot.
+static void ix_remote_register_controls() {
+    // ESP — SourceMenu.h page 1
+    ix_remote_add("esp_box",       "ESP", "Box",       IXC_BOOL, &g_Cfg.showBox);
+    ix_remote_add("esp_skeleton",  "ESP", "Skeleton",  IXC_BOOL, &g_Cfg.showSkeleton);
+    ix_remote_add("esp_name",      "ESP", "Name",      IXC_BOOL, &g_Cfg.showName);
+    ix_remote_add("esp_health",    "ESP", "Health",    IXC_BOOL, &g_Cfg.showHealth);
+    ix_remote_add("esp_distance",  "ESP", "Distance",  IXC_BOOL, &g_Cfg.showDistance);
+    ix_remote_add("esp_line",      "ESP", "ESP Line",  IXC_BOOL, &g_Cfg.showLine);
+    ix_remote_add("esp_360",       "ESP", "360 Alert", IXC_BOOL, &g_Cfg.is3600);
+    ix_remote_add("esp_textsize",  "ESP", "Text Size", IXC_INT,  &textSize, 10.f, 50.f, 1.f);
+
+    // Aim — page 2
+    ix_remote_add("aim_silent",    "Aim", "Aim Silent",      IXC_BOOL, &AimSilent,
+                  0, 1, 1, nullptr, "Head only");
+    ix_remote_add("aim_hwbt",      "Aim", "Hardware BT",     IXC_BOOL, &HardwareBT);
+    ix_remote_add("aim_fovcircle", "Aim", "Show FOV Circle", IXC_BOOL, &g_Cfg.showFovCircle);
+    ix_remote_add("aim_mode",      "Aim", "Hardware BT Mode", IXC_ENUM, &g_Cfg.chestRateSave,
+                  1.f, 3.f, 1.f);
+    ix_remote_add("aim_fov",       "Aim", "FOV Range",       IXC_FLOAT, &g_Cfg.aimFovUI,
+                  1.f, 360.f, 1.f);
+
+    // Exploit — page 3
+    ix_remote_add("exp_pull",       "Exploit", "Enemies pull", IXC_BOOL,  &AimMagnet);
+    ix_remote_add("exp_ghost",      "Exploit", "Ghost Hack",   IXC_BOOL,  &GhostHack);
+    ix_remote_add("exp_norecoil",   "Exploit", "No Recoil",    IXC_BOOL,  &NoRecoil);
+    ix_remote_add("exp_noreload",   "Exploit", "No Reload",    IXC_BOOL,  &NoReload);
+    ix_remote_add("exp_floatpull",  "Exploit", "Float: pull",  IXC_BOOL,  &g_ExploitFloatUI);
+    ix_remote_add("exp_floatghost", "Exploit", "Float: Ghost", IXC_BOOL,  &g_ExploitFloatGhost);
+    ix_remote_add("exp_pullrange",  "Exploit", "Pull Range",   IXC_FLOAT, &MagnetMaxDist,
+                  1.f, 8.f, 0.1f, " m");
+}
+
+// The menu applies these every frame inside whichever page is open. With the
+// menu not drawn at all, they have to run here or a change made from the page
+// would never reach the feature that reads it.
+static void ix_apply_control_sync() {
+    showLine     = g_Cfg.showLine;
+    showBox      = g_Cfg.showBox;
+    showSkeleton = g_Cfg.showSkeleton;
+    showName     = g_Cfg.showName;
+    showHealth   = g_Cfg.showHealth;
+    showDistance = g_Cfg.showDistance;
+    is3600       = g_Cfg.is3600;
+    Enable = (showLine || showBox || showSkeleton || showName ||
+              showHealth || showDistance || showCount);
+
+    g_ShowFovOverlay  = g_Cfg.showFovCircle;
+    AimFov            = g_Cfg.aimFovUI;
+    g_Cfg.aimSilent   = AimSilent;
+    AimLock           = false;
+    g_Cfg.aimCollider = false;
+    AimLockNew        = false;
+    BrutalBT          = g_Cfg.brutalBT;
+    aimBotBoneIndex   = 0;
+    showAimLine       = g_Cfg.showAimLine;
+    chestRate         = g_Cfg.chestRateSave;
+    if (chestRate < 1) chestRate = 1;
+    if (chestRate > 3) chestRate = 3;
+    StartSilentAimThread();
+    StartHardwareBTThread();
+}
+
+// Licence details, so the page's Info tab shows what Config shows.
+static void ix_remote_publish_info() {
+    _SrvData sd;
+    { std::lock_guard<std::mutex> lk(g_SrvMtx); sd = g_Srv; }
+    char buf[64];
+    std::vector<IxInfoRow> rows;
+    rows.push_back({"Seller", sd.seller});
+    rows.push_back({"Expiry", sd.expiry});
+    snprintf(buf, sizeof(buf), "%d", sd.days_total);  rows.push_back({"Total Days", buf});
+    snprintf(buf, sizeof(buf), "%d Days", sd.days_remain); rows.push_back({"Remaining", buf});
+    ix_remote_set_info(rows);
+}
+
 
 void RenderMenu(){
     if(!g_FloatingSystemReady||!g_Landscape2SecDone) return;
@@ -2055,6 +2137,32 @@ void RenderMenu(){
     if(ui::bar::g_sw < 1.f){
         ui::bar::g_sw = (float)abs_ScreenX;
         ui::bar::g_sh = (float)abs_ScreenY;
+    }
+
+    // ── Remote control ──────────────────────────────────────
+    // Started once, on the first frame, if the module asked for it. While it
+    // is on the menu is not drawn at all: the bar, the panel and the volume
+    // path are all skipped, and the page drives the same variables instead.
+    static bool remoteInit = false;
+    if (!remoteInit) {
+        remoteInit = true;
+        if (ix_get_remote_control()) {
+            ix_remote_register_controls();
+            if (ix_remote_start()) {
+                char url[160];
+                snprintf(url, sizeof(url), "http://127.0.0.1:%d/?t=%s",
+                         IX_REMOTE_PORT, ix_remote_token().c_str());
+                ix_write_remote_url(url);   // the module's WebUI shows this
+            }
+        }
+    }
+
+    if (ix_remote_enabled()) {
+        ix_remote_apply();          // whatever the page changed
+        ix_apply_control_sync();    // the syncs the menu would have run
+        ix_remote_publish_info();
+        HideMenuWindow();
+        return;                     // no bar, no panel
     }
 
     if(g_MenuOpenMode == "bar"){
