@@ -53,6 +53,27 @@ def _is_target(func) -> bool:
     hay  = name + "||" + dem
     return any(t in hay for t in AUTH_FUNCS)
 
+# [CRASH FIX 2026-11-08] Device-confirmed, not guessed: login works on the
+# FIRST run (key passed on argv -> run_silent() takes the keyNameIn-non-empty
+# branch) and crashes with SIGBUS on the NEXT run (no argv key -> same
+# run_silent(), but now the kd_load_saved_key() branch). Both runs execute
+# the exact same binary and the exact same flattened run_silent(); only the
+# branch taken differs. That pins the bad flatten_cfg dispatch case to
+# run_silent() specifically (tombstone: frame pc 0x232714, `ldr x1,[lit];
+# blr x1`, literal bytes 1f01096b 00030054 = the exact fault address in the
+# crash register dump). Excluding ONLY run_silent from the three passes that
+# synthesize new indirect branches removes that bad dispatch case. Every
+# other AUTH_FUNCS function — all the crypto, the signature verifiers, the
+# key storage, the integrity gate, perform_auth itself — keeps full
+# flatten_cfg / break_control_flow / anti_hooking exactly as before.
+# run_silent still gets obfuscate_constants and obfuscate_string below.
+def _is_flatten_target(func) -> bool:
+    name = (getattr(func, "name", "") or "")
+    dem  = (getattr(func, "demangled_name", "") or "")
+    if "run_silent" in name or "run_silent" in dem:
+        return False
+    return _is_target(func)
+
 class KdConfig(omvll.ObfuscationConfig):
     def __init__(self):
         super().__init__()
@@ -61,11 +82,11 @@ class KdConfig(omvll.ObfuscationConfig):
     # function's clean if/else graph into a dispatch loop that is very hard
     # to follow in Ghidra.
     def flatten_cfg(self, mod, func):
-        return _is_target(func)
+        return _is_flatten_target(func)
 
     # Insert bogus-but-equivalent control flow (opaque branches).
     def break_control_flow(self, mod, func):
-        return _is_target(func)
+        return _is_flatten_target(func)
 
     # Replace integer constants with opaque computations, so the auth
     # magic values / flags aren't visible as plain immediates.
@@ -74,7 +95,7 @@ class KdConfig(omvll.ObfuscationConfig):
 
     # O-MVLL's own anti-hooking insertion on the hottest function.
     def anti_hooking(self, mod, func):
-        return _is_target(func)
+        return _is_flatten_target(func)
 
     # Extra string encoding INSIDE the auth functions only (oxorany already
     # covers strings globally; this is a second layer where it matters).
