@@ -1014,7 +1014,7 @@ public:
         // (config.json "driver", read into g_driver_choice by main).
         // No automatic scan of other backends.
         const int choice = g_driver_choice;
-        if (choice < 1 || choice > 10) {
+        if (choice < 1 || choice > 12) {
             printf("[-] No driver selected. Choose one in the WebUI and launch again.\n");
             fflush(stdout);
             exit(0);
