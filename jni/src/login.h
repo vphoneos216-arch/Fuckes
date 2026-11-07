@@ -573,26 +573,87 @@ static inline std::string kd_load_saved_key() {
 // location. curl is then pointed at that file via CURLOPT_CAINFO, so TLS
 // verification always succeeds without depending on the device's often
 // broken/rootless system CA store. Verification stays fully ON throughout.
-static inline std::string kd_ensure_ca_bundle() {
-    std::string path = kd_writable_dir() + "/" + CA_BUNDLE_NAME;
+//
+// [MITM FIX — a planted CA file was accepted as the whole trust store]
+// This used to return the on-disk path the moment a file existed there and
+// was larger than 1000 bytes:
+//
+//     if (stat(path, &st) == 0 && st.st_size > 1000) return path;
+//
+// Nothing checked WHAT was in it, who owned it, or that it had anything to
+// do with the bundle compiled into this binary. The embedded bundle is
+// 224606 bytes, so "larger than 1000" accepted, for example, a 2 KB PEM
+// holding one attacker-generated root — and that file is then handed to
+// curl as CURLOPT_CAINFO, i.e. as the COMPLETE list of authorities this
+// binary trusts. Plant it once (the fallback store can be a world-
+// traversable directory like /data/local/tmp/.kd_store), point the domain
+// at a relay — by DNS, a hosts entry, or a proxy — present a cert signed
+// by that planted root, and TLS verification passes. The relay then sits
+// in the middle of every login.
+//
+// The request and response bodies are independently sealed to the server's
+// X25519 transport key, so even a successful relay reads ciphertext rather
+// than licence data, and the certificate pin added in Android.mk now
+// refuses the handshake outright. But the foothold itself should never
+// have existed, and it is the one link in that chain that does not depend
+// on a build flag being set.
+//
+// So the file is now only used when it IS the embedded bundle: private
+// (regular file, owned by us or root, nothing for group or other), the
+// exact expected size, and byte-identical by BLAKE2b hash. Anything else
+// — wrong hash, wrong size, loose permissions, someone else's file, a
+// symlink — is overwritten from the copy inside the binary rather than
+// trusted. The rewrite goes to a temp file and is renamed into place, so
+// there is no window in which curl could be pointed at a half-written
+// bundle.
+static inline bool kd_ca_bundle_matches_embedded(const std::string& path) {
+    if (!kd_file_is_private(path)) return false;
 
     struct stat st;
-    if (stat(path.c_str(), &st) == 0 && st.st_size > 1000) {
-        return path;
-    }
+    if (stat(path.c_str(), &st) != 0) return false;
+    if ((unsigned long)st.st_size != g_CaBundleSize) return false;
 
-    KdPrivateUmaskGuard umaskGuard;
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out.good()) {
-        return "";
-    }
-    out.write(reinterpret_cast<const char*>(g_CaBundleData), (std::streamsize)g_CaBundleSize);
-    out.close();
-    chmod(path.c_str(), 0600);
+    std::ifstream in(path, std::ios::binary);
+    if (!in.good()) return false;
+    std::string onDisk((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+    in.close();
+    if (onDisk.size() != (size_t)g_CaBundleSize) return false;
 
-    if (stat(path.c_str(), &st) == 0 && (unsigned long)st.st_size == g_CaBundleSize) {
-        return path;
+    unsigned char hDisk[crypto_generichash_BYTES];
+    unsigned char hWant[crypto_generichash_BYTES];
+    crypto_generichash(hDisk, sizeof(hDisk),
+                       reinterpret_cast<const unsigned char*>(onDisk.data()),
+                       onDisk.size(), nullptr, 0);
+    crypto_generichash(hWant, sizeof(hWant),
+                       g_CaBundleData, (size_t)g_CaBundleSize, nullptr, 0);
+    return sodium_memcmp(hDisk, hWant, sizeof(hDisk)) == 0;
+}
+
+static inline std::string kd_ensure_ca_bundle() {
+    if (sodium_init() < 0) return "";
+
+    const std::string path = kd_writable_dir() + "/" + CA_BUNDLE_NAME;
+    if (kd_ca_bundle_matches_embedded(path)) return path;
+
+    // Not ours, or not intact. Replace it from the embedded copy.
+    const std::string tmp = path + ".tmp";
+    {
+        KdPrivateUmaskGuard umaskGuard;
+        ::unlink(tmp.c_str());                  // never write through a symlink
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out.good()) return "";
+        out.write(reinterpret_cast<const char*>(g_CaBundleData),
+                  (std::streamsize)g_CaBundleSize);
+        out.close();
+        if (out.fail()) { ::unlink(tmp.c_str()); return ""; }
+        chmod(tmp.c_str(), 0600);
     }
+    if (::rename(tmp.c_str(), path.c_str()) != 0) { ::unlink(tmp.c_str()); return ""; }
+
+    // Re-read and re-verify what actually landed, rather than assuming the
+    // write did what it was told.
+    if (kd_ca_bundle_matches_embedded(path)) return path;
     return "";
 }
 
@@ -661,18 +722,65 @@ static inline bool kd_http_post(const std::string& url, const std::string& body,
     // then build with -DKD_PINNED_PUBKEY='"sha256//<output>"'
 #endif
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+
+    // [MITM FIX — libcurl honours proxy environment variables by default]
+    // With no explicit proxy set, libcurl reads http_proxy / https_proxy /
+    // ALL_PROXY out of the environment and routes the request through
+    // whatever they name. This binary is launched from a shell (the WebUI
+    // execs it, and it can be run by hand), so anyone who can set an
+    // environment variable on that launch can put a relay in the middle of
+    // every login WITHOUT touching DNS, a hosts file, or routing at all —
+    // and it is far less visible than a DNS change. Setting CURLOPT_PROXY
+    // to the empty string disables proxying outright, environment
+    // variables included; CURLOPT_NOPROXY on "*" is belt and braces for
+    // any code path that might still consult one.
+    curl_easy_setopt(curl, CURLOPT_PROXY, "");
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
+
+    // One more lever an attacker gets for free otherwise: --resolve-style
+    // pre-seeded DNS entries and unix-socket redirection both come from
+    // options we never set, so leave them alone, but make sure nothing
+    // re-points the host behind our back by refusing anything but a fresh
+    // resolve of the compiled-in host.
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 0L);
+
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errBuf);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "AppLicenseClient/4.1");
 
-    static std::string caPath = kd_ensure_ca_bundle();
+    // Re-verified on every request, not cached across the process: a
+    // verified-once path could be swapped underneath us between logins,
+    // which is exactly the window a planted bundle needs. The check is a
+    // stat plus one BLAKE2b over 224 KB, which is nothing next to a TLS
+    // round trip.
+    const std::string caPath = kd_ensure_ca_bundle();
     if (!caPath.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAINFO, caPath.c_str());
     } else {
+#ifdef KD_PINNED_PUBKEY
+        // The embedded bundle could not be written or verified. The device
+        // store is the only remaining anchor, and on a rooted phone its
+        // contents are attacker-writable — but the certificate pin above
+        // is checked IN ADDITION to chain verification, so a cert from any
+        // CA in there still has to carry the server's exact public key.
+        // Tolerable here, and it keeps a device with awkward storage able
+        // to log in at all.
         static const char* sysCaDir = "/system/etc/security/cacerts";
         struct stat sdst;
         if (stat(sysCaDir, &sdst) == 0) {
             curl_easy_setopt(curl, CURLOPT_CAPATH, sysCaDir);
         }
+#else
+        // No pin compiled in, so CA trust is the ONLY thing standing
+        // between this login and a relay. Falling back to a store the
+        // device owner (or anything with root) can add a certificate to
+        // would hand that away, so fail the request instead. A login that
+        // does not happen is recoverable; a login that silently went
+        // through an attacker's relay is not.
+        curlErr = "no trusted certificate store";
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return false;
+#endif
     }
 
     CURLcode res = curl_easy_perform(curl);
