@@ -190,6 +190,27 @@ static std::string run_shell(const std::string& cmd) {
 // ─── config ──────────────────────────────────────────────────
 // Re-parses config.json only when it has been written since the last read.
 // At a one-second tick, parsing it every time is pure waste.
+// config.json is 0644 and the WebUI writes it too, so a field can arrive
+// with the wrong JSON type. nlohmann's value() throws json::type_error in
+// that case, and the only try/catch in this file is inside the loader
+// above - so a "key": null or a numeric "status" would take an UNCAUGHT
+// exception out of the poll loop, abort the daemon, and have the watchdog
+// restart it straight into the same crash. Every config string is read
+// through this instead: wrong type or missing key both give the fallback.
+static std::string cfg_str(const json& cfg, const char* key,
+                           const char* fallback = "") {
+    auto it = cfg.find(key);
+    if (it != cfg.end() && it->is_string()) return it->get<std::string>();
+    return std::string(fallback);
+}
+
+// Same reasoning for the booleans the poll loop reads.
+static bool cfg_bool(const json& cfg, const char* key, bool fallback = false) {
+    auto it = cfg.find(key);
+    if (it != cfg.end() && it->is_boolean()) return it->get<bool>();
+    return fallback;
+}
+
 static json load_config_cached() {
     static json   cached = json::object();
     static time_t cachedMtime = 0;
@@ -528,9 +549,9 @@ static void remote_register_controls() {
 // writes — the same values the module's WebUI shows.
 static void ix_remote_publish_info_from(const json& cfg) {
     static std::string lastKey;
-    const std::string key = cfg.value("key", "");
-    const std::string seller = cfg.value("seller", "");
-    const std::string validity = cfg.value("validity", "");
+    const std::string key = cfg_str(cfg, "key", "");
+    const std::string seller = cfg_str(cfg, "seller", "");
+    const std::string validity = cfg_str(cfg, "validity", "");
     const std::string sig = key + "|" + seller + "|" + validity;
     if (sig == lastKey) return;            // only rebuild when it changes
     lastKey = sig;
@@ -538,8 +559,8 @@ static void ix_remote_publish_info_from(const json& cfg) {
     std::vector<IxInfoRow> rows;
     rows.push_back({"Seller",   seller.empty()   ? "-" : seller});
     rows.push_back({"Expiry",   validity.empty() ? "-" : validity});
-    rows.push_back({"Status",   cfg.value("status", "") == "success" ? "Active" : "Not logged in"});
-    rows.push_back({"Driver",   cfg.value("driver", "").empty() ? "none" : cfg.value("driver", "")});
+    rows.push_back({"Status",   cfg_str(cfg, "status", "") == "success" ? "Active" : "Not logged in"});
+    rows.push_back({"Driver",   cfg_str(cfg, "driver", "").empty() ? "none" : cfg_str(cfg, "driver", "")});
     ix_remote_set_info(rows);
 }
 
@@ -612,32 +633,32 @@ int main(int /*argc*/, char* /*argv*/[]) {
         json cfg = load_config_cached();
 
         // Determine target package (default: com.dts.freefiremax)
-        std::string target = cfg.value("target_package", DEFAULT_TARGET);
+        std::string target = cfg_str(cfg, "target_package", DEFAULT_TARGET);
         if (target.empty()) target = DEFAULT_TARGET;
 
         // One binary only. Bar vs Volume is config "menu_open", which the
         // binary reads itself.
         const std::string bin_name = "optimum_bar";
 
-        std::string driver = cfg.value("driver", "");
+        std::string driver = cfg_str(cfg, "driver", "");
 
         // Verified license key — written by inx_login_@api on success, and
         // re-verified by the binary itself against the server. Both logins
         // stay in place; this only decides whether launching is worth trying.
-        std::string saved_key   = cfg.value("key", "");
-        std::string login_state = cfg.value("status", "");
+        std::string saved_key   = cfg_str(cfg, "key", "");
+        std::string login_state = cfg_str(cfg, "status", "");
 
         // Remote control: the whole point is to drive the menu from a browser,
         // which means leaving the game. Stopping the binary on foreground loss
         // would kill the server the browser is talking to — that is exactly
         // why the page came back "connection refused". With remote on, the
         // binary is only stopped when the game process itself is gone.
-        const bool remoteOn = cfg.value("remote_control", false);
+        const bool remoteOn = cfg_bool(cfg, "remote_control", false);
 
         // "Don't stop": if the binary quits because the driver is not there,
         // run the driver and try again at once instead of waiting out the
         // backoff.
-        const bool driverKeepAlive = cfg.value("driver_keep_alive", false);
+        const bool driverKeepAlive = cfg_bool(cfg, "driver_keep_alive", false);
         const bool  loggedIn    = (login_state == "success") && !saved_key.empty();
 
         // The cheap part, every tick: is the game running at all.
@@ -775,7 +796,17 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
         // Start the server the first time the module asks for it, whenever
         // that happens — no reboot needed.
-        if (!remoteStarted && cfg.value("remote_control", false)) {
+        // Remote Control switched off: actually stop the server instead of
+        // leaving it listening on the same token for the life of the
+        // daemon. Turning it back on mints a fresh token and a fresh link.
+        if (remoteStarted && !cfg_bool(cfg, "remote_control", false)) {
+            ix_remote_stop();
+            ix_write_remote_url("");
+            remoteStarted = false;
+            daemon_log("Remote control stopped (switched off)");
+        }
+
+        if (!remoteStarted && cfg_bool(cfg, "remote_control", false)) {
             ix_controls_load(g_ctlState);          // pick up where it left off
             remote_register_controls();
             if (ix_remote_start()) {
@@ -807,6 +838,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 daemon_log("Remote changed a setting");
             }
             ix_remote_publish_info_from(cfg);
+            // The remote page's own login checks against this. Re-published
+            // every poll so it follows config.json: a new licence key, or
+            // the module logging out, invalidates every remote session.
+            ix_remote_set_key(cfg_str(cfg, "status", "") == "success"
+                                  ? cfg_str(cfg, "key", "")
+                                  : std::string(""));
         }
 
         ++pollTick;

@@ -87,6 +87,29 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:none;border-ra
   font:600 13px/1 system-ui;transition:transform .26s;z-index:50;box-shadow:0 8px 26px rgba(0,0,0,.5)}
 #toast.on{transform:translateX(-50%) translateY(0)}
 #toast.bad{border-color:rgba(232,38,58,.55);color:var(--accent-hi)}
+/* login gate */
+#gate{display:none;padding:34px 16px 0}
+#gate.on{display:block}
+.lcard{background:var(--card);border:1px solid var(--hair);border-radius:16px;padding:22px 18px 20px;
+  box-shadow:0 10px 34px rgba(0,0,0,.42)}
+.lcard h2{font:700 16px/1 system-ui;margin:0 0 6px}
+.lcard p{font:500 12.5px/1.55 system-ui;color:var(--low);margin:0 0 18px}
+.lcard label{display:block;font:600 11px/1 system-ui;color:var(--mid);
+  letter-spacing:.5px;margin:0 0 8px}
+#lkey{width:100%;background:rgba(245,245,248,.05);border:1px solid var(--hair);border-radius:11px;
+  color:var(--txt);font:600 15px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  padding:14px 14px;outline:none;letter-spacing:1px;text-transform:uppercase}
+#lkey:focus{border-color:rgba(232,38,58,.55);box-shadow:0 0 0 3px rgba(232,38,58,.12)}
+#lgo{width:100%;margin-top:14px;border:none;border-radius:11px;color:#fff;cursor:pointer;
+  font:700 14px/1 system-ui;padding:15px 0;
+  background:linear-gradient(90deg,var(--accent),var(--ember));box-shadow:0 0 14px rgba(232,38,58,.38)}
+#lgo:disabled{opacity:.55;cursor:default;box-shadow:none}
+#lmsg{min-height:17px;margin-top:12px;font:600 12px/1.4 system-ui;color:var(--accent-hi)}
+#shell{display:none}
+#shell.on{display:block}
+.logout{margin:18px 2px 0;text-align:center}
+.logout button{background:none;border:1px solid var(--hair);color:var(--mid);
+  font:600 12px/1 system-ui;padding:11px 20px;border-radius:11px;cursor:pointer}
 </style></head>
 <body>
 <header>
@@ -101,23 +124,47 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:none;border-ra
       <div class="name">Invisible<i>X</i></div>
       <div class="sub">REMOTE CONTROL</div>
     </div>
-    <div class="pill"><span class="dot"></span><span id="link">Connected</span></div>
+    <div class="pill"><span class="dot"></span><span id="link">Locked</span></div>
   </div>
-  <nav id="tabs"></nav>
+  <nav id="tabs" style="display:none"></nav>
 </header>
-<main id="pages"></main>
+
+<section id="gate">
+  <div class="lcard">
+    <h2>Enter your licence key</h2>
+    <p>The same key you logged into the module with. The link alone does not
+       unlock the controls.</p>
+    <label for="lkey">LICENCE KEY</label>
+    <input id="lkey" type="password" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" inputmode="text" enterkeyhint="go" placeholder="XXXX-XXXX-XXXX">
+    <button id="lgo">Unlock</button>
+    <div id="lmsg"></div>
+  </div>
+</section>
+
+<main id="shell">
+  <div id="pages"></div>
+  <div class="logout"><button id="lout">Lock again</button></div>
+</main>
 <div id="toast"></div>
 <script>
 const TOKEN = new URLSearchParams(location.search).get('t') || '';
 const api = (p) => p + (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
 
 // Sounds are served by the binary from the same clips the menu uses.
+// /snd/* needs the session now, so these cannot be built at script load
+// time any more - preload would fire before login, come back 401, and
+// leave every element permanently in an error state. armSounds() is
+// called once the session exists.
 const snd = {};
-for (const k of ['on','off','welcome']) {
-  const a = new Audio(api('/snd/' + k + '.wav'));
-  a.preload = 'auto'; a.volume = 0.9; snd[k] = a;
+function armSounds(){
+  if (snd.welcome) return;
+  for (const k of ['on','off','welcome']) {
+    const a = new Audio(api('/snd/' + k + '.wav'));
+    a.preload = 'auto'; a.volume = 0.9; snd[k] = a;
+  }
 }
-function play(k){ try { const a = snd[k]; a.currentTime = 0; a.play().catch(()=>{}); } catch(e){} }
+function play(k){ try { const a = snd[k]; if (!a) return; a.currentTime = 0; a.play().catch(()=>{}); } catch(e){} }
 
 let toastT = null;
 function toast(msg, bad){
@@ -128,14 +175,28 @@ function toast(msg, bad){
 
 let STATE = null, PAGES = [], current = 0;
 
+// Thrown when the server says the session is gone, so callers can drop
+// straight back to the login screen instead of showing an error.
+class NeedLogin extends Error {}
+
 async function pull(){
-  const r = await fetch(api('/api/state'), {cache:'no-store'});
+  const r = await fetch(api('/api/state'), {cache:'no-store', credentials:'same-origin'});
+  if (r.status === 401) throw new NeedLogin();
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
+
+// POST, not GET: a control change must not be reachable as a plain URL,
+// or any page in the browser could fire one with an <img> tag. The session
+// cookie is SameSite=Strict, so only this page can send it.
 async function push(id, value){
-  const r = await fetch(api('/api/set?id=' + encodeURIComponent(id) + '&v=' + encodeURIComponent(value)),
-                        {cache:'no-store'});
+  const body = 'id=' + encodeURIComponent(id) + '&v=' + encodeURIComponent(value);
+  const r = await fetch(api('/api/set'), {
+    method:'POST', cache:'no-store', credentials:'same-origin',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body
+  });
+  if (r.status === 401) throw new NeedLogin();
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -165,7 +226,11 @@ function rowSwitch(c){
     sw.setAttribute('aria-checked', next ? 'true' : 'false');
     play(next ? 'on' : 'off');
     try { await push(c.id, next ? 1 : 0); }
-    catch(e){ sw.setAttribute('aria-checked', next ? 'false' : 'true'); toast('Not saved: ' + e.message, true); }
+    catch(e){
+      sw.setAttribute('aria-checked', next ? 'false' : 'true');
+      if (e instanceof NeedLogin) { showGate('Session expired. Enter your key again.'); return; }
+      toast('Not saved: ' + e.message, true);
+    }
   };
   row.appendChild(lab); row.appendChild(sw);
   return row;
@@ -186,7 +251,11 @@ function rowSlider(c){
   r.onchange = r.onpointerup = ()=>{
     clearTimeout(tmr);
     tmr = setTimeout(async ()=>{
-      try { await push(c.id, r.value); } catch(e){ toast('Not saved: ' + e.message, true); }
+      try { await push(c.id, r.value); }
+      catch(e){
+        if (e instanceof NeedLogin) { showGate('Session expired. Enter your key again.'); return; }
+        toast('Not saved: ' + e.message, true);
+      }
     }, 60);
   };
   box.appendChild(top); box.appendChild(r);
@@ -206,7 +275,11 @@ function rowSeg(c){
     b.onclick = async ()=>{
       [...seg.children].forEach(x=>x.className = '');
       b.className = 'on'; play('on');
-      try { await push(c.id, o.value); } catch(e){ toast('Not saved: ' + e.message, true); }
+      try { await push(c.id, o.value); }
+      catch(e){
+        if (e instanceof NeedLogin) { showGate('Session expired. Enter your key again.'); return; }
+        toast('Not saved: ' + e.message, true);
+      }
     };
     seg.appendChild(b);
   });
@@ -247,19 +320,99 @@ function render(){
   host.appendChild(sec);
 }
 
-async function boot(){
+function setPill(text, bad){
+  document.getElementById('link').textContent = text;
+  document.querySelector('.dot').style.background = bad ? '#FF4A5C' : '';
+  document.querySelector('.pill').style.cssText = bad
+    ? 'margin-left:auto;display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:13px;' +
+      'background:rgba(232,38,58,.13);border:1px solid rgba(232,38,58,.4);font:700 10.5px/1 system-ui;color:#FF4A5C'
+    : '';
+}
+
+function showGate(msg){
+  document.getElementById('gate').classList.add('on');
+  document.getElementById('shell').classList.remove('on');
+  document.getElementById('tabs').style.display = 'none';
+  setPill('Locked', false);
+  document.getElementById('lmsg').textContent = msg || '';
+  const k = document.getElementById('lkey');
+  k.value = '';
+  setTimeout(()=>k.focus(), 60);
+}
+
+async function showShell(){
+  STATE = await pull();
+  PAGES = [...new Set((STATE.controls||[]).map(c=>c.page))];
+  if (STATE.info && STATE.info.length) PAGES.push('Info');
+  document.getElementById('gate').classList.remove('on');
+  document.getElementById('shell').classList.add('on');
+  document.getElementById('tabs').style.display = '';
+  setPill('Connected', false);
+  armSounds();
+  render();
+}
+
+async function doLogin(){
+  const btn = document.getElementById('lgo');
+  const msg = document.getElementById('lmsg');
+  const key = document.getElementById('lkey').value.trim().toUpperCase();
+  if (!key) { msg.textContent = 'Enter your licence key.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Checking\u2026'; msg.textContent = '';
   try {
-    STATE = await pull();
-    PAGES = [...new Set((STATE.controls||[]).map(c=>c.page))];
-    if (STATE.info && STATE.info.length) PAGES.push('Info');
-    render();
-    play('welcome');
+    const r = await fetch(api('/api/login'), {
+      method:'POST', cache:'no-store', credentials:'same-origin',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: 'key=' + encodeURIComponent(key)
+    });
+    let j = {}; try { j = await r.json(); } catch(e){}
+    if (r.ok && j.ok) {
+      await showShell();
+      play('welcome');
+      return;
+    }
+    if (r.status === 429 || j.locked) {
+      msg.textContent = 'Too many attempts. Wait a minute and try again.';
+    } else {
+      msg.textContent = 'That key does not match. Check it and try again.';
+    }
   } catch(e){
-    document.getElementById('link').textContent = 'Offline';
-    document.querySelector('.pill').style.cssText =
-      'margin-left:auto;display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:13px;' +
-      'background:rgba(232,38,58,.13);border:1px solid rgba(232,38,58,.4);font:700 10.5px/1 system-ui;color:#FF4A5C';
-    document.querySelector('.dot').style.background = '#FF4A5C';
+    msg.textContent = 'Cannot reach the menu: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Unlock';
+  }
+}
+
+async function doLogout(){
+  try {
+    await fetch(api('/api/logout'), {method:'POST', cache:'no-store', credentials:'same-origin'});
+  } catch(e){}
+  showGate('Locked. Enter your key to unlock again.');
+}
+
+async function boot(){
+  document.getElementById('lgo').onclick = doLogin;
+  document.getElementById('lout').onclick = doLogout;
+  document.getElementById('lkey').addEventListener('keydown', e=>{
+    if (e.key === 'Enter') doLogin();
+  });
+
+  try {
+    const r = await fetch(api('/api/session'), {cache:'no-store', credentials:'same-origin'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const sess = await r.json();
+    if (!sess.module_logged_in) {
+      document.getElementById('gate').classList.add('on');
+      setPill('No licence', true);
+      document.getElementById('lgo').disabled = true;
+      document.getElementById('lmsg').textContent =
+        'Log into the module first, then come back to this link.';
+      return;
+    }
+    if (sess.authed) { await showShell(); return; }
+    showGate('');
+  } catch(e){
+    setPill('Offline', true);
     toast('Cannot reach the menu: ' + e.message, true);
   }
 }
