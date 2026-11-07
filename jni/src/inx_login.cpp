@@ -7,7 +7,8 @@
      Success: {"status":"success","message":"...","key":"...",
                "seller":"...","validity":"...","days":N,
                "saved":true|false,"save_error":"..."}
-     Failure: {"status":"error","message":"..."}
+     Failure: {"status":"error","message":"<the server's own reason,
+               e.g. License expired on ...>"}
 
    The key is verified server-side first. If that passes, the binary
    tries to write webroot/config.json. The write result is reported in
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 #include <json.hpp>
 
 using json = nlohmann::json;
@@ -55,6 +57,35 @@ static void print_error(const std::string& msg) {
 }
 
 // -------------------------------------------------------------
+//  [CRASH FIX - exit 135 "Bus error", empty stdout]
+//  Returning from main() used to leave the process to tear itself down
+//  while the detached integrity watchdog (login.h) was still ticking.
+//  That watchdog reads the binary's own file-backed .rodata on every
+//  tick, so a tick landing inside the teardown window faults on a page
+//  that is no longer valid - SIGBUS, which the shell reports as exit
+//  135. stdout on a pipe is block-buffered, so the JSON line this
+//  binary had already printf()'d was still in the buffer and went down
+//  with the process, which is why the caller saw a crash AND no output
+//  at all ("Login output not JSON ... out: (empty stdout)").
+//
+//  Every exit now goes through here: park the watchdog, flush the JSON
+//  line out for real, then _exit(), which ends the process at the
+//  kernel level with no userspace teardown and therefore no window for
+//  any thread to fault in. The JSON contract is unchanged.
+// -------------------------------------------------------------
+//  [[noreturn]] matters: without it the compiler assumes finish() can
+//  come back, so the argument guard below would be treated as falling
+//  through into argv[1] on a missing-key call. It never does at runtime
+//  (_exit is noreturn), but saying so keeps the control flow honest and
+//  lets the compiler drop the dead paths.
+[[noreturn]] static void finish(int code) {
+    kd_stop_integrity_watchdog();
+    fflush(stdout);
+    fflush(stderr);
+    _exit(code);
+}
+
+// -------------------------------------------------------------
 //  Read config.json -> update key/seller/validity/status -> write.
 //  Other fields (binary, duration, driver, ...) are preserved.
 //  Returns "" on success, otherwise the real reason (errno text).
@@ -62,7 +93,8 @@ static void print_error(const std::string& msg) {
 static std::string update_web_config(const std::string& key,
                                      const std::string& seller,
                                      const std::string& validity,
-                                     const std::string& status) {
+                                     const std::string& status,
+                                     const std::string& message) {
     json cfg = json::object();
     {
         std::ifstream f(WEB_CFG);
@@ -78,6 +110,10 @@ static std::string update_web_config(const std::string& key,
     cfg["seller"]   = seller;
     cfg["validity"] = validity;
     cfg["status"]   = status;
+    // Written on every outcome so a refusal reason from an earlier
+    // attempt (e.g. "License expired on ...") can never linger next to
+    // a key that has since been accepted.
+    cfg["message"]  = message;
 
     errno = 0;
     std::ofstream out(WEB_CFG, std::ios::trunc);
@@ -97,7 +133,7 @@ static std::string update_web_config(const std::string& key,
 int main(int argc, char* argv[]) {
     if (argc < 2 || strlen(argv[1]) == 0) {
         print_error("Missing license key argument.");
-        return 1;
+        finish(1);
     }
 
     const std::string key = argv[1];
@@ -122,7 +158,7 @@ int main(int argc, char* argv[]) {
                      seller.c_str(), expiry.c_str());
         }
 
-        const std::string save_error = update_web_config(key, seller, expiry, "success");
+        const std::string save_error = update_web_config(key, seller, expiry, "success", msg);
 
         json out = {
             {"status",     "success"},
@@ -135,22 +171,42 @@ int main(int argc, char* argv[]) {
             {"save_error", save_error}
         };
         printf("%s\n", dump_safe(out).c_str());
-        return 0;
+        finish(0);
     }
 
     // Failure: mark status as error but keep the previously saved key
     // so the user can retry without retyping it.
+    //
+    // [FIX - an expired key reported nothing about expiry] The server
+    // already says exactly why it refused ("License expired on ...",
+    // "License is not valid.", a device-limit message, ...), and
+    // run_silent() keeps that text in auth_message. This path used to
+    // throw it away and print one fixed line - "Please check your key
+    // and try again" - so an EXPIRED licence was indistinguishable from
+    // a typo, and the status panel had nothing to show either. The real
+    // reason is now what gets printed AND what gets written to
+    // config.json, so both the login screen and a later status read
+    // show why the key was refused. No new source of truth: it is the
+    // server's own signed message, unchanged.
+    std::string why = auth.getAuthMessage();
+    if (why.empty())
+        why = "Login failed. Please check your key and try again.";
+
     {
         json cfg = json::object();
         std::ifstream f(WEB_CFG);
         if (f.good()) {
             try { json tmp; f >> tmp; if (tmp.is_object()) cfg = tmp; } catch (...) {}
         }
-        cfg["status"] = "error";
+        cfg["status"]  = "error";
+        cfg["message"] = why;
+        // "key"/"seller"/"validity" are deliberately left as they were:
+        // the previous expiry stays on screen next to the reason, and
+        // the saved key survives so the user can retry without retyping.
         std::ofstream out(WEB_CFG, std::ios::trunc);
         if (out.good()) { out << dump_safe(cfg, 4); chmod(WEB_CFG, 0644); }
     }
 
-    print_error("Login failed. Please check your key and try again.");
-    return 1;
+    print_error(why);
+    finish(1);
 }

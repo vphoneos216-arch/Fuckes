@@ -1266,10 +1266,55 @@ static inline void ix_integrity_gate() {
 // verification on the server's response — this watchdog exists to make
 // the *window* during which a runtime patch could go undetected as small
 // as the interval below, not to claim the client is unpatchable.
+//
+// [CRASH FIX - SIGBUS "Bus error", exit 135, empty stdout]
+// The watchdog thread used to be detached and endless, with no way to
+// stop it. In a SHORT-LIVED process (inx_login_@api, which authenticates
+// and exits straight away) that is a teardown race, not a theoretical
+// one: ix_integrity_gate() evaluates oxorany(CONNECT_URL) and
+// oxorany(ED25519_PUBLIC_KEY_HEX) on every tick, and those read the
+// binary's own FILE-BACKED .rodata/.text pages. Once main() returns, the
+// runtime starts tearing the process down and those mappings stop being
+// valid; a watchdog tick landing in that window touches a dead
+// file-backed page, which on bionic is SIGBUS (signal 7 -> exit 135),
+// not SIGSEGV. stdout on a pipe is block-buffered, so the JSON line
+// printf() had already produced was still sitting in the buffer and died
+// with the process - hence "(empty stdout)" next to exit 135.
+//
+// Two changes close it:
+//   1. The loop is now stoppable. It sleeps in 50ms slices and checks a
+//      stop flag, so kd_stop_integrity_watchdog() parks it in ~50ms
+//      instead of up to 1.5s, and publishes "I am outside the gate" via
+//      g_ix_wd_live so the caller can wait for that fact.
+//   2. Callers stop it, flush stdout, and leave via _exit() (see
+//      inx_login.cpp). _exit() ends every thread at the kernel level with
+//      no userspace teardown at all, so there is no window left to race.
+//
+// This costs no protection. The gate still runs before and during every
+// auth, and it still runs on the interval for the whole time the process
+// has work to protect - the watchdog is only parked once authentication
+// is finished and the process is about to leave. A long-lived process
+// (optimum_bar) keeps it running exactly as before.
+static std::atomic<int> g_ix_wd_stop{0};
+static std::atomic<int> g_ix_wd_live{0};
+
 static inline void kd_integrity_watchdog_loop() {
     using namespace std::chrono_literals;
+    g_ix_wd_live.store(1, std::memory_order_release);
     for (;;) {
-        std::this_thread::sleep_for(1500ms);
+        // 1500ms total, in 50ms slices, so a stop request is honoured
+        // promptly instead of after a full interval.
+        for (int i = 0; i < 30; ++i) {
+            if (g_ix_wd_stop.load(std::memory_order_acquire)) {
+                g_ix_wd_live.store(0, std::memory_order_release);
+                return;
+            }
+            std::this_thread::sleep_for(50ms);
+        }
+        if (g_ix_wd_stop.load(std::memory_order_acquire)) {
+            g_ix_wd_live.store(0, std::memory_order_release);
+            return;
+        }
         ix_integrity_gate();   // dies on any mismatch; never returns false
     }
 }
@@ -1280,6 +1325,16 @@ static inline void kd_start_integrity_watchdog() {
         std::thread t(kd_integrity_watchdog_loop);
         t.detach();
     }
+}
+
+// Park the watchdog outside the gate before the process tears down.
+// Bounded (~400ms) so a wedged thread can never hang the exit path; the
+// _exit() that follows in the caller is what makes it unconditional.
+static inline void kd_stop_integrity_watchdog() {
+    using namespace std::chrono_literals;
+    g_ix_wd_stop.store(1, std::memory_order_release);
+    for (int i = 0; i < 80 && g_ix_wd_live.load(std::memory_order_acquire); ++i)
+        std::this_thread::sleep_for(5ms);
 }
 
 // ==================== RESULT STRUCT ====================

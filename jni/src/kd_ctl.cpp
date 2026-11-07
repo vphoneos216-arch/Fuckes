@@ -70,6 +70,20 @@ static json kd_load_config() {
     return json::object();
 }
 
+// nlohmann's value() throws json::type_error when the stored field is
+// not the type of the default - so a config.json whose "validity" or
+// "status" had been edited to a number or null (the file is 0644 and
+// the WebUI writes it too) would take an UNCAUGHT exception here and
+// abort the process. That is the same class of failure this change
+// exists to remove, so every config string is read through this
+// instead: wrong type or missing key both just give the fallback.
+static std::string kd_cfg_str(const json& cfg, const char* key,
+                              const char* fallback = "") {
+    auto it = cfg.find(key);
+    if (it != cfg.end() && it->is_string()) return it->get<std::string>();
+    return std::string(fallback);
+}
+
 static bool kd_write_config(const json& j) {
     std::ofstream out(kd_cfgpath(), std::ios::trunc);
     if (!out.good()) return false;
@@ -116,6 +130,36 @@ static std::string kd_json_escape(const std::string& s) {
         else out += c;
     }
     return out;
+}
+
+// -------------------------------------------------------------
+//  [CRASH FIX - exit 135 "Bus error", empty stdout]
+//  "kd_ctl login" calls run_silent(), which starts the integrity
+//  watchdog in login.h: a detached thread that re-reads this binary's
+//  own file-backed .rodata every 1.5s (ix_integrity_gate() evaluates
+//  oxorany(CONNECT_URL) on every tick). Returning from main() then let
+//  the runtime tear the process down underneath that thread, and a tick
+//  landing in the teardown window faulted on a page that was no longer
+//  mapped - SIGBUS, reported by the shell as exit 135.
+//
+//  stdout here is a pipe (the WebUI reads it), so it is block-buffered:
+//  the single JSON line kd_print() had already produced was still in
+//  the buffer and died with the process. That is both halves of the
+//  reported failure at once - "[exit 135] out: (empty stdout) | err:
+//  Bus error" - and why the caller then said the output was not JSON.
+//
+//  Every exit now parks the watchdog, flushes the JSON line out for
+//  real, and leaves via _exit(), which ends the process in the kernel
+//  with no userspace teardown and so no window left to fault in.
+//
+//  [[noreturn]] so the compiler stops treating the call sites as
+//  falling through to the code after them.
+// -------------------------------------------------------------
+[[noreturn]] static void kd_finish(int code) {
+    kd_stop_integrity_watchdog();
+    fflush(stdout);
+    fflush(stderr);
+    _exit(code);
 }
 
 // -------------------------------------------------------------
@@ -252,7 +296,7 @@ static void kd_watch_loop() {
     bool launchedByWatcher = false;
     for (;;) {
         json cfg = kd_load_config();
-        const std::string target = cfg.value("target_package", "");
+        const std::string target = kd_cfg_str(cfg, "target_package", "");
         if (!target.empty()) {
             const std::string fg = kd_foreground_package();
             const bool inTarget = (fg == target);
@@ -296,23 +340,39 @@ int main(int argc, char* argv[]) {
 
     // ---------------------------------------------------------
     if (cmd == "login") {
-        if (argc < 3) { kd_print(false, R"(,"error":"missing key")"); return 1; }
+        if (argc < 3) { kd_print(false, R"(,"error":"missing key")"); kd_finish(1); }
         const std::string key = argv[2];
         Authentication auth;
         const bool ok = auth.run_silent(key);
         if (ok) {
-            char buf[512];
-            snprintf(buf, sizeof(buf),
-                R"(,"seller":"%s","expiry":"%s","days_remain":%d)",
-                auth.getSellerName().c_str(), auth.getExpiryDate().c_str(), auth.getDaysRemain());
-            kd_print(true, buf);
+            // [FIX - unescaped server strings could produce invalid JSON]
+            // seller and expiry come from the server. They used to be
+            // pasted straight into the JSON with %s, so a single quote
+            // or backslash anywhere in them broke the line the caller
+            // has to parse - and a long seller name hit the 512-byte
+            // snprintf buffer and got truncated mid-string, breaking it
+            // the same way. kd_json_escape() already existed in this
+            // file for exactly this; building the line with std::string
+            // also removes the fixed buffer, so nothing can truncate.
+            const std::string extra =
+                std::string(R"(,"seller":")") + kd_json_escape(auth.getSellerName()) +
+                std::string(R"(","expiry":")") + kd_json_escape(auth.getExpiryDate()) +
+                std::string(R"(","days_remain":)") + std::to_string(auth.getDaysRemain());
+            kd_print(true, extra);
         } else {
-            const std::string errMsg = oxorany("Login failed. Please try again.");
-            char buf[512];
-            snprintf(buf, sizeof(buf), R"(,"error":"%s")", errMsg.c_str());
-            kd_print(false, buf);
+            // [FIX - an expired key reported nothing about expiry]
+            // run_silent() keeps the server's own reason for the refusal
+            // ("License expired on ...", "License is not valid.", a
+            // device-limit message, ...) in auth_message. This path threw
+            // it away and emitted one fixed line, so an EXPIRED licence
+            // looked exactly like a mistyped one and the status panel had
+            // nothing to show. The real reason is reported now, escaped
+            // and untruncated for the same reasons as above.
+            std::string why = auth.getAuthMessage();
+            if (why.empty()) why = oxorany("Login failed. Please try again.");
+            kd_print(false, std::string(R"(,"error":")") + kd_json_escape(why) + "\"");
         }
-        return ok ? 0 : 1;
+        kd_finish(ok ? 0 : 1);
     }
 
     // ---------------------------------------------------------
@@ -321,16 +381,32 @@ int main(int argc, char* argv[]) {
         const bool watcherRunning = kd_pid_alive(kd_read_pid(kd_watcher_pidfile()));
         const bool hasKey = !kd_load_saved_key().empty();
         json cfg = kd_load_config();
-        char buf[512];
-        snprintf(buf, sizeof(buf),
-            R"(,"running":%s,"has_saved_key":%s,"driver":"%s","menu_open":"%s","target_package":"%s","watcher_running":%s)",
-            running ? "true" : "false",
-            hasKey ? "true" : "false",
-            cfg.value("driver", "auto").c_str(),
-            cfg.value("menu_open", "bar").c_str(),
-            kd_json_escape(cfg.value("target_package", "")).c_str(),
-            watcherRunning ? "true" : "false");
-        kd_print(true, buf);
+        // Built with std::string instead of a 512-byte snprintf: the
+        // buffer could truncate a long target_package or seller name
+        // mid-string and hand the caller a broken JSON line. Every
+        // server- or argv-sourced string goes through kd_json_escape()
+        // for the same reason - "driver" and "menu_open" come from
+        // set-driver/set-menu arguments and were being pasted in raw.
+        //
+        // license_status / seller / validity / message are read straight
+        // out of the config the login binary writes, so a status poll
+        // can show WHY a key was refused and when it expired - an
+        // expired licence used to leave the panel with nothing to say.
+        // Named license_status, not status, so it cannot be mistaken for
+        // the result of this command.
+        const std::string extra =
+            std::string(R"(,"running":)")        + (running ? "true" : "false") +
+            std::string(R"(,"has_saved_key":)")  + (hasKey ? "true" : "false") +
+            std::string(R"(,"driver":")")        + kd_json_escape(kd_cfg_str(cfg, "driver", "auto")) +
+            std::string(R"(","menu_open":")")    + kd_json_escape(kd_cfg_str(cfg, "menu_open", "bar")) +
+            std::string(R"(","target_package":")") + kd_json_escape(kd_cfg_str(cfg, "target_package", "")) +
+            std::string(R"(","watcher_running":)") + (watcherRunning ? "true" : "false") +
+            std::string(R"(,"license_status":")") + kd_json_escape(kd_cfg_str(cfg, "status", "")) +
+            std::string(R"(","seller":")")       + kd_json_escape(kd_cfg_str(cfg, "seller", "")) +
+            std::string(R"(","validity":")")     + kd_json_escape(kd_cfg_str(cfg, "validity", "")) +
+            std::string(R"(","message":")")      + kd_json_escape(kd_cfg_str(cfg, "message", "")) +
+            std::string(R"(")");
+        kd_print(true, extra);
         return 0;
     }
 

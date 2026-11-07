@@ -2420,5 +2420,15 @@ int main(int argc,char* argv[]){
     StopAimbotThread();
     UpdateAndSaveSettings();
     shutdown(); Touch_Close();
-    return 0;
+    // [CRASH FIX - SIGBUS on teardown] Same race as inx_login.cpp: the
+    // integrity watchdog in login.h reads this binary's own file-backed
+    // .rodata every tick, so returning from main() and letting the
+    // runtime unmap underneath it can fault on a dead page (SIGBUS).
+    // Park the watchdog, flush, and leave via _exit() so no userspace
+    // teardown runs at all. The other exit at the top of this file
+    // already used _exit() and was never affected.
+    kd_stop_integrity_watchdog();
+    fflush(stdout);
+    fflush(stderr);
+    _exit(0);
 }
