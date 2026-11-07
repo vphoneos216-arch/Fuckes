@@ -1,5 +1,7 @@
 // wanbai.h — Kernel Driver Interface (No Auto-Fallback)
-// Supports 10 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM
+// Supports 11 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM, Paradise, Bing (/proc/pid/mem)
+// Bing (11) is explicit-select only — never substituted silently for a failed
+// driver; it's a distinct, user-chosen option like the other ten.
 // Integrated into InvisibleX Reborn project
 // Do NOT include directly — included via bool.h after globals are defined
 //
@@ -207,6 +209,85 @@ public:
 };
 
 // ==========================================
+// SYSCALL-FREE BACKEND — Bing (/proc/pid/mem)
+// Option 11: explicit, user-selected only — never an automatic
+// fallback for another option. Added fresh; no existing driver
+// class above (proKpm / KMA / LDK / Paradise) was touched.
+// ==========================================
+class bingKpm {
+public:
+    int pid = -1;
+    int handle = -1;
+
+    static int get_pid(const char *packageName) {
+        if (!packageName) return -1;
+        DIR *dir = opendir("/proc");
+        if (!dir) return -1;
+        struct dirent *entry;
+        char filename[64], cmdline[64];
+        int found = -1;
+        while ((entry = readdir(dir)) != nullptr) {
+            int id = atoi(entry->d_name);
+            if (id == 0) continue;
+            snprintf(filename, sizeof(filename), "/proc/%d/cmdline", id);
+            FILE *fp = fopen(filename, "r");
+            if (fp) {
+                memset(cmdline, 0, sizeof(cmdline));
+                if (fgets(cmdline, sizeof(cmdline), fp))
+                    if (strcmp(packageName, cmdline) == 0) found = id;
+                fclose(fp);
+                if (found != -1) break;
+            }
+        }
+        closedir(dir);
+        return found;
+    }
+
+    uintptr_t get_module_base(int target_pid, const char *module_name) {
+        if (!module_name) return 0;
+        char filename[64], line[1024];
+        snprintf(filename, sizeof(filename), "/proc/%d/maps", target_pid);
+        FILE *fp = fopen(filename, "r");
+        if (!fp) return 0;
+        unsigned long addr = 0;
+        while (fgets(line, sizeof(line), fp)) {
+            if (strstr(line, module_name)) {
+                char *pch = strtok(line, "-");
+                addr = strtoul(pch, nullptr, 16);
+                if (addr == 0x8000) addr = 0;
+                break;
+            }
+        }
+        fclose(fp);
+        return (uintptr_t)addr;
+    }
+
+    // Opens /proc/<pid>/mem for RW. Requires root.
+    bool init_pid(int target_pid) {
+        this->pid = target_pid;
+        if (target_pid <= 0) return false;
+        char mempath[64];
+        snprintf(mempath, sizeof(mempath), "/proc/%d/mem", target_pid);
+        this->handle = open(mempath, O_RDWR);
+        return this->handle != -1;
+    }
+
+    bool read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->handle < 0 || !buffer || size == 0) return false;
+        return pread64(this->handle, buffer, size, (off64_t)addr) == (ssize_t)size;
+    }
+
+    bool write(uintptr_t addr, void *buffer, size_t size) {
+        if (this->handle < 0 || !buffer || size == 0) return false;
+        return pwrite64(this->handle, buffer, size, (off64_t)addr) == (ssize_t)size;
+    }
+
+    ~bingKpm() {
+        if (this->handle > 0) { close(this->handle); this->handle = -1; }
+    }
+};
+
+// ==========================================
 // TB KPM PRCTL STRUCTURES (Option 6)
 // ==========================================
 struct mem_operation {
@@ -231,9 +312,11 @@ private:
     bool   use_kma_kpm          = false;   // Option 8: KMA KPM
     bool   use_ldk_kpm          = false;   // Option 9: LDK KPM
     bool   use_paradise         = false;   // Option 10: Paradise
+    bool   use_bing             = false;   // Option 11: Bing (/proc/pid/mem)
     Driver        *kma_driver   = nullptr;
     LdgKpmDriver  *ldk_driver   = nullptr;
     paradise_driver *paradise   = nullptr;
+    bingKpm        bing_backend;
 
     int    fd  = -1;
     pid_t  pid = 0;
@@ -871,6 +954,13 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root recommended for Paradise\033[0m\n");
         }
+        // ── Option 11: Bing (/proc/pid/mem) ────────────────
+        else if (choice == 11) {
+            use_bing = true;
+            printf("\033[41m\033[37m[+] Bing Mode Active (/proc/pid/mem)\033[0m\n");
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access required for Bing!\033[0m\n");
+        }
         else {
             printf("[-] Invalid option. Exiting.\n");
             exit(0);
@@ -883,15 +973,16 @@ public:
     bool any_backend_ready() const {
         // Real members only (no use_gt / use_kpm — those never existed)
         return use_tb_kpm || use_ditpro_kpm || use_kma_kpm || use_ldk_kpm
-            || use_paradise || use_syscall_fallback || (fd > 0);
+            || use_paradise || use_syscall_fallback || use_bing || (fd > 0);
     }
 
     void _reset_backend_flags() {
         use_tb_kpm = use_ditpro_kpm = use_kma_kpm = use_ldk_kpm = false;
-        use_paradise = use_syscall_fallback = false;
+        use_paradise = use_syscall_fallback = use_bing = false;
         if (kma_driver) { delete kma_driver; kma_driver = nullptr; }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise)   { delete paradise;   paradise   = nullptr; }
+        if (bing_backend.handle > 0) { close(bing_backend.handle); bing_backend.handle = -1; }
         if (fd > 0) { close(fd); fd = -1; }
     }
 
@@ -924,6 +1015,7 @@ public:
         }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise) { delete paradise; paradise = nullptr; }
+        if (bing_backend.handle > 0) close(bing_backend.handle);
     }
 
     // ── Attach PID after game process is found ─────────
@@ -946,6 +1038,10 @@ public:
             ldk_driver->initialize(target_pid);
         if (use_paradise && paradise)
             paradise->initialize(target_pid);
+        if (use_bing) {
+            if (!bing_backend.init_pid((int)target_pid))
+                printf("[-] Bing: cannot open /proc/%d/mem (need root)\n", (int)target_pid);
+        }
     }
 
     bool initKey(const char *key) {
@@ -955,6 +1051,7 @@ public:
         if (use_kma_kpm)     return true;
         if (use_ldk_kpm)     return true;
         if (use_paradise)    return true;
+        if (use_bing)        return true;
         return (ioctl(fd, OP_INIT_KEY, key) == 0);
     }
 
@@ -985,6 +1082,8 @@ public:
             return ldk_driver->read_legacy(addr, buffer, size);
         if (use_paradise && paradise)
             return paradise->read(addr, buffer, size);
+        if (use_bing)
+            return bing_backend.read(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1011,6 +1110,8 @@ public:
         }
         if (use_paradise && paradise)
             return paradise->write(addr, buffer, size);
+        if (use_bing)
+            return bing_backend.write(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1081,6 +1182,8 @@ public:
             return (uintptr_t)ldk_driver->get_module_base(this->pid, name);
         if (use_paradise && paradise)
             return paradise->get_module_base(name);
+        if (use_bing)
+            return bing_backend.get_module_base((int)this->pid, name);
         MODULE_BASE mb;
         mb.pid  = this->pid;
         mb.name = strdup(name);
@@ -1110,6 +1213,7 @@ static const char* g_DriverModeName(int choice) {
         case 8: return "KMA-KPM";
         case 9: return "LDK-KPM";
         case 10: return "Paradise";
+        case 11: return "Bing";
         case 0: return "AUTO";
         default: return "Unknown";
     }
