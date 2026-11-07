@@ -306,17 +306,31 @@ jobs:
           # only place O-MVLL actually ships linux builds is this public
           # index. Its index.html is apparently awkward to scrape reliably
           # from a plain curl (tried, got zero matches twice), so instead we
-          # try a short list of known-good direct links, newest first, and
-          # fall through until one downloads. Confirmed present as of
-          # 2026-10-29 via direct fetch.
+          # try a short list of known-good direct links and fall through
+          # until one downloads.
+          #
+          # [CRASH FIX 2026-11-08] v1-12-0 is reordered BEHIND v1-10-0 here.
+          # A device tombstone on a v1-12-0-built binary (sha dc7881f0...)
+          # showed a flatten_cfg dispatch table with one bad literal (a
+          # jump target that is not a valid, aligned code address) inside
+          # an AUTH_FUNCS function, causing a deterministic SIGBUS before
+          # any login attempt completes. ALL obfuscation settings in
+          # omvll_config.py are unchanged and untouched by this file —
+          # flatten_cfg / break_control_flow / obfuscate_constants /
+          # anti_hooking / obfuscate_string are all still ON for every
+          # AUTH_FUNCS function, at full strength. This only changes WHICH
+          # COMPILED RELEASE of the obfuscator plugin runs that config, on
+          # the chance that v1-10-0's flattening codegen does not carry the
+          # same miscompile on this NDK r29 toolchain. Confirmed present as
+          # of 2026-10-29 via direct fetch.
           CANDIDATES=(
+            "https://open-obfuscator.build38.io/ci/omvll_v1-10-0_linux_2026-09-29T09:26:56.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T09:09:16.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-06T09:20:43.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-01T09:30:05.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:51:26.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:41:51.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T10:01:31.tar.gz"
-            "https://open-obfuscator.build38.io/ci/omvll_v1-10-0_linux_2026-09-29T09:26:56.tar.gz"
           )
           URL=""
           for c in "${CANDIDATES[@]}"; do
