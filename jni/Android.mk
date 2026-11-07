@@ -1,6 +1,27 @@
 LOCAL_PATH := $(call my-dir)
 
 # =====================================================================
+#  TLS CERTIFICATE PIN (login.h: CURLOPT_PINNEDPUBLICKEY)
+#  Without this, every build relies on the system/embedded CA trust
+#  store alone — real transport security (a MITM still can't forge the
+#  Ed25519/Ed448/ML-DSA-65 signed payload, and can't read request/
+#  response bodies without the X25519 transport key either), but a
+#  compromised or tricked-into-trusting CA could still intercept the
+#  TLS handshake itself. Pinning closes that: curl refuses the
+#  connection unless the server's live public key matches this exact
+#  hash, no matter which CA issued the chain.
+#
+#  Get this with (regenerate whenever the server's cert/key is renewed,
+#  or every login on every device starts failing TLS):
+#    openssl s_client -connect adminshop.myvipsite.fun:443 \
+#        -servername adminshop.myvipsite.fun </dev/null 2>/dev/null \
+#      | openssl x509 -pubkey -noout \
+#      | openssl pkey -pubin -outform der \
+#      | openssl dgst -sha256 -binary | openssl base64
+KD_PIN_SHA256 := h3h88SnqhmWykOnvUYeYgGsLbvv2foSwS4XFVFIiFKA=
+KD_PINNED_PUBKEY_DEF := -DKD_PINNED_PUBKEY='"sha256//$(KD_PIN_SHA256)"'
+
+# =====================================================================
 #  PREBUILT STATIC LIBS — KPM drivers 8 & 9 + Paradise + sodium
 #  Declared as PREBUILT_STATIC_LIBRARY (not LOCAL_LDLIBS) so the linker
 #  places them AFTER the object files that reference them. Putting a .a
@@ -89,6 +110,10 @@ LOCAL_CFLAGS   :=
 
 LOCAL_CFLAGS   += -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_CPPFLAGS += -DVK_USE_PLATFORM_ANDROID_KHR
+
+# TLS pin — see definition of KD_PINNED_PUBKEY_DEF at the top of this file.
+LOCAL_CFLAGS   += $(KD_PINNED_PUBKEY_DEF)
+LOCAL_CPPFLAGS += $(KD_PINNED_PUBKEY_DEF)
 
 # [DISABLED] Runtime anti-tamper (debugger/Frida/Xposed/emulator detection,
 # ix_tamper_detected() inside ix_integrity_gate()) + the self-ptrace lock
@@ -288,6 +313,10 @@ LOCAL_MODULE := kd_ctl
 LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections
 LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections -fno-rtti -fexceptions
 
+# TLS pin — see definition of KD_PINNED_PUBKEY_DEF at the top of this file.
+LOCAL_CFLAGS   += $(KD_PINNED_PUBKEY_DEF)
+LOCAL_CPPFLAGS += $(KD_PINNED_PUBKEY_DEF)
+
 ifneq ($(wildcard $(KD_ED448_LIB)),)
 LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
 LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
@@ -354,10 +383,12 @@ LOCAL_MODULE          := inx_login_api
 LOCAL_MODULE_FILENAME := inx_login_@api
 
 LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
-                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\" \
+                  $(KD_PINNED_PUBKEY_DEF)
 LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
                   -fno-rtti -fexceptions \
-                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\"
+                  -DINX_MODULE_DIR=\"/data/adb/modules/inx_mods\" \
+                  $(KD_PINNED_PUBKEY_DEF)
 
 ifneq ($(wildcard $(KD_ED448_LIB)),)
 LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
