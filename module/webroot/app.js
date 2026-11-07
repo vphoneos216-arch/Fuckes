@@ -23,6 +23,7 @@ const DRIVERS = [
   { id: "ldk",      name: "LDK-KPM",  sub: "KernelPatch module" },
   { id: "paradise", name: "Paradise", sub: "KernelPatch module" },
   { id: "bing",     name: "Bing",     sub: "/proc/pid/mem read/write" },
+  { id: "ditkpm",   name: "Dit-KPM/Dits-KO", sub: "Kernel module (auto: syscall or ioctl)" },
 ];
 
 /* ---------- tiny WebAudio sound effects (no asset files needed) ---------- */

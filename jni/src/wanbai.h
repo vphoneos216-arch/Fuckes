@@ -1,7 +1,15 @@
 // wanbai.h — Kernel Driver Interface (No Auto-Fallback)
-// Supports 11 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM, Paradise, Bing (/proc/pid/mem)
-// Bing (11) is explicit-select only — never substituted silently for a failed
-// driver; it's a distinct, user-chosen option like the other ten.
+// Supports 12 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM, Paradise, Bing (/proc/pid/mem), Dit-KPM/Dits-KO
+// Bing (11) and Dit-KPM/Dits-KO (12) are explicit-select only — never
+// substituted silently for a failed driver; each is a distinct,
+// user-chosen option like the other ten.
+//
+// NOTE on option 7 vs option 12: both talk to a Dit-family node, but
+// they are two different wire protocols and are NOT interchangeable.
+//   Option 7  (proKpm, below)   — flag-based syscall ABI (existing, untouched)
+//   Option 12 (Dit_KPM/, new)   — uapi.h cmd-based ABI; auto-picks syscall
+//                                 ("ditpro_kpm") or ioctl ("dits_ko") by
+//                                 probing VERSION once — see Dit_KPM/dit_driver.h
 // Integrated into InvisibleX Reborn project
 // Do NOT include directly — included via bool.h after globals are defined
 //
@@ -41,6 +49,7 @@ extern char packageName[];
 #include "KMA_KPM/driver.h"
 #include "LDK_KPM/LdgDriverStatic.h"
 #include "Paradise/paradise_api.h"
+#include "Dit_KPM/dit_driver.h"   // Option 12: Dit-KPM/Dits-KO (separate ABI from proKpm below)
 
 // ── Native memory-access syscall numbers (kept for reference, but fallback disabled) ──
 #ifdef __NR_process_vm_readv
@@ -313,10 +322,12 @@ private:
     bool   use_ldk_kpm          = false;   // Option 9: LDK KPM
     bool   use_paradise         = false;   // Option 10: Paradise
     bool   use_bing             = false;   // Option 11: Bing (/proc/pid/mem)
+    bool   use_dit_kpm          = false;   // Option 12: Dit-KPM/Dits-KO (new uapi.h ABI)
     Driver        *kma_driver   = nullptr;
     LdgKpmDriver  *ldk_driver   = nullptr;
     paradise_driver *paradise   = nullptr;
     bingKpm        bing_backend;
+    DitKpmDriver   dit_kpm_backend;
 
     int    fd  = -1;
     pid_t  pid = 0;
@@ -961,6 +972,18 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root access required for Bing!\033[0m\n");
         }
+        // ── Option 12: Dit-KPM / Dits-KO (auto-detected) ───
+        else if (choice == 12) {
+            use_dit_kpm = true;
+            if (!dit_kpm_backend.StartDrivers()) {
+                printf("[-] Neither ditpro_kpm nor dits_ko is loaded. Load one first.\n");
+                // still allow — initialize() will fail cleanly if truly absent
+            } else {
+                printf("\033[41m\033[37m[+] %s Mode Active\033[0m\n", dit_kpm_backend.subtype_name());
+            }
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access recommended for Dit-KPM/Dits-KO!\033[0m\n");
+        }
         else {
             printf("[-] Invalid option. Exiting.\n");
             exit(0);
@@ -973,12 +996,12 @@ public:
     bool any_backend_ready() const {
         // Real members only (no use_gt / use_kpm — those never existed)
         return use_tb_kpm || use_ditpro_kpm || use_kma_kpm || use_ldk_kpm
-            || use_paradise || use_syscall_fallback || use_bing || (fd > 0);
+            || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || (fd > 0);
     }
 
     void _reset_backend_flags() {
         use_tb_kpm = use_ditpro_kpm = use_kma_kpm = use_ldk_kpm = false;
-        use_paradise = use_syscall_fallback = use_bing = false;
+        use_paradise = use_syscall_fallback = use_bing = use_dit_kpm = false;
         if (kma_driver) { delete kma_driver; kma_driver = nullptr; }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise)   { delete paradise;   paradise   = nullptr; }
@@ -1042,6 +1065,9 @@ public:
             if (!bing_backend.init_pid((int)target_pid))
                 printf("[-] Bing: cannot open /proc/%d/mem (need root)\n", (int)target_pid);
         }
+        if (use_dit_kpm) {
+            dit_kpm_backend.InitPid(target_pid);
+        }
     }
 
     bool initKey(const char *key) {
@@ -1052,6 +1078,7 @@ public:
         if (use_ldk_kpm)     return true;
         if (use_paradise)    return true;
         if (use_bing)        return true;
+        if (use_dit_kpm)     return true;
         return (ioctl(fd, OP_INIT_KEY, key) == 0);
     }
 
@@ -1084,6 +1111,8 @@ public:
             return paradise->read(addr, buffer, size);
         if (use_bing)
             return bing_backend.read(addr, buffer, size);
+        if (use_dit_kpm)
+            return dit_kpm_backend.Read(addr, buffer, size) == 0;
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1112,6 +1141,8 @@ public:
             return paradise->write(addr, buffer, size);
         if (use_bing)
             return bing_backend.write(addr, buffer, size);
+        if (use_dit_kpm)
+            return dit_kpm_backend.WriteRaw(addr, buffer, size) == 0;
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1184,6 +1215,10 @@ public:
             return paradise->get_module_base(name);
         if (use_bing)
             return bing_backend.get_module_base((int)this->pid, name);
+        if (use_dit_kpm) {
+            auto base_opt = dit_kpm_backend.GetBase(this->pid, name);
+            return base_opt.value_or((uintptr_t)0);
+        }
         MODULE_BASE mb;
         mb.pid  = this->pid;
         mb.name = strdup(name);
@@ -1214,6 +1249,7 @@ static const char* g_DriverModeName(int choice) {
         case 9: return "LDK-KPM";
         case 10: return "Paradise";
         case 11: return "Bing";
+        case 12: return "Dit-KPM/Dits-KO";
         case 0: return "AUTO";
         default: return "Unknown";
     }
