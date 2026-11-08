@@ -53,24 +53,50 @@ def _is_target(func) -> bool:
     hay  = name + "||" + dem
     return any(t in hay for t in AUTH_FUNCS)
 
-# [CRASH FIX 2026-11-08] Device-confirmed, not guessed: login works on the
-# FIRST run (key passed on argv -> run_silent() takes the keyNameIn-non-empty
-# branch) and crashes with SIGBUS on the NEXT run (no argv key -> same
-# run_silent(), but now the kd_load_saved_key() branch). Both runs execute
-# the exact same binary and the exact same flattened run_silent(); only the
-# branch taken differs. That pins the bad flatten_cfg dispatch case to
-# run_silent() specifically (tombstone: frame pc 0x232714, `ldr x1,[lit];
-# blr x1`, literal bytes 1f01096b 00030054 = the exact fault address in the
-# crash register dump). Excluding ONLY run_silent from the three passes that
-# synthesize new indirect branches removes that bad dispatch case. Every
-# other AUTH_FUNCS function — all the crypto, the signature verifiers, the
-# key storage, the integrity gate, perform_auth itself — keeps full
-# flatten_cfg / break_control_flow / anti_hooking exactly as before.
-# run_silent still gets obfuscate_constants and obfuscate_string below.
+# [CRASH FIX 2026-11-08, revised] First cut (excluding only run_silent) was
+# aimed wrong: the WebUI always calls `inx_login_@api <key>`, so run_silent's
+# keyNameIn is NEVER empty at runtime -- the kd_load_saved_key() branch it
+# guards is dead code on this path and was never the issue.
+#
+# Device-confirmed (webroot/script.js's loginKeyButton handler, login.h):
+# login succeeds the FIRST time a key is entered, then SIGBUS on every call
+# after that -- same binary, same argv-with-key call every time. The one
+# real branch that differs between "first call ever" and "every call after"
+# is inside kd_load_or_create_master_key(): the master-key file does not
+# exist yet on the first call (random bytes generated, file written) and
+# DOES exist on every later call (file opened and read instead). kd_save_key()
+# -- called after every successful login when a key was passed on argv --
+# calls kd_load_or_create_master_key(), so this runs on every WebUI login.
+#
+# main()/run_silent()/perform_login()/kd_save_key()/kd_load_or_create_master_key()
+# /kd_load_saved_key()/kd_mix_master_key() are all thin `static inline`
+# wrappers in login.h, small enough that the compiler may inline several of
+# them into one physical function before O-MVLL ever sees it -- so excluding
+# only one name by itself may silently do nothing if its code ended up
+# living inside a different function's body. All of them are excluded here,
+# by name, so the fix holds regardless of which way the inliner merged them.
+# (Tombstone PC 0x20b468 is confirmed INSIDE main()'s own flattened dispatch
+# -- it is the instruction right before __libc_init's call into main -- so
+# main's dispatch is excluded for certain, not just suspected.)
+#
+# Deliberately NOT excluded, still full flatten_cfg / break_control_flow /
+# anti_hooking: perform_auth (the actual license decision + network),
+# kd_open_secret, kd_seal_request, kd_derive_subkeys, kd_verify_ed25519/
+# ed448/mldsa65, kd_auth_post, kd_client_integrity_matches,
+# kd_wipe_server_secret, ix_integrity_gate and every anti-debug/anti-hook
+# detector. That is the half of the binary a cracker actually wants to read
+# -- the wire protocol and the signature checks -- and it is untouched.
+_FLATTEN_EXCLUDE = (
+    "main", "run_silent", "perform_login",
+    "kd_save_key", "kd_load_or_create_master_key",
+    "kd_load_saved_key", "kd_mix_master_key",
+)
+
 def _is_flatten_target(func) -> bool:
     name = (getattr(func, "name", "") or "")
     dem  = (getattr(func, "demangled_name", "") or "")
-    if "run_silent" in name or "run_silent" in dem:
+    hay  = name + "||" + dem
+    if any(t in hay for t in _FLATTEN_EXCLUDE):
         return False
     return _is_target(func)
 
