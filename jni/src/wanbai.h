@@ -1,5 +1,5 @@
 // wanbai.h — Kernel Driver Interface (No Auto-Fallback)
-// Supports 12 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM, Paradise, Bing (/proc/pid/mem), Dit-KPM/Dits-KO
+// Supports 13 modes + AUTO-DETECT (0/-1): QX1, GT, rt-dev, rt-proc, QX(2), TB-KPM, DitPro-KPM (latest), KMA-KPM v6.12, LDK-KPM, Paradise, Bing (/proc/pid/mem), Dit-KPM/Dits-KO, RT Hook
 // Bing (11) and Dit-KPM/Dits-KO (12) are explicit-select only — never
 // substituted silently for a failed driver; each is a distinct,
 // user-chosen option like the other ten.
@@ -50,6 +50,7 @@ extern char packageName[];
 #include "LDK_KPM/LdgDriverStatic.h"
 #include "Paradise/paradise_api.h"
 #include "Dit_KPM/dit_driver.h"   // Option 12: Dit-KPM/Dits-KO (separate ABI from proKpm below)
+#include "RT_Hook/kernel.h"      // Option 13: RT Hook (ioctl-based, see file header for the c_driver name-collision note)
 
 // ── Native memory-access syscall numbers (kept for reference, but fallback disabled) ──
 #ifdef __NR_process_vm_readv
@@ -323,11 +324,13 @@ private:
     bool   use_paradise         = false;   // Option 10: Paradise
     bool   use_bing             = false;   // Option 11: Bing (/proc/pid/mem)
     bool   use_dit_kpm          = false;   // Option 12: Dit-KPM/Dits-KO (new uapi.h ABI)
+    bool   use_rt_hook           = false;   // Option 13: RT Hook (ioctl-based)
     Driver        *kma_driver   = nullptr;
     LdgKpmDriver  *ldk_driver   = nullptr;
     paradise_driver *paradise   = nullptr;
     bingKpm        bing_backend;
     DitKpmDriver   dit_kpm_backend;
+    RtHookDriver  *rt_hook       = nullptr;
 
     int    fd  = -1;
     pid_t  pid = 0;
@@ -984,6 +987,23 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root access recommended for Dit-KPM/Dits-KO!\033[0m\n");
         }
+        // ── Option 13: RT Hook (ioctl-based, hooks sys_call_table[__NR_ioctl]) ──
+        else if (choice == 13) {
+            use_rt_hook = true;
+            rt_hook = new (std::nothrow) RtHookDriver();
+            if (!rt_hook) {
+                printf("[-] RT Hook driver object failed\n");
+                use_rt_hook = false;
+                return;
+            }
+            if (!rt_hook->Probe()) {
+                printf("[-] RT Hook not detected (HOOK_STATUS probe failed). Load it first.\n");
+                // still allow, same as DitPro/Dit-KPM — initialize() fails cleanly if truly absent
+            }
+            printf("\033[41m\033[37m[+] RT Hook Mode Active\033[0m\n");
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access recommended for RT Hook!\033[0m\n");
+        }
         else {
             printf("[-] Invalid option. Exiting.\n");
             exit(0);
@@ -996,15 +1016,16 @@ public:
     bool any_backend_ready() const {
         // Real members only (no use_gt / use_kpm — those never existed)
         return use_tb_kpm || use_ditpro_kpm || use_kma_kpm || use_ldk_kpm
-            || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || (fd > 0);
+            || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || use_rt_hook || (fd > 0);
     }
 
     void _reset_backend_flags() {
         use_tb_kpm = use_ditpro_kpm = use_kma_kpm = use_ldk_kpm = false;
-        use_paradise = use_syscall_fallback = use_bing = use_dit_kpm = false;
+        use_paradise = use_syscall_fallback = use_bing = use_dit_kpm = use_rt_hook = false;
         if (kma_driver) { delete kma_driver; kma_driver = nullptr; }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise)   { delete paradise;   paradise   = nullptr; }
+        if (rt_hook)    { delete rt_hook;    rt_hook    = nullptr; }
         if (bing_backend.handle > 0) { close(bing_backend.handle); bing_backend.handle = -1; }
         if (fd > 0) { close(fd); fd = -1; }
     }
@@ -1014,7 +1035,7 @@ public:
         // (config.json "driver", read into g_driver_choice by main).
         // No automatic scan of other backends.
         const int choice = g_driver_choice;
-        if (choice < 1 || choice > 12) {
+        if (choice < 1 || choice > 13) {
             printf("[-] No driver selected. Choose one in the WebUI and launch again.\n");
             fflush(stdout);
             exit(0);
@@ -1038,6 +1059,7 @@ public:
         }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise) { delete paradise; paradise = nullptr; }
+        if (rt_hook) { delete rt_hook; rt_hook = nullptr; }
         if (bing_backend.handle > 0) close(bing_backend.handle);
     }
 
@@ -1068,6 +1090,9 @@ public:
         if (use_dit_kpm) {
             dit_kpm_backend.InitPid(target_pid);
         }
+        if (use_rt_hook && rt_hook) {
+            rt_hook->initialize(target_pid);
+        }
     }
 
     bool initKey(const char *key) {
@@ -1079,6 +1104,7 @@ public:
         if (use_paradise)    return true;
         if (use_bing)        return true;
         if (use_dit_kpm)     return true;
+        if (use_rt_hook)     return true;
         return (ioctl(fd, OP_INIT_KEY, key) == 0);
     }
 
@@ -1113,6 +1139,8 @@ public:
             return bing_backend.read(addr, buffer, size);
         if (use_dit_kpm)
             return dit_kpm_backend.Read(addr, buffer, size) == 0;
+        if (use_rt_hook && rt_hook)
+            return rt_hook->read(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1143,6 +1171,8 @@ public:
             return bing_backend.write(addr, buffer, size);
         if (use_dit_kpm)
             return dit_kpm_backend.WriteRaw(addr, buffer, size) == 0;
+        if (use_rt_hook && rt_hook)
+            return rt_hook->write(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1219,6 +1249,8 @@ public:
             auto base_opt = dit_kpm_backend.GetBase(this->pid, name);
             return base_opt.value_or((uintptr_t)0);
         }
+        if (use_rt_hook && rt_hook)
+            return rt_hook->get_module_base(name);
         MODULE_BASE mb;
         mb.pid  = this->pid;
         mb.name = strdup(name);
@@ -1250,6 +1282,7 @@ static const char* g_DriverModeName(int choice) {
         case 10: return "Paradise";
         case 11: return "Bing";
         case 12: return "Dit-KPM/Dits-KO";
+        case 13: return "RT Hook";
         case 0: return "AUTO";
         default: return "Unknown";
     }

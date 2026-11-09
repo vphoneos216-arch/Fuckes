@@ -6,6 +6,7 @@
 //   -1/0 AUTO
 //   1 QX1  2 GT  3 rt-dev  4 rt-proc  5 QX2
 //   6 TB-KPM  7 DitPro  8 KMA  9 LDK  10 Paradise  11 Bing  12 Dit-KPM/Dits-KO
+//   13 RT Hook
 
 #include <string>
 #include <fstream>
@@ -31,6 +32,7 @@ static inline int ix_driver_number(const std::string& v) {
     if (v == "10") return 10;
     if (v == "11") return 11;
     if (v == "12") return 12;
+    if (v == "13") return 13;
     if (v.size() == 1 && v[0] >= '1' && v[0] <= '9') return v[0] - '0';
 
     std::string s;
@@ -51,6 +53,7 @@ static inline int ix_driver_number(const std::string& v) {
     if (s == "paradise" || s == "para") return 10;
     if (s == "bing") return 11;
     if (s == "ditkpm" || s == "ditko" || s == "dits" || s == "ditskpm") return 12;
+    if (s == "rthook") return 13;  // bare "rt" deliberately NOT aliased here -- too easy to confuse with rt-dev/rt-proc (modes 3/4)
     return -1;  // unknown → AUTO (was 8)
 }
 
@@ -81,7 +84,7 @@ static inline int ix_get_driver_choice() {
         if (*e) {
             int n = atoi(e);
             if (n == 0) return -1;
-            if (n >= 1 && n <= 12) return n;
+            if (n >= 1 && n <= 13) return n;
             if (n == -1) return -1;
         }
     }
