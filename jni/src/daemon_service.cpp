@@ -115,7 +115,12 @@ static const int MAX_DRIVER_RETRIES = 3;
 // Consecutive polls the target must be missing from the foreground before the
 // game counts as closed. Focus flickers for a poll during dialogs and system
 // windows; without this the menu was killed in the middle of a match.
-static const int LEAVE_MISS_POLLS = 4;
+// Increased from 4 → 16: screen-recording's MediaProjection permission dialog
+// and the system capturer service take foreground for up to ~15 s during setup,
+// and the foreground check runs every FOREGROUND_EVERY_TICKS (3) ticks of 1 s
+// each. 4 × 3 = 12 s was not enough. 16 × 3 = 48 s tolerates the full
+// recording-start flow without stopping the binary.
+static const int LEAVE_MISS_POLLS = 16;
 
 // One tick. Each tick only scans /proc in process, which costs no fork and a
 // couple of milliseconds, so the game can be caught the moment it starts.
@@ -255,6 +260,40 @@ static std::string foreground_package() {
     std::string pkg = pkg_from_dumpsys("dumpsys window", "mCurrentFocus=");
     if (pkg.empty()) pkg = pkg_from_dumpsys("dumpsys activity top", "ACTIVITY ");
     return pkg;
+}
+
+// ─── screen-recording / system-capture detector ──────────────
+// Returns true when the foreground package is a known system recorder or
+// MediaProjection service. During screen-recording start, Android briefly puts
+// one of these packages in the foreground (permission dialog, capture setup).
+// When this returns true the daemon skips incrementing missCount so the binary
+// is never stopped just because screen recording was turned on.
+static bool is_screen_recording_foreground(const std::string& fg) {
+    if (fg.empty()) return false;
+    // AOSP / common OEM recorder packages
+    static const char* const kRecorders[] = {
+        "com.android.systemui",
+        "com.miui.screenrecorder",
+        "com.samsung.android.app.screenrecorder",
+        "com.android.screenrecord",
+        "com.mediatek.screenrecorder",
+        "com.coloros.screenrecorder",
+        "com.vivo.screenrecorder",
+        "com.asus.screenrecorder",
+        "com.oneplus.screenrecorder",
+        "com.huawei.screenrecorder",
+        "com.realme.screenrecorder",
+        "com.infinix.screenrecorder",
+        "com.tecno.screenrecorder",
+        nullptr
+    };
+    for (int i = 0; kRecorders[i]; ++i) {
+        if (fg == kRecorders[i]) return true;
+    }
+    // Generic: any package whose name contains "screenrecord"
+    if (fg.find("screenrecord") != std::string::npos) return true;
+    if (fg.find("screen_record") != std::string::npos) return true;
+    return false;
 }
 
 // ─── target-process check, in process ────────────────────────
@@ -718,7 +757,9 @@ int main(int /*argc*/, char* /*argv*/[]) {
         // The expensive part, only while the game is alive and only every few
         // ticks. It exists to notice the player leaving, nothing else.
         if (targetAlive && !justAppeared && (pollTick % FOREGROUND_EVERY_TICKS == 0)) {
-            const bool fgIsTarget = (foreground_package() == target);
+            const std::string fg      = foreground_package();
+            const bool fgIsTarget     = (fg == target);
+            const bool fgIsRecorder   = is_screen_recording_foreground(fg);
             if (fgIsTarget) {
                 missCount = 0;
                 inGame    = true;
@@ -729,6 +770,13 @@ int main(int /*argc*/, char* /*argv*/[]) {
                     awaitingForeground = false;
                     lastStartAttempt   = 0;
                 }
+            } else if (fgIsRecorder) {
+                // Screen-recording service / permission dialog took foreground.
+                // Don't count this as the player leaving — the game is still
+                // running and will return to the foreground once recording
+                // starts. Freeze missCount at its current value so a brief
+                // screen-recorder popup never stops the binary.
+                daemon_log("Screen recorder in foreground — holding miss count at %d", missCount);
             } else if (++missCount >= LEAVE_MISS_POLLS) {
                 inGame = false;
             }

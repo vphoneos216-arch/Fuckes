@@ -270,6 +270,7 @@ static inline std::string ix_get_selected_driver() {
         case 10: return "paradise";
         case 11: return "bing";
         case 12: return "ditkpm";
+        case 13: return "rthook";
         default: return "auto";
     }
 }
