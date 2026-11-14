@@ -741,7 +741,10 @@ inline void RenderSingleMenuWindow() {
                        switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 450 * scale);
+                    // Card height increased 450 → 560 to fit the Body Kill
+                    // checkbox + conditional HP slider added below the FOV
+                    // slider without crowding/overlapping existing rows.
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 560 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -832,6 +835,24 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
+                    // ── Body Kill ──────────────────────────────────────
+                    // Standalone toggle (works without Aim Silent also
+                    // being on — see hook.h UpdateBodyKillThread). Slider
+                    // only drawn while the toggle is on, same pattern used
+                    // for Hardware BT mode above.
+                    float bkY = modeY + modeH + 86 * scale + 50 * scale;
+                    ImGui::SetCursorScreenPos(ImVec2(startX, bkY));
+                    ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
+
+                    if (g_Cfg.bodyKill) {
+                        dl->AddText(NULL, 20.0f * scale,
+                                    ImVec2(startX, bkY + 38 * scale),
+                                    COL_TXT_HI((int)(255 * uiAlpha)), "Kill HP");
+                        ImGui::SetCursorScreenPos(ImVec2(startX, bkY + 68 * scale));
+                        ImGui::SetNextItemWidth(cardW - 50 * scale);
+                        ImGui::SliderFloat("##BodyKillHP", &g_Cfg.bodyKillHP, 1.0f, 200.0f, "%.0f");
+                    }
+
                     // Sync → hook globals
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
@@ -843,10 +864,13 @@ inline void RenderSingleMenuWindow() {
                     chestRate         = g_Cfg.chestRateSave;
                     if (chestRate < 1) chestRate = 1;
                     if (chestRate > 3) chestRate = 3;
+                    BodyKill          = g_Cfg.bodyKill;
+                    BodyKillHP        = g_Cfg.bodyKillHP;
                     /* threads are idempotent (guarded by running flags) */
                     StartSilentAimThread();
                     StartAimbotThread();
                     StartHardwareBTThread();
+                    StartBodyKillThread();
                 }
 
                     } /* feat gate aim */
