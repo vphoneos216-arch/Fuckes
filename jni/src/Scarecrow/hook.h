@@ -183,6 +183,31 @@ static inline Vector3 BodyKillBone(uintptr_t e){
     return p;
 }
 
+// ============================================================
+//  BODY KILL — threshold switch, NOT a forced-HP hack.
+//  Health is only ever READ here, never written.
+//  Real in-game headshots (Aim Silent phase) reduce enemy HP
+//  naturally. Once actual HP drops to or below the slider value
+//  (BodyKillHP, 1–200), every subsequent bullet redirects to
+//  body. Before that point aim targets the head (like Aim Silent).
+//  Defined here (before FOV loop + UpdateSilentAimFast) so both
+//  call sites can reach it without a forward declaration.
+// ============================================================
+static inline bool BodyKillThresholdReached(uintptr_t e){
+    if(!BodyKill || !e) return false;
+    uintptr_t hpC = ReadChain(e,{
+        PlayerOffsets::HealthLink1(),
+        PlayerOffsets::HealthLink2(),
+        PlayerOffsets::HealthLink3()
+    });
+    if(!hpC) return false;
+    int curHP = Read<int>(hpC + PlayerOffsets::Health());
+    int threshold = (int)BodyKillHP;
+    if(threshold < 1)   threshold = 1;
+    if(threshold > 200) threshold = 200;
+    return curHP <= threshold;
+}
+
 static inline Quaternion QNlerp(Quaternion a, Quaternion b, float t){
     if(t < 0.f) t = 0.f;
     if(t > 1.f) t = 1.f;
@@ -1289,14 +1314,15 @@ void EspThreadFunc(){
 
             if(fovRadius > 0.f && !knocked){
                 Vector3 bonePos;
-                /* [LOGIC FIX] Body Kill must target the BODY, not the head —
-                 * it was wrongly sharing the head-only branch with Aim
-                 * Silent/Brutal BT. Checked first so it wins even when
-                 * AimSilent is also on. */
-                if(BodyKill)
-                    bonePos = BodyKillBone(e);
-                else if(BrutalBT || AimSilent)
-                    bonePos = HwbtHeadWorld(e);               /* Aim Silent / Brutal = HEAD only */
+                /* Body Kill threshold logic:
+                 *   - BodyKill ON  + threshold NOT yet reached  → aim at HEAD (like Aim Silent)
+                 *   - BodyKill ON  + threshold reached          → aim at BODY (chest/hip)
+                 *   - BodyKill OFF                              → normal branch
+                 * BodyKillThresholdReached() only reads HP — never writes. */
+                if(BodyKill && BodyKillThresholdReached(e))
+                    bonePos = BodyKillBone(e);                /* threshold reached → body */
+                else if(BodyKill || BrutalBT || AimSilent)
+                    bonePos = HwbtHeadWorld(e);               /* below threshold or Aim Silent/Brutal → HEAD */
                 else if(HardwareBT)
                     bonePos = SilentAimBone(e);               /* Hardware BT (Head only now) */
                 else
@@ -1487,16 +1513,20 @@ void UpdateSilentAimFast(){
             continue;
         }
 
-        uintptr_t targetNode = BodyKill
+        /* Body Kill threshold: only redirect to body AFTER enemy HP drops to/below slider.
+         * Before threshold → aim at HEAD (same as Aim Silent).
+         * BodyKillThresholdReached() only reads HP, never writes. */
+        bool bodyPhase = BodyKill && BodyKillThresholdReached(currentTarget);
+        uintptr_t targetNode = bodyPhase
             ? Read<uintptr_t>(currentTarget + BoneOffsets::Chest())
             : Read<uintptr_t>(currentTarget + BoneOffsets::Head());
-        if(BodyKill && !targetNode)
+        if(bodyPhase && !targetNode)
             targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());   // chest missing → hip fallback
 
         if(targetNode){
             Vector3 targetPos = NodePos(targetNode);
             if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
-                if(!BodyKill) targetPos.Y += 0.04f;   // small skull lift — head shots only
+                if(!bodyPhase) targetPos.Y += 0.04f;   // small skull lift — head shots only (pre-threshold)
                 Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
                 Vector3 dir;
                 dir.X = targetPos.X - startPos.X;
@@ -1667,58 +1697,6 @@ void StartAimLockNewThread(){
     }
 }
 void StopAimLockNewThread(){ aimlockNewThreadRunning = false; }
-
-// ============================================================
-//  BODY KILL THREAD
-//  Standalone toggle — does NOT require AimSilent to also be on.
-//  [BUG FIX] BodyKill now feeds its own entry into the same FOV
-//  target-lock scan AimSilent/BrutalBT/HardwareBT use (see the
-//  "|| BodyKill" additions in the targeting loop above), so
-//  g_CurrentBestTarget gets populated purely from BodyKill being
-//  on. Previously that scan only ran for AimSilent/BrutalBT/
-//  HardwareBT, so g_CurrentBestTarget stayed 0 whenever BodyKill
-//  was toggled on its own — the thread looped forever with no
-//  target and nothing ever happened.
-//  Works the same way Aim Silent's targeting does (locks the
-//  nearest head in FOV) and writes BodyKillHP (1–200) into that
-//  enemy's health chain every tick — "one-shot to X HP" whether
-//  or not the bullet itself lands.
-//  Gated on ix_feat_aim() + ix_rt_ready() + BodyKill only.
-// ============================================================
-void UpdateBodyKillThread(){
-    while(bodyKillThreadRunning){
-        if(!ix_feat_aim() || !ix_rt_ready() || !BodyKill){
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-        uintptr_t target = g_CurrentBestTarget;
-        if(!target){
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
-        }
-        // Walk the health pointer chain (same as ESP health read)
-        uintptr_t hpC = ReadChain(target,{
-            PlayerOffsets::HealthLink1(),
-            PlayerOffsets::HealthLink2(),
-            PlayerOffsets::HealthLink3()
-        });
-        if(hpC){
-            int targetHP = (int)BodyKillHP;
-            if(targetHP < 1)   targetHP = 1;
-            if(targetHP > 200) targetHP = 200;
-            Write<int>(hpC + PlayerOffsets::Health(), targetHP);
-        }
-        std::this_thread::yield();
-    }
-}
-
-void StartBodyKillThread(){
-    if(!bodyKillThreadRunning){
-        bodyKillThreadRunning = true;
-        std::thread(UpdateBodyKillThread).detach();
-    }
-}
-void StopBodyKillThread(){ bodyKillThreadRunning = false; }
 
 void DrawESP(float,float,uintptr_t){}
 void AimbotMenu(float,float,uintptr_t){}
