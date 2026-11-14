@@ -1616,7 +1616,7 @@ namespace AimHookState {
     // quaternion by patching the GP registers at the breakpoint hit.
     // We use AArch64 GP regs x0–x3 which hold the four float args in
     // the AAPCS calling convention for set_rotation_Injected.
-    static bool HwbpArmRotation(RtHookDriver* /*rth*/, uintptr_t rot_addr,
+    static bool HwbpArmRotation(RtHookDriver* rth, uintptr_t rot_addr,
                                  const Quaternion& q) {
         HW_BP_INFO info{};
         info.pid  = g_driver ? g_driver->GetPid() : 0;
@@ -1654,17 +1654,11 @@ namespace AimHookState {
         return rth->UpdateAndEnableHwBp(&info);
     }
     // ── Paradise HWBP helpers ──────────────────────────────────────────
-    // Arms a Paradise hardware write-breakpoint on a rotation/collider field.
-    // Paradise intercepts the game's own store and overrides the GP register
-    // value in-kernel — externally invisible, same as RT Hook HWBP tier.
+    // Arms a Paradise hardware write-breakpoint on a rotation field.
+    // paradise_bp_record.x0–x3 carry the new float values as GP register
+    // overrides; the driver overwrites the game's store in-kernel.
     static bool PdHwbpArmRotation(paradise_driver* pd, uintptr_t rot_addr,
                                    const Quaternion& q) {
-        // Rotation is 4×float at rot_addr.  We arm a 16-byte WRITE watchpoint;
-        // Paradise will fire on every game-write and let us inject our value
-        // via ptebp_set records.  For now we place the watchpoint + rely on
-        // the companion record path (hwbp_set_record) if the driver supports it.
-        // Minimum viable: arm the HWBP so the game's own write is intercepted;
-        // the value override uses hwbp_set_record per float component.
         paradise_bp_point_config pt{};
         pt.address  = (uint64_t)rot_addr;
         pt.type     = PARADISE_HWBP_WRITE;
@@ -1672,15 +1666,20 @@ namespace AimHookState {
         pt.scope    = PARADISE_HWBP_ALL_THREADS;
         pt.reserved = 0;
         if(!pd->hwbp_set(&pt, 1)) return false;
-        // Inject override values into breakpoint record slots 0–3 (x,y,z,w)
-        // paradise_bp_record is the value-override structure for the BP.
-        // We write each float component as a 4-byte record at its sub-offset.
-        const float components[4] = {q.X, q.Y, q.Z, q.W};
-        for(uint32_t i = 0; i < 4; ++i){
-            uint32_t bits;
-            __builtin_memcpy(&bits, &components[i], 4);
-            pd->hwbp_set_record(0, i, rot_addr + i*4, bits);
-        }
+
+        // Build an override record: pack x, y, z, w into GP regs x0–x3
+        // (ARM64 ABI: float args arrive in x0–x3 as bit-cast uint32).
+        paradise_bp_record rec{};
+        uint32_t bx, by, bz, bw;
+        __builtin_memcpy(&bx, &q.X, 4);
+        __builtin_memcpy(&by, &q.Y, 4);
+        __builtin_memcpy(&bz, &q.Z, 4);
+        __builtin_memcpy(&bw, &q.W, 4);
+        rec.x0 = (uint64_t)bx;
+        rec.x1 = (uint64_t)by;
+        rec.x2 = (uint64_t)bz;
+        rec.x3 = (uint64_t)bw;
+        pd->hwbp_set_record(0, 0, &rec);
         return true;
     }
 
@@ -1693,9 +1692,11 @@ namespace AimHookState {
         pt.scope    = PARADISE_HWBP_ALL_THREADS;
         pt.reserved = 0;
         if(!pd->hwbp_set(&pt, 1)) return false;
-        // Override the pointer value the game is about to write
-        pd->hwbp_set_record(0, 0, collider_addr, (uint32_t)(head_collider_val & 0xFFFFFFFFu));
-        pd->hwbp_set_record(0, 1, collider_addr+4, (uint32_t)(head_collider_val >> 32));
+
+        // Override x0 (the pointer the game is writing) with our head-collider
+        paradise_bp_record rec{};
+        rec.x0 = (uint64_t)head_collider_val;
+        pd->hwbp_set_record(0, 0, &rec);
         return true;
     }
 
