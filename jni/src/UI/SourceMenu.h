@@ -762,11 +762,14 @@ inline void RenderSingleMenuWindow() {
                     g_Cfg.aimCollider = AimLock;
                     AimLockNew = AimLock;
 
-                    // Row 1 — Aimbot | Hardware BT
+                    // Row 1 — Aimbot | Body Kill
+                    // [REMOVED] Hardware BT checkbox — Body Kill replaces it
+                    // here. HardwareBT is force-cleared below so a stale
+                    // config.json value can't bring it back silently.
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
                     ImGui::Checkbox1("Aimbot", &Aimbot);
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
-                    ImGui::Checkbox1("Hardware BT", &HardwareBT);
+                    ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
 
                     // Row 2 — FOV Circle (moved down one row)
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
@@ -788,26 +791,26 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
-                    // ── Body Kill ──────────────────────────────────────
+                    // ── Body Kill HP slider ─────────────────────────────
                     // [LOGIC FIX] Targets the BODY (chest/hip), never the
                     // head — see BodyKillBone()/UpdateSilentAimFast in
                     // hook.h. Standalone toggle (works without Aim Silent
-                    // also being on). HP slider (1-200) forces the target's
-                    // health to this value on hit via UpdateBodyKillThread,
-                    // regardless of whether the body shot itself lands.
+                    // also being on — checkbox is now in Row 1 above,
+                    // replacing the removed Hardware BT control). HP slider
+                    // (1-200) forces the target's health to this value on
+                    // hit via UpdateBodyKillThread, regardless of whether
+                    // the body shot itself lands.
                     float bkY = fovLabelY + 30 * scale + 56 * scale;
                     dl->AddText(NULL, 18.0f * scale,
                                 ImVec2(startX, bkY - 26 * scale),
                                 COL_TXT_MID((int)(180 * uiAlpha)),
                                 "Aim Silent = head only | Body Kill = body hit, forced HP");
-                    ImGui::SetCursorScreenPos(ImVec2(startX, bkY));
-                    ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
 
                     if (g_Cfg.bodyKill) {
                         dl->AddText(NULL, 20.0f * scale,
-                                    ImVec2(startX, bkY + 38 * scale),
+                                    ImVec2(startX, bkY),
                                     COL_TXT_HI((int)(255 * uiAlpha)), "Kill HP");
-                        ImGui::SetCursorScreenPos(ImVec2(startX, bkY + 68 * scale));
+                        ImGui::SetCursorScreenPos(ImVec2(startX, bkY + 30 * scale));
                         ImGui::SetNextItemWidth(cardW - 50 * scale);
                         ImGui::SliderFloat("##BodyKillHP", &g_Cfg.bodyKillHP, 1.0f, 200.0f, "%.0f");
                     }
@@ -815,7 +818,7 @@ inline void RenderSingleMenuWindow() {
                     // Sync → hook globals
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
-                    g_Cfg.aimSilent   = AimSilent;
+                    g_Cfg.aimSilent   = AimSilent;    // Aim Silent sync — unchanged, untouched by this fix
                     // AimLock / AimLockNew / aimCollider synced from checkbox above
                     BrutalBT          = g_Cfg.brutalBT;
                     aimBotBoneIndex   = 0;
@@ -823,6 +826,11 @@ inline void RenderSingleMenuWindow() {
                     chestRate         = g_Cfg.chestRateSave;
                     if (chestRate < 1) chestRate = 1;
                     if (chestRate > 3) chestRate = 3;
+                    // [REMOVED] Hardware BT — force-cleared every frame so a
+                    // stale config.json value (aim_hwbt) can never silently
+                    // re-enable it now that its checkbox is gone.
+                    HardwareBT        = false;
+                    g_Cfg.hardwareBT  = false;
                     BodyKill          = g_Cfg.bodyKill;
                     BodyKillHP        = g_Cfg.bodyKillHP;
                     /* threads are idempotent (guarded by running flags) */

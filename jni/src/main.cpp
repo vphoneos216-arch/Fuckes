@@ -2079,9 +2079,14 @@ static void ix_pull_remote_controls() {
     textSize            = c.esp_textsize;
 
     AimSilent           = c.aim_silent;
-    HardwareBT          = c.aim_hwbt;
+    // [REMOVED] Hardware BT retired — Body Kill replaces it in the menu.
+    // Force false here too (not just in the per-frame menu sync) so a
+    // stale config.json "aim_hwbt": true from before this change can never
+    // bring it back, even if the user never opens the AIM page this run.
+    HardwareBT          = false;
+    g_Cfg.hardwareBT    = false;
     g_Cfg.showFovCircle = c.aim_fovcircle;
-    g_Cfg.chestRateSave = c.aim_mode;
+    g_Cfg.chestRateSave = 1;   // Body/Legit modes removed — Hardware BT (if ever re-enabled) is head-only
     g_Cfg.aimFovUI      = c.aim_fov;
 
     AimMagnet           = c.exp_pull;
