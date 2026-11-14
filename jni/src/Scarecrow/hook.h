@@ -170,6 +170,19 @@ static inline Vector3 AimbotBone(uintptr_t e){
     return BonePos(e, BoneOffsets::Head());
 }
 
+/* Body Kill — always targets the body (chest, falling back to hip), never
+ * the head. The health-chain write in UpdateBodyKillThread is what actually
+ * forces the enemy's HP to the slider value; this just makes the bullet
+ * itself land on the body so it reads as a normal body hit, not a
+ * guaranteed headshot. Independent of chestRate/Hardware BT's old
+ * Body/Legit selector (removed from the menu — this replaces it). */
+static inline Vector3 BodyKillBone(uintptr_t e){
+    if(!e) return Vector3::Zero();
+    Vector3 p = BonePos(e, BoneOffsets::Chest());
+    if(VecZero(p)) p = BonePos(e, BoneOffsets::Hip());
+    return p;
+}
+
 static inline Quaternion QNlerp(Quaternion a, Quaternion b, float t){
     if(t < 0.f) t = 0.f;
     if(t > 1.f) t = 1.f;
@@ -1276,10 +1289,16 @@ void EspThreadFunc(){
 
             if(fovRadius > 0.f && !knocked){
                 Vector3 bonePos;
-                if(BrutalBT || AimSilent || BodyKill)
-                    bonePos = HwbtHeadWorld(e);               /* Aim Silent / Brutal / Body Kill = HEAD only */
+                /* [LOGIC FIX] Body Kill must target the BODY, not the head —
+                 * it was wrongly sharing the head-only branch with Aim
+                 * Silent/Brutal BT. Checked first so it wins even when
+                 * AimSilent is also on. */
+                if(BodyKill)
+                    bonePos = BodyKillBone(e);
+                else if(BrutalBT || AimSilent)
+                    bonePos = HwbtHeadWorld(e);               /* Aim Silent / Brutal = HEAD only */
                 else if(HardwareBT)
-                    bonePos = SilentAimBone(e);               /* Hardware BT Body/Legit/Head */
+                    bonePos = SilentAimBone(e);               /* Hardware BT (Head only now) */
                 else
                     bonePos = HwbtHeadWorld(e);
 
@@ -1435,9 +1454,18 @@ void EspThreadFunc(){
 //  SILENT AIM THREAD  (also serves BrutalBT)
 // ============================================================
 void UpdateSilentAimFast(){
-    /* Aim Silent ONLY — always headshot. Do not touch for Hardware BT. */
+    /* Aim Silent / Body Kill — redirects the actual bullet via SilentAimDir.
+     * [LOGIC FIX] This previously hardcoded BoneOffsets::Head() unconditionally
+     * and was gated on AimSilent only, so Body Kill's body-targeting never
+     * reached the real aim-silent write — the bullet still always registered
+     * on the head no matter what bonePos picked in the FOV/targeting loop.
+     * Body Kill now drives this thread too (checked first — it wins if both
+     * AimSilent and BodyKill are on) and redirects onto the chest/hip instead
+     * of the head, so the hit reads as a body hit while
+     * UpdateBodyKillThread's health-chain write still forces the HP to the
+     * slider value. Do not touch for Hardware BT (separate thread/logic). */
     while(silentThreadRunning){
-        if(!ix_feat_aim() || !ix_rt_ready() || !AimSilent){
+        if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -1459,11 +1487,16 @@ void UpdateSilentAimFast(){
             continue;
         }
 
-        uintptr_t targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Head());
+        uintptr_t targetNode = BodyKill
+            ? Read<uintptr_t>(currentTarget + BoneOffsets::Chest())
+            : Read<uintptr_t>(currentTarget + BoneOffsets::Head());
+        if(BodyKill && !targetNode)
+            targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());   // chest missing → hip fallback
+
         if(targetNode){
             Vector3 targetPos = NodePos(targetNode);
             if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
-                targetPos.Y += 0.04f;
+                if(!BodyKill) targetPos.Y += 0.04f;   // small skull lift — head shots only
                 Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
                 Vector3 dir;
                 dir.X = targetPos.X - startPos.X;

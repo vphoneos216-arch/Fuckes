@@ -741,10 +741,11 @@ inline void RenderSingleMenuWindow() {
                        switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    // Card height increased 450 → 560 to fit the Body Kill
-                    // checkbox + conditional HP slider added below the FOV
-                    // slider without crowding/overlapping existing rows.
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 560 * scale);
+                    // Hardware BT's Body/Legit mode selector was removed
+                    // (replaced by Body Kill below), so despite adding Body
+                    // Kill's checkbox+slider the card only needs to grow
+                    // 450 → 470 to fit everything without overlap.
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 470 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -771,76 +772,34 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
                     ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
 
-                    // ── Hardware BT mode: Headshot / Body / Legit ──
-                    if (g_Cfg.chestRateSave < 1 || g_Cfg.chestRateSave > 3)
-                        g_Cfg.chestRateSave = 1;
-
-                    dl->AddText(NULL, 22.0f * scale,
-                                ImVec2(startX, startY + row * 4.1f),
-                                COL_TXT_MID((int)(255 * uiAlpha)), "Hardware BT Mode");
-
-                    /* Hardware BT: Body + Legit only. Aim Silent alone = 10/10 headshot */
-                    const char* btModes[] = { "Body", "Legit" };
-                    const int btVals[] = { 2, 3 };
-                    float modeY = startY + row * 4.75f;
-                    float modeW = 150 * scale;
-                    float modeH = 36 * scale;
-                    float modeGap = 20 * scale;
-                    for (int mi = 0; mi < 2; mi++) {
-                        int modeVal = btVals[mi];
-                        bool selected = (g_Cfg.chestRateSave == modeVal);
-                        ImVec2 bMin = ImVec2(startX + mi * (modeW + modeGap), modeY);
-                        ImVec2 bMax = ImVec2(bMin.x + modeW, bMin.y + modeH);
-                        ImU32 bg = selected ? COL_ACCENT((int)(255 * uiAlpha))
-                                            : COL_BTN_IDLE((int)(235 * uiAlpha));
-                        ImU32 tc = selected ? IM_COL32(255, 255, 255, (int)(255 * uiAlpha))
-                                            : COL_TXT_MID((int)(255 * uiAlpha));
-                        dl->AddRectFilled(bMin, bMax, bg, 12 * scale);
-                        ImFont* f = ImGui::GetFont();
-                        float tsz = 20.0f * scale;
-                        float tw2 = f->CalcTextSizeA(tsz, FLT_MAX, -1.f, btModes[mi]).x;
-                        dl->AddText(NULL, tsz,
-                                    ImVec2(bMin.x + (modeW - tw2) * 0.5f,
-                                           bMin.y + (modeH - tsz) * 0.5f),
-                                    tc, btModes[mi]);
-                        ImGui::SetCursorScreenPos(bMin);
-                        char btnId[32];
-                        snprintf(btnId, sizeof(btnId), "##btmode%d", mi);
-                        if (ImGui::InvisibleButton(btnId, ImVec2(modeW, modeH))) {
-                            if(selected) g_Cfg.chestRateSave = 1; /* toggle off → headshot */
-                            else g_Cfg.chestRateSave = modeVal;
-                        }
-                    }
-                    /* Hardware BT off → ignore body/legit selection for silent */
-                    if(!HardwareBT)
-                        g_Cfg.chestRateSave = 1;
-                    const char* hint = "Head only";
-                    if (g_Cfg.chestRateSave == 2) hint = "Body 100%";
-                    else if (g_Cfg.chestRateSave == 3) hint = "Legit 70% body / 30% head";
-                    dl->AddText(NULL, 18.0f * scale,
-                                ImVec2(startX, modeY + modeH + 10 * scale),
-                                COL_TXT_MID((int)(200 * uiAlpha)), hint);
-                    dl->AddText(NULL, 18.0f * scale,
-                                ImVec2(startX, modeY + modeH + 32 * scale),
-                                COL_TXT_MID((int)(180 * uiAlpha)),
-                                "Aim Silent = head only | Hardware BT = Body/Legit");
+                    // [REMOVED] Hardware BT's old Body/Legit mode selector.
+                    // Body Kill (below) replaces it: Hardware BT now always
+                    // targets head (chestRate forced to 1).
+                    g_Cfg.chestRateSave = 1;
 
                     // Label drawn here rather than by the slider: ImGui puts an
                     // inline label to the RIGHT of the widget, which pushed
                     // "FOV Range" outside the card and over the artwork.
+                    float fovLabelY = startY + row * 4.1f;
                     dl->AddText(NULL, 20.0f * scale,
-                                ImVec2(startX, modeY + modeH + 56 * scale),
+                                ImVec2(startX, fovLabelY),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "FOV Range");
-                    ImGui::SetCursorScreenPos(ImVec2(startX, modeY + modeH + 86 * scale));
+                    ImGui::SetCursorScreenPos(ImVec2(startX, fovLabelY + 30 * scale));
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
                     // ── Body Kill ──────────────────────────────────────
-                    // Standalone toggle (works without Aim Silent also
-                    // being on — see hook.h UpdateBodyKillThread). Slider
-                    // only drawn while the toggle is on, same pattern used
-                    // for Hardware BT mode above.
-                    float bkY = modeY + modeH + 86 * scale + 50 * scale;
+                    // [LOGIC FIX] Targets the BODY (chest/hip), never the
+                    // head — see BodyKillBone()/UpdateSilentAimFast in
+                    // hook.h. Standalone toggle (works without Aim Silent
+                    // also being on). HP slider (1-200) forces the target's
+                    // health to this value on hit via UpdateBodyKillThread,
+                    // regardless of whether the body shot itself lands.
+                    float bkY = fovLabelY + 30 * scale + 56 * scale;
+                    dl->AddText(NULL, 18.0f * scale,
+                                ImVec2(startX, bkY - 26 * scale),
+                                COL_TXT_MID((int)(180 * uiAlpha)),
+                                "Aim Silent = head only | Body Kill = body hit, forced HP");
                     ImGui::SetCursorScreenPos(ImVec2(startX, bkY));
                     ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
 
