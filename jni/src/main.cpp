@@ -2126,10 +2126,12 @@ static void ix_apply_control_sync() {
     if (chestRate > 3) chestRate = 3;
     StartSilentAimThread();
     StartHardwareBTThread();
-    // Body Kill globals synced from config
+    // Body Kill globals synced from config — no separate thread: the
+    // threshold check (BodyKillThresholdReached) runs inline inside the
+    // FOV loop and UpdateSilentAimFast, both already driven by
+    // StartSilentAimThread above.
     BodyKill   = g_Cfg.bodyKill;
     BodyKillHP = g_Cfg.bodyKillHP;
-    StartBodyKillThread();
 }
 
 
@@ -2309,7 +2311,9 @@ int main(int argc,char* argv[]){
 
     // All threads detached — no join in game loop (crash fix)
     StartSilentAimThread();
-    StartBodyKillThread();
+    // Body Kill has no separate thread — its threshold check runs inline
+    // inside StartSilentAimThread's loop (UpdateSilentAimFast) and the FOV
+    // targeting loop.
     // Aimbot feature removed — thread never started.
     StartEspThread();
 
@@ -2446,7 +2450,7 @@ int main(int argc,char* argv[]){
 
     StopEspThread();
     StopSilentAimThread();
-    StopBodyKillThread();
+    // Body Kill has no separate thread; StopSilentAimThread above covers it.
     StopAimbotThread();
     UpdateAndSaveSettings();
     shutdown(); Touch_Close();

@@ -792,19 +792,19 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
                     // ── Body Kill HP slider ─────────────────────────────
-                    // [LOGIC FIX] Targets the BODY (chest/hip), never the
-                    // head — see BodyKillBone()/UpdateSilentAimFast in
-                    // hook.h. Standalone toggle (works without Aim Silent
-                    // also being on — checkbox is now in Row 1 above,
-                    // replacing the removed Hardware BT control). HP slider
-                    // (1-200) forces the target's health to this value on
-                    // hit via UpdateBodyKillThread, regardless of whether
-                    // the body shot itself lands.
+                    // Threshold switch, not a forced-HP hack — see
+                    // BodyKillThresholdReached()/BodyKillBone() in hook.h.
+                    // Standalone toggle (works without Aim Silent also
+                    // being on — checkbox is now in Row 1 above, replacing
+                    // the removed Hardware BT control). Aim stays on the
+                    // head (real damage) until the enemy's actual HP drops
+                    // to/below this slider value; only then does aim
+                    // redirect to the body. HP is read-only, never written.
                     float bkY = fovLabelY + 30 * scale + 56 * scale;
                     dl->AddText(NULL, 18.0f * scale,
                                 ImVec2(startX, bkY - 26 * scale),
                                 COL_TXT_MID((int)(180 * uiAlpha)),
-                                "Aim Silent = head only | Body Kill = body hit, forced HP");
+                                "Aim Silent = head only | Body Kill = head until HP threshold, then body");
 
                     if (g_Cfg.bodyKill) {
                         dl->AddText(NULL, 20.0f * scale,
@@ -833,11 +833,12 @@ inline void RenderSingleMenuWindow() {
                     g_Cfg.hardwareBT  = false;
                     BodyKill          = g_Cfg.bodyKill;
                     BodyKillHP        = g_Cfg.bodyKillHP;
-                    /* threads are idempotent (guarded by running flags) */
+                    /* threads are idempotent (guarded by running flags).
+                     * Body Kill has no thread of its own — its threshold
+                     * check runs inline inside StartSilentAimThread's loop. */
                     StartSilentAimThread();
                     StartAimbotThread();
                     StartHardwareBTThread();
-                    StartBodyKillThread();
                 }
 
                     } /* feat gate aim */

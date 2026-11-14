@@ -183,31 +183,6 @@ static inline Vector3 BodyKillBone(uintptr_t e){
     return p;
 }
 
-// ============================================================
-//  BODY KILL — threshold switch, NOT a forced-HP hack.
-//  Health is only ever READ here, never written.
-//  Real in-game headshots (Aim Silent phase) reduce enemy HP
-//  naturally. Once actual HP drops to or below the slider value
-//  (BodyKillHP, 1–200), every subsequent bullet redirects to
-//  body. Before that point aim targets the head (like Aim Silent).
-//  Defined here (before FOV loop + UpdateSilentAimFast) so both
-//  call sites can reach it without a forward declaration.
-// ============================================================
-static inline bool BodyKillThresholdReached(uintptr_t e){
-    if(!BodyKill || !e) return false;
-    uintptr_t hpC = ReadChain(e,{
-        PlayerOffsets::HealthLink1(),
-        PlayerOffsets::HealthLink2(),
-        PlayerOffsets::HealthLink3()
-    });
-    if(!hpC) return false;
-    int curHP = Read<int>(hpC + PlayerOffsets::Health());
-    int threshold = (int)BodyKillHP;
-    if(threshold < 1)   threshold = 1;
-    if(threshold > 200) threshold = 200;
-    return curHP <= threshold;
-}
-
 static inline Quaternion QNlerp(Quaternion a, Quaternion b, float t){
     if(t < 0.f) t = 0.f;
     if(t > 1.f) t = 1.f;
@@ -305,9 +280,37 @@ bool  PullEnemy    = false;   /* lock FOV target to crosshair ray */
 bool  ScaleDown    = false;   /* shrink FOV target visual root scale */
 bool  Telekill     = false;   /* short-range snap local near target (guarded) */
 bool  showAimLine  = false;
-// Body Kill — write a fixed HP value to the locked target every tick
+// Body Kill — head aim until target's real HP drops to/below BodyKillHP,
+// then switches to body. Read-only threshold check; never writes HP.
 bool  BodyKill     = false;
 float BodyKillHP   = 100.f;  // 1–200; set from g_Cfg.bodyKillHP
+
+// ============================================================
+//  BODY KILL — threshold switch, NOT a forced-HP hack.
+//  Health is only ever READ here, never written.
+//  Real in-game headshots (Aim Silent phase) reduce enemy HP
+//  naturally. Once actual HP drops to or below the slider value
+//  (BodyKillHP, 1–200), every subsequent bullet redirects to
+//  body. Before that point aim targets the head (like Aim Silent).
+//  Defined here (right after BodyKill/BodyKillHP, before the FOV
+//  loop + UpdateSilentAimFast) so both call sites can reach it
+//  without a forward declaration.
+// ============================================================
+static inline bool BodyKillThresholdReached(uintptr_t e){
+    if(!BodyKill || !e) return false;
+    uintptr_t hpC = ReadChain(e,{
+        PlayerOffsets::HealthLink1(),
+        PlayerOffsets::HealthLink2(),
+        PlayerOffsets::HealthLink3()
+    });
+    if(!hpC) return false;
+    int curHP = Read<int>(hpC + PlayerOffsets::Health());
+    int threshold = (int)BodyKillHP;
+    if(threshold < 1)   threshold = 1;
+    if(threshold > 200) threshold = 200;
+    return curHP <= threshold;
+}
+
 float MagnetMaxDist    = 4.0f;
 float UndergroundDepth = 1.5f;
 float FlyHeight        = 1.2f;
