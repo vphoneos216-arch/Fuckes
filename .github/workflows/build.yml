@@ -323,8 +323,17 @@ jobs:
           # the chance that v1-10-0's flattening codegen does not carry the
           # same miscompile on this NDK r29 toolchain. Confirmed present as
           # of 2026-10-29 via direct fetch.
+          #
+          # [2026-11-15] v1-10-0's one known-good link had aged out of the
+          # build38.io index (404), which is what broke this step — not the
+          # SIGBUS bug above. v1-10-0 stays FIRST; only refreshed the dead
+          # v1-12-0 fallback links from the current index so the step has
+          # something to fall through to if v1-10-0 ever goes 404 too.
           CANDIDATES=(
             "https://open-obfuscator.build38.io/ci/omvll_v1-10-0_linux_2026-09-29T09:26:56.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-11-13T11:32:29.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-11-09T09:56:31.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T11:58:24.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T09:09:16.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-06T09:20:43.tar.gz"
             "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-01T09:30:05.tar.gz"
