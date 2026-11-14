@@ -127,6 +127,9 @@ struct SavedSettings {
     bool  showFovCircle=false; float aimFovUI=10.f; int chestRateSave=1;
     bool  showAimLine=false; int selectedBone=0;
     float AimFovGlobal=150.f; int textSz=15; bool is3600=false;
+    // Body Kill — deal fixed HP damage on aim-silent hit
+    bool  bodyKill=false;
+    float bodyKillHP=100.f;   // slider 1–200; write this HP to target's health
 };
 static SavedSettings g_Cfg;
 static bool g_SettingsLoaded = false;
@@ -1432,6 +1435,8 @@ void UpdateAndSaveSettings(){
     chestRate         = g_Cfg.chestRateSave;
     if(chestRate<1) chestRate=1;
     if(chestRate>3) chestRate=3;
+    BodyKill          = g_Cfg.bodyKill;
+    BodyKillHP        = g_Cfg.bodyKillHP;
 }
 
 bool IsScreenLandscape(){
@@ -1849,6 +1854,17 @@ static void aimbot_tab(float /*a*/){
 
     ImGui::Dummy(ImVec2(0,6.f));
 
+    // ── Body Kill ────────────────────────────────────────────
+    // Toggle + HP slider (1-200). When on and Aim Silent has a
+    // locked target, writes this HP into that enemy's health
+    // chain every tick — works whether or not the bullet lands.
+    M_CircularCheckbox1("Body Kill",      &g_Cfg.bodyKill);
+    if(g_Cfg.bodyKill){
+        M_CustomSliderFloatvv("Kill HP", &g_Cfg.bodyKillHP, 1.f, 200.f, "%.0f");
+    }
+
+    ImGui::Dummy(ImVec2(0,6.f));
+
     // Aim Bone selector
     {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f,0.94f,0.94f,0.98f));
@@ -1895,6 +1911,8 @@ static void aimbot_tab(float /*a*/){
     AimLock            = g_Cfg.aimCollider;
     AimFov             = g_Cfg.aimFovUI;
     showAimLine        = g_Cfg.showAimLine;
+    BodyKill           = g_Cfg.bodyKill;
+    BodyKillHP         = g_Cfg.bodyKillHP;
     chestRate          = g_Cfg.chestRateSave;
     if(chestRate<1)chestRate=1;
     if(chestRate>3)chestRate=3;
@@ -2103,6 +2121,10 @@ static void ix_apply_control_sync() {
     if (chestRate > 3) chestRate = 3;
     StartSilentAimThread();
     StartHardwareBTThread();
+    // Body Kill globals synced from config
+    BodyKill   = g_Cfg.bodyKill;
+    BodyKillHP = g_Cfg.bodyKillHP;
+    StartBodyKillThread();
 }
 
 
@@ -2114,6 +2136,7 @@ void RenderMenu(){
         g_Cfg.showLine=g_Cfg.showBox=g_Cfg.showHealth=false;
         g_Cfg.showDistance=g_Cfg.showSkeleton=g_Cfg.showName=false;
         g_Cfg.Aimbot=g_Cfg.aimSilent=g_Cfg.hardwareBT=g_Cfg.brutalBT=g_Cfg.aimCollider=false;
+        g_Cfg.bodyKill=false;
         g_Cfg.showFovCircle=false;
         AimSilent=HardwareBT=AimLock=Aimbot=BrutalBT=false;
         showLine=showBox=showHealth=showDistance=showSkeleton=showName=false;
@@ -2281,6 +2304,7 @@ int main(int argc,char* argv[]){
 
     // All threads detached — no join in game loop (crash fix)
     StartSilentAimThread();
+    StartBodyKillThread();
     // Aimbot feature removed — thread never started.
     StartEspThread();
 
@@ -2417,6 +2441,7 @@ int main(int argc,char* argv[]){
 
     StopEspThread();
     StopSilentAimThread();
+    StopBodyKillThread();
     StopAimbotThread();
     UpdateAndSaveSettings();
     shutdown(); Touch_Close();

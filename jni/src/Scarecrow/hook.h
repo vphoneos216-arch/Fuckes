@@ -267,6 +267,9 @@ bool  PullEnemy    = false;   /* lock FOV target to crosshair ray */
 bool  ScaleDown    = false;   /* shrink FOV target visual root scale */
 bool  Telekill     = false;   /* short-range snap local near target (guarded) */
 bool  showAimLine  = false;
+// Body Kill — write a fixed HP value to the locked target every tick
+bool  BodyKill     = false;
+float BodyKillHP   = 100.f;  // 1–200; set from g_Cfg.bodyKillHP
 float MagnetMaxDist    = 4.0f;
 float UndergroundDepth = 1.5f;
 float FlyHeight        = 1.2f;
@@ -300,6 +303,7 @@ static inline void IxForceDisableCheats() {
     DownPlayer = false; FastReload = false; FlyHack = false;
     UpEnemy = false; UnderGround = false; SpinBody = false;
     PullEnemy = false; ScaleDown = false; Telekill = false;
+    BodyKill = false;
 }
 
 int   textSize     = 15;
@@ -408,6 +412,7 @@ static void PublishEspBuffer(const EspBuffer& src){
 static std::atomic<bool> espThreadRunning{false};
 static std::atomic<bool> silentThreadRunning{false};
 static std::atomic<bool> aimbotThreadRunning{false};
+static std::atomic<bool> bodyKillThreadRunning{false};
 static std::atomic<bool> aimlockNewThreadRunning{false};
 
 static uintptr_t  g_SA_lp  = 0;
@@ -1629,6 +1634,50 @@ void StartAimLockNewThread(){
     }
 }
 void StopAimLockNewThread(){ aimlockNewThreadRunning = false; }
+
+// ============================================================
+//  BODY KILL THREAD
+//  When BodyKill is on and AimSilent has a locked target,
+//  write BodyKillHP (1–200) into that enemy's health chain
+//  every tick. The enemy sees their HP clamped to whatever
+//  value the user set — effectively "one-shot to X HP".
+//  Gated on ix_feat_aim() + ix_rt_ready() + AimSilent
+//  so it only fires when silent-aim targeting is active.
+// ============================================================
+void UpdateBodyKillThread(){
+    while(bodyKillThreadRunning){
+        if(!ix_feat_aim() || !ix_rt_ready() || !BodyKill || !AimSilent){
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+        uintptr_t target = g_CurrentBestTarget;
+        if(!target){
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        // Walk the health pointer chain (same as ESP health read)
+        uintptr_t hpC = ReadChain(target,{
+            PlayerOffsets::HealthLink1(),
+            PlayerOffsets::HealthLink2(),
+            PlayerOffsets::HealthLink3()
+        });
+        if(hpC){
+            int targetHP = (int)BodyKillHP;
+            if(targetHP < 1)   targetHP = 1;
+            if(targetHP > 200) targetHP = 200;
+            Write<int>(hpC + PlayerOffsets::Health(), targetHP);
+        }
+        std::this_thread::yield();
+    }
+}
+
+void StartBodyKillThread(){
+    if(!bodyKillThreadRunning){
+        bodyKillThreadRunning = true;
+        std::thread(UpdateBodyKillThread).detach();
+    }
+}
+void StopBodyKillThread(){ bodyKillThreadRunning = false; }
 
 void DrawESP(float,float,uintptr_t){}
 void AimbotMenu(float,float,uintptr_t){}
