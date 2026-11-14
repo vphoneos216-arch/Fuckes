@@ -170,12 +170,12 @@ static inline Vector3 AimbotBone(uintptr_t e){
     return BonePos(e, BoneOffsets::Head());
 }
 
-/* Body Kill — always targets the body (chest, falling back to hip), never
- * the head. The health-chain write in UpdateBodyKillThread is what actually
- * forces the enemy's HP to the slider value; this just makes the bullet
- * itself land on the body so it reads as a normal body hit, not a
- * guaranteed headshot. Independent of chestRate/Hardware BT's old
- * Body/Legit selector (removed from the menu — this replaces it). */
+/* Body Kill — body aim point (chest, falling back to hip). Only used once
+ * BodyKillThresholdReached() (below) says the enemy's real HP has dropped
+ * to/below the slider value; before that, aim stays on the head. Never
+ * writes HP — real in-game damage does the work. Independent of
+ * chestRate/Hardware BT's old Body/Legit selector (removed from the menu —
+ * this replaces it). */
 static inline Vector3 BodyKillBone(uintptr_t e){
     if(!e) return Vector3::Zero();
     Vector3 p = BonePos(e, BoneOffsets::Chest());
@@ -1481,15 +1481,11 @@ void EspThreadFunc(){
 // ============================================================
 void UpdateSilentAimFast(){
     /* Aim Silent / Body Kill — redirects the actual bullet via SilentAimDir.
-     * [LOGIC FIX] This previously hardcoded BoneOffsets::Head() unconditionally
-     * and was gated on AimSilent only, so Body Kill's body-targeting never
-     * reached the real aim-silent write — the bullet still always registered
-     * on the head no matter what bonePos picked in the FOV/targeting loop.
-     * Body Kill now drives this thread too (checked first — it wins if both
-     * AimSilent and BodyKill are on) and redirects onto the chest/hip instead
-     * of the head, so the hit reads as a body hit while
-     * UpdateBodyKillThread's health-chain write still forces the HP to the
-     * slider value. Do not touch for Hardware BT (separate thread/logic). */
+     * Body Kill drives this thread too, but only switches to body once the
+     * enemy's real HP (read-only, never written) drops to/below the slider
+     * value — see BodyKillThresholdReached() below. Before that point the
+     * bullet lands on the head, same as plain Aim Silent.
+     * Do not touch for Hardware BT (separate thread/logic). */
     while(silentThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
