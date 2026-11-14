@@ -1427,7 +1427,7 @@ void UpdateAndSaveSettings(){
     AimSilent         = g_Cfg.aimSilent;
     HardwareBT        = g_Cfg.hardwareBT;
     BrutalBT          = g_Cfg.brutalBT;
-    AimLock           = g_Cfg.aimCollider;
+    AimLock           = false; // AimLock feature removed — never loaded from saved config
     showAimLine       = false;   // aim line removed
     selectedBoneIndex = g_Cfg.selectedBone;
     AimFov            = g_Cfg.aimFovUI;
@@ -1908,7 +1908,7 @@ static void aimbot_tab(float /*a*/){
     AimSilent          = g_Cfg.aimSilent;
     HardwareBT         = g_Cfg.hardwareBT;
     BrutalBT           = g_Cfg.brutalBT;
-    AimLock            = g_Cfg.aimCollider;
+    AimLock            = false; // AimLock feature removed — never loaded from saved config
     AimFov             = g_Cfg.aimFovUI;
     showAimLine        = g_Cfg.showAimLine;
     BodyKill           = g_Cfg.bodyKill;

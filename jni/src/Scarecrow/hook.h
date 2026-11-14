@@ -639,6 +639,7 @@ namespace MagnetLogic {
          write transformPtr + 0x90
        (extra Object hop was wrong — pull never landed) */
     static std::map<uintptr_t, Vector3> BasePosMap;
+    static std::map<uintptr_t, Vector3> ColliderBasePosMap;   // real hitbox original pos, for restore
     static std::mutex magnetMutex;
     static uintptr_t stablePullEntity = 0;
     static Vector3 smoothedCamPos{}, smoothedFireDir{}, smoothWritePos{};
@@ -653,6 +654,22 @@ namespace MagnetLogic {
         return Read<uintptr_t>(trVal + PlayerOffsets::Transform::Matrix());
     }
 
+    /* FAKE-DAMAGE FIX: the write above only moves the cosmetic render
+     * Transform (feetTF/root). The game's actual hit-detection runs against
+     * the enemy's real physics collider (PlayerOffsets::ColliderNode()),
+     * which this never touched — so the enemy visually got pulled onto the
+     * crosshair but shots registered against the old, un-pulled hitbox,
+     * producing damage numbers that don't actually land (fake damage).
+     * Move the real collider node's transform to the SAME pulled position
+     * so visual pull and hit-validation stay in sync. */
+    static inline void WriteColliderPos(uintptr_t enemy, const Vector3& pos) {
+        uintptr_t colNode = Read<uintptr_t>(enemy + PlayerOffsets::ColliderNode());
+        if (!colNode) return;
+        uintptr_t transformPtr = ResolveWriteTransform(colNode);
+        if (transformPtr)
+            Write<Vector3>(transformPtr + 0x90, pos);
+    }
+
     inline void RestoreAllPositions() {
         if (BasePosMap.empty()) return;
         for (auto const& kv : BasePosMap) {
@@ -662,7 +679,14 @@ namespace MagnetLogic {
             uintptr_t transformPtr = ResolveWriteTransform(feetTF);
             if (transformPtr)
                 Write<Vector3>(transformPtr + 0x90, originalPos);
+
+            // Restore the real collider too, if we moved it
+            auto colIt = ColliderBasePosMap.find(enemy);
+            if (colIt != ColliderBasePosMap.end()) {
+                WriteColliderPos(enemy, colIt->second);
+            }
         }
+        ColliderBasePosMap.clear();
         BasePosMap.clear();
         pullSmoothInited = false;
         stablePullEntity = 0;
@@ -687,6 +711,17 @@ namespace MagnetLogic {
         if (BasePosMap.find(target) == BasePosMap.end())
             BasePosMap[target] = currentRootPos;
         Vector3 originalPos = BasePosMap[target];
+
+        // Snapshot the real collider's original position once, so it can
+        // be restored exactly when the pull ends / target changes.
+        if (ColliderBasePosMap.find(target) == ColliderBasePosMap.end()) {
+            uintptr_t colNode = Read<uintptr_t>(target + PlayerOffsets::ColliderNode());
+            if (colNode) {
+                Vector3 colPos = NodePos(colNode);
+                if (!VecZero(colPos))
+                    ColliderBasePosMap[target] = colPos;
+            }
+        }
 
         Vector3 rawForward = { viewMatrix._13, viewMatrix._23, viewMatrix._33 };
         float flen = sqrtf(rawForward.X*rawForward.X + rawForward.Y*rawForward.Y + rawForward.Z*rawForward.Z);
@@ -758,6 +793,12 @@ namespace MagnetLogic {
         uintptr_t transformPtr = ResolveWriteTransform(feetTF);
         if (transformPtr)
             Write<Vector3>(transformPtr + 0x90, smoothWritePos);
+
+        // Move the REAL collider to the same pulled position every frame —
+        // this is the fake-damage fix: without this, the hitbox stays put
+        // while only the visual mesh moves, so shots at the pulled model
+        // don't register against the real collider.
+        WriteColliderPos(target, smoothWritePos);
     }
 } // namespace MagnetLogic
 
@@ -1344,7 +1385,8 @@ void EspThreadFunc(){
                             bestIdx    = eidx;
                             hasSA      = true;
                         }
-                        if((AimLock || Aimbot || AimMagnet || DownPlayer) && sd < bestABDist){
+                        // [REMOVED] AimLock / Aimbot from this filter — both features removed.
+                        if((AimMagnet || DownPlayer) && sd < bestABDist){
                             bestABDist = sd;
                             bestE_AB   = e;
                             bestABPos  = bonePos;
@@ -1378,20 +1420,16 @@ void EspThreadFunc(){
         }
         {
             std::lock_guard<std::mutex>lk(g_AB_mtx);
-            /* Aim Lock = collider write; Aimbot = rotation thread uses g_AB_* */
-            if((AimLock || Aimbot) && bestE_AB){
-                if(AimLock){
-                    uintptr_t HC = Read<uintptr_t>(bestE_AB + PlayerOffsets::ColliderNode());
-                    if(HC){
-                        Write<uintptr_t>(bestE_AB + PlayerOffsets::AimCollider(), HC);
-                    }
-                }
-                g_AB_lp  = originalLP;
-                g_AB_tgt = bestABPos;
-            } else {
-                g_AB_tgt = {0,0,0};
-                g_AB_lp  = 0;
-            }
+            /* [REMOVED] Aim Lock / Aimbot — this was the LIVE raw-write path
+             * (Write<uintptr_t>(bestE_AB + AimCollider(), HC)) that actually
+             * fired every scan tick regardless of the HWBP/RT-Hook/Paradise
+             * protection added to UpdateAimLockNewThread/UpdateAimbotFast —
+             * those threads' protected paths were never the real trigger.
+             * AimLock and Aimbot are force-cleared to false everywhere else
+             * (main.cpp, SourceMenu.h) so this branch is dead, but the write
+             * itself is removed here too for defense-in-depth. */
+            g_AB_tgt = {0,0,0};
+            g_AB_lp  = 0;
         }
 
         /* ── AIM MAGNET + DOWNPLAYER + EXPLOITS ── */

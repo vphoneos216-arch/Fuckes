@@ -757,18 +757,18 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
-                    ImGui::Checkbox1("Aim Lock", &AimLock);
-                    g_Cfg.aimCollider = AimLock;
-                    AimLockNew = AimLock;
+                    // [REMOVED] Aim Lock checkbox — AimLock feature removed.
+                    // AimLock / AimLockNew / aimCollider force-cleared below
+                    // so a stale config.json value can't bring it back silently.
 
-                    // Row 1 — Aimbot | Body Kill
+                    // Row 1 — Body Kill (Aimbot checkbox removed from this slot)
                     // [REMOVED] Hardware BT checkbox — Body Kill replaces it
                     // here. HardwareBT is force-cleared below so a stale
                     // config.json value can't bring it back silently.
+                    // [REMOVED] Aimbot checkbox — Aimbot feature removed.
+                    // Aimbot force-cleared below so a stale config.json
+                    // value can't bring it back silently.
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
-                    ImGui::Checkbox1("Aimbot", &Aimbot);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
                     ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
 
                     // Row 2 — FOV Circle (moved down one row)
@@ -819,7 +819,16 @@ inline void RenderSingleMenuWindow() {
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
                     g_Cfg.aimSilent   = AimSilent;    // Aim Silent sync — unchanged, untouched by this fix
-                    // AimLock / AimLockNew / aimCollider synced from checkbox above
+                    // [REMOVED] AimLock — force-cleared every frame so a
+                    // stale config.json value (aim_collider) can never
+                    // silently re-enable it now that its checkbox is gone.
+                    AimLock           = false;
+                    AimLockNew        = false;
+                    g_Cfg.aimCollider = false;
+                    // [REMOVED] Aimbot — force-cleared every frame for the
+                    // same reason (stale config.json can't bring it back).
+                    Aimbot            = false;
+                    g_Cfg.Aimbot      = false;
                     BrutalBT          = g_Cfg.brutalBT;
                     aimBotBoneIndex   = 0;
                     showAimLine       = g_Cfg.showAimLine;
@@ -837,7 +846,7 @@ inline void RenderSingleMenuWindow() {
                      * Body Kill has no thread of its own — its threshold
                      * check runs inline inside StartSilentAimThread's loop. */
                     StartSilentAimThread();
-                    StartAimbotThread();
+                    // [REMOVED] StartAimbotThread() — Aimbot feature removed.
                     StartHardwareBTThread();
                 }
 
