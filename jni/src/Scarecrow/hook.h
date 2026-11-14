@@ -1480,18 +1480,30 @@ void EspThreadFunc(){
 }
 
 // ============================================================
-//  SILENT AIM THREAD  (also serves BrutalBT)
+//  SILENT AIM THREAD  (also serves BrutalBT / Body Kill)
+//  Anti-detect: write-on-change only + jittered sleep
 // ============================================================
 void UpdateSilentAimFast(){
-    /* Aim Silent / Body Kill — redirects the actual bullet via SilentAimDir.
-     * Body Kill drives this thread too, but only switches to body once the
-     * enemy's real HP (read-only, never written) drops to/below the slider
-     * value — see BodyKillThresholdReached() below. Before that point the
-     * bullet lands on the head, same as plain Aim Silent.
-     * Do not touch for Hardware BT (separate thread/logic). */
+    /* Redirects the actual bullet via SilentAimDir.
+     * Write-on-change: caches last written dir; only writes when the new
+     * direction differs by >0.0001 — avoids a constant identical-write
+     * pattern that anti-cheat fingerprints.
+     * Jittered sleep: 1–3 ms randomised so the thread interval is not a
+     * fixed signature.  Hardware BT has its own thread; don't touch here. */
+    static Vector3 s_lastDir = {0.f, 0.f, 0.f};
+    static uint64_t s_lastWriteMs = 0;
+
+    // small inline RNG — no stdlib rand() global state pollution
+    static uint32_t s_rng = 0xA3B1C2D4u;
+    auto jitterMs = [&]() -> int {
+        s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5;
+        return 1 + (int)(s_rng % 3u);   // 1, 2 or 3 ms
+    };
+
     while(silentThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            s_lastDir = {0.f, 0.f, 0.f};
             continue;
         }
 
@@ -1502,46 +1514,74 @@ void UpdateSilentAimFast(){
         }
         uintptr_t currentTarget = g_CurrentBestTarget;
         if(!lp || !currentTarget){
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(jitterMs()));
             continue;
         }
 
         uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
         if(!aimingInfo){
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
-        /* Body Kill threshold: only redirect to body AFTER enemy HP drops to/below slider.
-         * Before threshold → aim at HEAD (same as Aim Silent).
-         * BodyKillThresholdReached() only reads HP, never writes. */
+        /* Body Kill threshold: switches to body only after HP drops to/below
+         * slider value.  Read-only HP check, never writes HP. */
         bool bodyPhase = BodyKill && BodyKillThresholdReached(currentTarget);
         uintptr_t targetNode = bodyPhase
             ? Read<uintptr_t>(currentTarget + BoneOffsets::Chest())
             : Read<uintptr_t>(currentTarget + BoneOffsets::Head());
         if(bodyPhase && !targetNode)
-            targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());   // chest missing → hip fallback
+            targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());
 
         if(targetNode){
             Vector3 targetPos = NodePos(targetNode);
             if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
-                if(!bodyPhase) targetPos.Y += 0.04f;   // small skull lift — head shots only (pre-threshold)
+                if(!bodyPhase) targetPos.Y += 0.04f;
                 Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
                 Vector3 dir;
                 dir.X = targetPos.X - startPos.X;
                 dir.Y = targetPos.Y - startPos.Y;
                 dir.Z = targetPos.Z - startPos.Z;
-                Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+
+                // Write-on-change: skip if direction essentially unchanged
+                float dx = dir.X - s_lastDir.X;
+                float dy = dir.Y - s_lastDir.Y;
+                float dz = dir.Z - s_lastDir.Z;
+                bool changed = (dx*dx + dy*dy + dz*dz) > 1e-8f;
+
+                // Also force-refresh every 200 ms even if "unchanged" to
+                // prevent stale reads from silently drifting the bullet.
+                uint64_t now = NowMs();
+                bool stale = (now - s_lastWriteMs) >= 200ULL;
+
+                if(changed || stale){
+                    Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+                    s_lastDir    = dir;
+                    s_lastWriteMs = now;
+                }
             }
         }
-        std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(jitterMs()));
     }
 }
 
 /* GetRotationToTheLocation — provided by bool.h */
 
 void UpdateAimbotFast(){
-    /* data.cpp aimbot: fire-gate + LookRotation + Slerp(0.25) on ViewRotation */
+    /* Aimbot: fire-gate + LookRotation + smooth NLerp on ViewRotation.
+     * Anti-detect changes vs original:
+     *  1. t clamped to 0.08–0.18 (0.25 was too snappy, flagged by motion
+     *     analysis as non-human rotation speed).
+     *  2. Fire-gate: skip if not actually shooting (unchanged, but explicit).
+     *  3. Jittered sleep 8–16 ms so the write interval isn't a fixed signature.
+     *  4. Write-on-angle-change: skip write if new rot is within 0.001 of
+     *     current to avoid flooding identical writes. */
+    static uint32_t s_abRng = 0xC1D2E3F4u;
+    auto abJitter = [&]() -> int {
+        s_abRng ^= s_abRng << 13; s_abRng ^= s_abRng >> 17; s_abRng ^= s_abRng << 5;
+        return 8 + (int)(s_abRng % 9u);   // 8–16 ms
+    };
+
     while(aimbotThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !Aimbot){
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -1555,62 +1595,89 @@ void UpdateAimbotFast(){
             tgt = g_AB_tgt;
         }
         if(!lp || VecZero(tgt)){
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
             continue;
         }
-        /* only while firing (data.cpp) */
+        /* Only write while actually firing */
         uint8_t fb = Read<uint8_t>(lp + PlayerOffsets::IsFiring());
         int     fi = Read<int>(lp + PlayerOffsets::IsFiring());
         if(fb == 0 && fi <= 0){
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
             continue;
         }
-        /* Live camera pos from MainCamera (data.cpp GetPlayerMainCamera) */
+        /* Live camera pos */
         Vector3 liveCam = Vector3::Zero();
         uintptr_t camNode = GetPlayerMainCamera(lp);
         if(camNode) liveCam = NodePos(camNode);
         if(VecZero(liveCam))
             liveCam = BonePos(lp, BoneOffsets::Head());
         if(VecZero(liveCam)){
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
             continue;
         }
         Vector3 aimPos = tgt;
-        aimPos.Y += 0.05f; /* head bone slight lift — data.cpp */
+        aimPos.Y += 0.05f;
 
         Quaternion targetRot  = GetRotationToTheLocation(aimPos, 0.0f, liveCam);
         Quaternion currentRot = Read<Quaternion>(lp + PlayerOffsets::Rotation());
-        /* data.cpp: Slerp 0.25 — QNlerp is same nlerp path */
-        float t = 0.25f;
+
+        /* t: human-like speed 0.08–0.18; never instant snap */
+        float t = 0.10f;
         if(AimSmooth > 1.f){
             t = 1.f / AimSmooth;
-            if(t > 0.35f) t = 0.35f;
+            if(t > 0.18f) t = 0.18f;
             if(t < 0.08f) t = 0.08f;
         }
-        Write<Quaternion>(lp + PlayerOffsets::Rotation(), QNlerp(currentRot, targetRot, t));
-        std::this_thread::yield();
+
+        Quaternion nextRot = QNlerp(currentRot, targetRot, t);
+
+        /* Write-on-change: dot product check — skip if already close enough */
+        float dot = currentRot.X*nextRot.X + currentRot.Y*nextRot.Y
+                  + currentRot.Z*nextRot.Z + currentRot.W*nextRot.W;
+        if(dot < 0.f) dot = -dot;   // shortest path
+        if(dot < 0.9999f){          // 0.9999 ≈ <0.26° — below that, skip
+            Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
     }
 }
 
 // ============================================================
-//  AIM LOCK NEW (data.cpp style direct write)
+//  AIM LOCK NEW (data.cpp style collider redirect)
+//  Anti-detect: write-on-change + jitter 3–7 ms
 // ============================================================
 void UpdateAimLockNewThread(){
+    /* Writes enemy head collider into AimCollider so the game's own aim
+     * snaps to head.  Anti-detect: cache last written value and skip the
+     * write when the collider pointer hasn't changed — prevents the
+     * constant same-address write signature.  Also replaced yield() with
+     * a small jittered sleep so the thread doesn't spin at full CPU. */
+    static uintptr_t s_lastCollider = 0;
+
+    static uint32_t s_alRng = 0xF1E2D3C4u;
+    auto alJitter = [&]() -> int {
+        s_alRng ^= s_alRng << 13; s_alRng ^= s_alRng >> 17; s_alRng ^= s_alRng << 5;
+        return 3 + (int)(s_alRng % 5u);   // 3–7 ms
+    };
+
     while(aimlockNewThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !AimLock){
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            s_lastCollider = 0;
             continue;
         }
         uintptr_t enemy = g_CurrentBestTarget;
         if(!enemy){
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            std::this_thread::sleep_for(std::chrono::milliseconds(alJitter()));
+            s_lastCollider = 0;
             continue;
         }
         uintptr_t HedColider = Read<uintptr_t>(enemy + PlayerOffsets::ColliderNode());
-        if(HedColider){
+        if(HedColider && HedColider != s_lastCollider){
             Write<uintptr_t>(enemy + PlayerOffsets::AimCollider(), HedColider);
+            s_lastCollider = HedColider;
         }
-        std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(alJitter()));
     }
 }
 
@@ -1621,12 +1688,22 @@ void UpdateAimLockNewThread(){
 static bool hwbtThreadRunning = false;
 
 void UpdateHardwareBTFast(){
+    /* Hardware BT — same write-on-change + jitter as UpdateSilentAimFast. */
+    static Vector3 s_hwLastDir = {0.f, 0.f, 0.f};
+    static uint64_t s_hwLastWriteMs = 0;
+
+    static uint32_t s_hwRng = 0xB4A3C2D1u;
+    auto hwJitter = [&]() -> int {
+        s_hwRng ^= s_hwRng << 13; s_hwRng ^= s_hwRng >> 17; s_hwRng ^= s_hwRng << 5;
+        return 1 + (int)(s_hwRng % 3u);
+    };
+
     while(hwbtThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !HardwareBT){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            s_hwLastDir = {0.f, 0.f, 0.f};
             continue;
         }
-        /* Body/Legit only — if Head mode, still allow head via SilentAimBone */
         uintptr_t lp = 0;
         {
             std::lock_guard<std::mutex> lk(g_SA_mtx);
@@ -1634,12 +1711,12 @@ void UpdateHardwareBTFast(){
         }
         uintptr_t currentTarget = g_CurrentBestTarget;
         if(!lp || !currentTarget){
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(hwJitter()));
             continue;
         }
         uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
         if(!aimingInfo){
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
         Vector3 targetPos = SilentAimBone(currentTarget);
@@ -1651,9 +1728,21 @@ void UpdateHardwareBTFast(){
             dir.X = targetPos.X - startPos.X;
             dir.Y = targetPos.Y - startPos.Y;
             dir.Z = targetPos.Z - startPos.Z;
-            Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+
+            float dx = dir.X - s_hwLastDir.X;
+            float dy = dir.Y - s_hwLastDir.Y;
+            float dz = dir.Z - s_hwLastDir.Z;
+            bool changed = (dx*dx + dy*dy + dz*dz) > 1e-8f;
+            uint64_t now = NowMs();
+            bool stale = (now - s_hwLastWriteMs) >= 200ULL;
+
+            if(changed || stale){
+                Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+                s_hwLastDir     = dir;
+                s_hwLastWriteMs = now;
+            }
         }
-        std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(hwJitter()));
     }
 }
 
