@@ -1276,8 +1276,8 @@ void EspThreadFunc(){
 
             if(fovRadius > 0.f && !knocked){
                 Vector3 bonePos;
-                if(BrutalBT || AimSilent)
-                    bonePos = HwbtHeadWorld(e);               /* Aim Silent / Brutal = HEAD only */
+                if(BrutalBT || AimSilent || BodyKill)
+                    bonePos = HwbtHeadWorld(e);               /* Aim Silent / Brutal / Body Kill = HEAD only */
                 else if(HardwareBT)
                     bonePos = SilentAimBone(e);               /* Hardware BT Body/Legit/Head */
                 else
@@ -1288,7 +1288,7 @@ void EspThreadFunc(){
                     float dx = sc.X-sw2, dy = sc.Y-sh2;
                     float sd = sqrtf(dx*dx+dy*dy);
                     if(sd <= fovRadius){
-                        if((AimSilent || BrutalBT || HardwareBT) && sd < bestSADist){
+                        if((AimSilent || BrutalBT || HardwareBT || BodyKill) && sd < bestSADist){
                             bestSADist = sd;
                             bestE_SA   = e;
                             bestSAPos  = bonePos;
@@ -1319,10 +1319,10 @@ void EspThreadFunc(){
 
         {
             std::lock_guard<std::mutex>lk(g_SA_mtx);
-            if((AimSilent || BrutalBT || HardwareBT) && bestE_SA){
+            if((AimSilent || BrutalBT || HardwareBT || BodyKill) && bestE_SA){
                     g_CurrentBestTarget = bestE_SA;
                 }
-                if((AimSilent || BrutalBT || HardwareBT) && bestE_SA)
+                if((AimSilent || BrutalBT || HardwareBT || BodyKill) && bestE_SA)
                 g_SA_tgt = bestSAPos;
             else
                 g_SA_tgt = Vector3{0,0,0};
@@ -1637,16 +1637,24 @@ void StopAimLockNewThread(){ aimlockNewThreadRunning = false; }
 
 // ============================================================
 //  BODY KILL THREAD
-//  When BodyKill is on and AimSilent has a locked target,
-//  write BodyKillHP (1–200) into that enemy's health chain
-//  every tick. The enemy sees their HP clamped to whatever
-//  value the user set — effectively "one-shot to X HP".
-//  Gated on ix_feat_aim() + ix_rt_ready() + AimSilent
-//  so it only fires when silent-aim targeting is active.
+//  Standalone toggle — does NOT require AimSilent to also be on.
+//  [BUG FIX] BodyKill now feeds its own entry into the same FOV
+//  target-lock scan AimSilent/BrutalBT/HardwareBT use (see the
+//  "|| BodyKill" additions in the targeting loop above), so
+//  g_CurrentBestTarget gets populated purely from BodyKill being
+//  on. Previously that scan only ran for AimSilent/BrutalBT/
+//  HardwareBT, so g_CurrentBestTarget stayed 0 whenever BodyKill
+//  was toggled on its own — the thread looped forever with no
+//  target and nothing ever happened.
+//  Works the same way Aim Silent's targeting does (locks the
+//  nearest head in FOV) and writes BodyKillHP (1–200) into that
+//  enemy's health chain every tick — "one-shot to X HP" whether
+//  or not the bullet itself lands.
+//  Gated on ix_feat_aim() + ix_rt_ready() + BodyKill only.
 // ============================================================
 void UpdateBodyKillThread(){
     while(bodyKillThreadRunning){
-        if(!ix_feat_aim() || !ix_rt_ready() || !BodyKill || !AimSilent){
+        if(!ix_feat_aim() || !ix_rt_ready() || !BodyKill){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
