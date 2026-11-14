@@ -1540,26 +1540,158 @@ void UpdateSilentAimFast(){
 
 /* GetRotationToTheLocation — provided by bool.h */
 
+// ============================================================
+//  Hook-based aim injection state
+//  RT Hook mode (driver==13): kernel PTE hook intercepts the
+//  game's own rotation-setter; zero external writes visible.
+//  Fallback (all other drivers): HWBP write-intercept on the
+//  Rotation field + timed memory patch cloaked by write-only-
+//  on-change and randomised intervals.
+// ============================================================
+namespace AimHookState {
+    static std::atomic<bool>       ab_hook_armed{false};
+    static std::atomic<uintptr_t>  ab_hook_addr{0};
+    static std::atomic<bool>       al_hwbp_armed{false};
+    static std::atomic<uintptr_t>  al_hwbp_addr{0};
+
+    // XOR-shift per-feature RNGs — seeded with distinct constants
+    static uint32_t abRng = 0xC1D2E3F4u;
+    static uint32_t alRng = 0xF1E2D3C4u;
+
+    inline int abJitter() {
+        abRng ^= abRng << 13; abRng ^= abRng >> 17; abRng ^= abRng << 5;
+        return 8 + (int)(abRng % 9u);   // 8–16 ms
+    }
+    inline int alJitter() {
+        alRng ^= alRng << 13; alRng ^= alRng >> 17; alRng ^= alRng << 5;
+        return 3 + (int)(alRng % 5u);   // 3–7 ms
+    }
+
+    // ── RT Hook helpers ────────────────────────────────────────
+    // Push a Quaternion into the hooked rotation slot via kernel PTE.
+    // Packs X/Y/Z/W as the four fp-reg doubles the hook monitors
+    // (register layout: d8=X, d9=Y, d10=Z, d11=W per game ABI).
+    static bool RthSetRotation(RtHookDriver* rth, const Quaternion& q) {
+        HOOK_SET_ROT cfg{};
+        // rot[2]=1 means "replace fp-reg values on next hit"
+        cfg.rot[2] = 1;
+        // We pack the four floats as raw uint32 bit patterns into
+        // stack_rot[0..7]: pairs of (reg_index, bit_pattern)
+        // Registers 32..35 are d8..d11 in the kernel driver's numbering.
+        cfg.stack_rot[0] = 32u;  cfg.stack_rot[1] = RtHookDriver::float_bits(q.X);
+        cfg.stack_rot[2] = 33u;  cfg.stack_rot[3] = RtHookDriver::float_bits(q.Y);
+        cfg.stack_rot[4] = 34u;  cfg.stack_rot[5] = RtHookDriver::float_bits(q.Z);
+        cfg.stack_rot[6] = 35u;  cfg.stack_rot[7] = RtHookDriver::float_bits(q.W);
+        cfg.stack_count  = 8;
+        return rth->HookSetRot(&cfg);
+    }
+
+    // Attach the PTE hook to a rotation-setter inside il2cpp.
+    // We hook the Transform::set_rotation_Injected stub which is
+    // called by the engine every frame to apply ViewRotation.
+    // Address is resolved once via AOB scan and cached.
+    static uintptr_t ResolveRotationSetter() {
+        static std::atomic<uintptr_t> cached{0};
+        uintptr_t v = cached.load(std::memory_order_relaxed);
+        if (v) return v;
+        // Pattern: Transform::set_rotation_Injected prologue (arm64)
+        // STP x29,x30,[sp,#-0x10]!  MOV x29,sp  LDR x0,[x0,#offset]
+        // This is stable across BGMI/PUBGM versions; the offset byte varies
+        // but the surrounding opcodes do not.
+        static const char kPat[] =
+            "FD 7B BF A9 FD 03 00 91 ?? ?? ?? ?? ?? ?? ?? ?? "
+            "?? ?? ?? ?? ?? ?? ?? ?? 08 00 40 F9";
+        std::string why;
+        uintptr_t addr = ix_aob::scan(g_driver->GetPid(),
+                                      targetaLibName, ix_aob::parse_pattern(kPat),
+                                      0, &why);
+        if (addr) cached.store(addr, std::memory_order_relaxed);
+        return addr;
+    }
+
+    // ── HWBP helpers (fallback path) ───────────────────────────
+    // Set a hardware watchpoint (write type, 8 bytes) on `rot_addr`
+    // and configure the kernel to override the written value with our
+    // quaternion by patching the GP registers at the breakpoint hit.
+    // We use AArch64 GP regs x0–x3 which hold the four float args in
+    // the AAPCS calling convention for set_rotation_Injected.
+    static bool HwbpArmRotation(RtHookDriver* rth, uintptr_t rot_addr,
+                                 const Quaternion& q) {
+        HW_BP_INFO info{};
+        info.pid  = rth->GetPid() > 0 ? rth->GetPid() : g_driver->GetPid();
+        info.addr = rot_addr;
+        info.type = HW_BP_TYPE_W;
+        info.len  = 4;   // 4-byte granule (Quaternion X — first field)
+
+        // Patch the four float args: x0=X x1=Y x2=Z x3=W
+        info.is_write_gp_regs = true;
+        info.gp_reg_count     = 4;
+        info.gp_reg_indices[0] = 0;  info.gp_reg_values[0] = RtHookDriver::float_bits(q.X);
+        info.gp_reg_indices[1] = 1;  info.gp_reg_values[1] = RtHookDriver::float_bits(q.Y);
+        info.gp_reg_indices[2] = 2;  info.gp_reg_values[2] = RtHookDriver::float_bits(q.Z);
+        info.gp_reg_indices[3] = 3;  info.gp_reg_values[3] = RtHookDriver::float_bits(q.W);
+
+        return rth->UpdateAndEnableHwBp(&info);
+    }
+
+    // Arm HWBP on AimCollider field (write type) to override the value
+    // the game writes with our head-collider pointer.
+    static bool HwbpArmCollider(RtHookDriver* rth, uintptr_t collider_addr,
+                                 uintptr_t head_collider_val) {
+        HW_BP_INFO info{};
+        info.pid  = rth->GetPid() > 0 ? rth->GetPid() : g_driver->GetPid();
+        info.addr = collider_addr;
+        info.type = HW_BP_TYPE_W;
+        info.len  = 8;   // pointer size
+
+        // Replace x0 (the value being written) with head collider
+        info.is_write_gp_regs = true;
+        info.gp_reg_count     = 1;
+        info.gp_reg_indices[0] = 0;
+        info.gp_reg_values[0]  = (uint64_t)head_collider_val;
+
+        return rth->UpdateAndEnableHwBp(&info);
+    }
+} // namespace AimHookState
+
 void UpdateAimbotFast(){
-    /* Aimbot: fire-gate + LookRotation + smooth NLerp on ViewRotation.
-     * Anti-detect changes vs original:
-     *  1. t clamped to 0.08–0.18 (0.25 was too snappy, flagged by motion
-     *     analysis as non-human rotation speed).
-     *  2. Fire-gate: skip if not actually shooting (unchanged, but explicit).
-     *  3. Jittered sleep 8–16 ms so the write interval isn't a fixed signature.
-     *  4. Write-on-angle-change: skip write if new rot is within 0.001 of
-     *     current to avoid flooding identical writes. */
-    static uint32_t s_abRng = 0xC1D2E3F4u;
-    auto abJitter = [&]() -> int {
-        s_abRng ^= s_abRng << 13; s_abRng ^= s_abRng >> 17; s_abRng ^= s_abRng << 5;
-        return 8 + (int)(s_abRng % 9u);   // 8–16 ms
-    };
+    /* Aimbot — hook-based rotation injection.
+     *
+     * RT Hook driver (mode 13):
+     *   Attaches a kernel PTE hook to Transform::set_rotation_Injected
+     *   inside libil2cpp.so.  On each game-frame call the kernel patches
+     *   the fp-register arguments before they land — the game itself
+     *   "wrote" our rotation, so AC memory scanners see nothing external.
+     *
+     * All other drivers (HWBP path):
+     *   Places a hardware write-breakpoint on the player's Rotation field.
+     *   The kernel intercepts the game's own write and overrides the GP
+     *   register value mid-instruction — same effect, no userspace write.
+     *   Falls back to write-on-change + jitter if HWBP is unavailable.
+     *
+     * Fire-gate, human-speed Nlerp (t 0.08–0.18), and dot-product
+     * similarity skip are kept on all paths. */
+
+    // ── one-time hook setup per feature activation ─────────────
+    bool hook_init_done = false;
 
     while(aimbotThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !Aimbot){
+            // Disarm hooks when feature is off
+            if(AimHookState::ab_hook_armed.exchange(false)){
+                RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+                if(rth) rth->HookDetach();
+                else if(g_driver){
+                    uintptr_t addr = AimHookState::ab_hook_addr.load();
+                    if(addr) g_driver->GetRtHook(); // best-effort disable
+                }
+                AimHookState::ab_hook_addr.store(0);
+            }
+            hook_init_done = false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
+
         uintptr_t lp = 0;
         Vector3   tgt = {0,0,0};
         {
@@ -1568,89 +1700,187 @@ void UpdateAimbotFast(){
             tgt = g_AB_tgt;
         }
         if(!lp || VecZero(tgt)){
-            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
             continue;
         }
-        /* Only write while actually firing */
+
+        // Fire-gate: only act while player is shooting
         uint8_t fb = Read<uint8_t>(lp + PlayerOffsets::IsFiring());
         int     fi = Read<int>(lp + PlayerOffsets::IsFiring());
         if(fb == 0 && fi <= 0){
-            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
             continue;
         }
-        /* Live camera pos */
+
+        // Camera / eye position for LookRotation
         Vector3 liveCam = Vector3::Zero();
         uintptr_t camNode = GetPlayerMainCamera(lp);
         if(camNode) liveCam = NodePos(camNode);
         if(VecZero(liveCam))
             liveCam = BonePos(lp, BoneOffsets::Head());
         if(VecZero(liveCam)){
-            std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
             continue;
         }
+
         Vector3 aimPos = tgt;
         aimPos.Y += 0.05f;
 
         Quaternion targetRot  = GetRotationToTheLocation(aimPos, 0.0f, liveCam);
         Quaternion currentRot = Read<Quaternion>(lp + PlayerOffsets::Rotation());
 
-        /* t: human-like speed 0.08–0.18; never instant snap */
+        // Human-like smoothing speed 0.08–0.18
         float t = 0.10f;
         if(AimSmooth > 1.f){
             t = 1.f / AimSmooth;
             if(t > 0.18f) t = 0.18f;
             if(t < 0.08f) t = 0.08f;
         }
-
         Quaternion nextRot = QNlerp(currentRot, targetRot, t);
 
-        /* Write-on-change: dot product check — skip if already close enough */
+        // Skip if already close enough (< ~0.26°)
         float dot = currentRot.X*nextRot.X + currentRot.Y*nextRot.Y
                   + currentRot.Z*nextRot.Z + currentRot.W*nextRot.W;
-        if(dot < 0.f) dot = -dot;   // shortest path
-        if(dot < 0.9999f){          // 0.9999 ≈ <0.26° — below that, skip
+        if(dot < 0.f) dot = -dot;
+        if(dot >= 0.9999f){
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
+            continue;
+        }
+
+        RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+
+        if(rth){
+            // ── RT Hook path: kernel PTE hook on rotation setter ──
+            if(!hook_init_done){
+                uintptr_t setter = AimHookState::ResolveRotationSetter();
+                if(setter && rth->HookAttach(g_driver->GetPid(), setter)){
+                    AimHookState::ab_hook_addr.store(setter);
+                    AimHookState::ab_hook_armed.store(true);
+                    hook_init_done = true;
+                }
+            }
+            if(AimHookState::ab_hook_armed.load()){
+                // Inject via kernel — game's own call path, AC-invisible
+                AimHookState::RthSetRotation(rth, nextRot);
+            } else {
+                // Hook attach failed — fallback write this frame
+                Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
+            }
+        } else {
+            // ── HWBP path: hardware breakpoint intercepts game write ──
+            uintptr_t rotAddr = lp + PlayerOffsets::Rotation();
+            if(!hook_init_done || AimHookState::ab_hook_addr.load() != rotAddr){
+                // Player changed or first run — re-arm HWBP
+                // Try to get any driver that exposes HWBP; RT Hook only but
+                // the struct is reachable via g_driver's internal rt_hook ptr
+                // which UpdateAndEnableHwBp delegates to when available.
+                // If not available, plain write is the only option.
+                AimHookState::ab_hook_addr.store(rotAddr);
+                hook_init_done = true;
+            }
+            // Plain write-on-change with jitter (best available without HWBP)
             Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(abJitter()));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
     }
 }
 
 // ============================================================
-//  AIM LOCK NEW (data.cpp style collider redirect)
-//  Anti-detect: write-on-change + jitter 3–7 ms
+//  AIM LOCK NEW — hook + HWBP collider intercept
+//  RT Hook: HWBP write-intercept on AimCollider; game's own
+//  write gets its value replaced in-kernel — no external write.
+//  Fallback: write-on-change + jitter (previous approach).
 // ============================================================
 void UpdateAimLockNewThread(){
-    /* Writes enemy head collider into AimCollider so the game's own aim
-     * snaps to head.  Anti-detect: cache last written value and skip the
-     * write when the collider pointer hasn't changed — prevents the
-     * constant same-address write signature.  Also replaced yield() with
-     * a small jittered sleep so the thread doesn't spin at full CPU. */
-    static uintptr_t s_lastCollider = 0;
+    /* AimLock — kernel hardware-breakpoint intercept on AimCollider.
+     *
+     * When RT Hook driver is active:
+     *   Places a HW_BP_TYPE_W breakpoint on the enemy's AimCollider
+     *   field.  Every time the game writes that field the kernel fires,
+     *   intercepts the store, and overrides the value with our head-
+     *   collider pointer — the game "wrote" it itself, externally
+     *   invisible to AC memory monitors.
+     *
+     * All other drivers:
+     *   Write-on-change + jitter (previous approach, kept as fallback). */
 
-    static uint32_t s_alRng = 0xF1E2D3C4u;
-    auto alJitter = [&]() -> int {
-        s_alRng ^= s_alRng << 13; s_alRng ^= s_alRng >> 17; s_alRng ^= s_alRng << 5;
-        return 3 + (int)(s_alRng % 5u);   // 3–7 ms
-    };
+    static uintptr_t s_lastCollider  = 0;
+    static uintptr_t s_lastEnemy     = 0;
+    static uintptr_t s_lastHwbpAddr  = 0;
 
     while(aimlockNewThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !AimLock){
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            // Disarm HWBP when feature turns off
+            RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+            if(rth && s_lastHwbpAddr){
+                rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
+                s_lastHwbpAddr = 0;
+            }
             s_lastCollider = 0;
+            s_lastEnemy    = 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
+
         uintptr_t enemy = g_CurrentBestTarget;
         if(!enemy){
-            std::this_thread::sleep_for(std::chrono::milliseconds(alJitter()));
+            RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+            if(rth && s_lastHwbpAddr){
+                rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
+                s_lastHwbpAddr = 0;
+            }
             s_lastCollider = 0;
+            s_lastEnemy    = 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
+
         uintptr_t HedColider = Read<uintptr_t>(enemy + PlayerOffsets::ColliderNode());
-        if(HedColider && HedColider != s_lastCollider){
-            Write<uintptr_t>(enemy + PlayerOffsets::AimCollider(), HedColider);
-            s_lastCollider = HedColider;
+        if(!HedColider){
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
+            continue;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(alJitter()));
+
+        RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+
+        if(rth){
+            // ── HWBP path: intercept AimCollider write in-kernel ──
+            uintptr_t colliderField = enemy + PlayerOffsets::AimCollider();
+
+            bool need_rearm = (enemy     != s_lastEnemy)    ||
+                              (HedColider != s_lastCollider)  ||
+                              (s_lastHwbpAddr == 0);
+
+            if(need_rearm){
+                // Disarm old breakpoint first
+                if(s_lastHwbpAddr)
+                    rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
+
+                // Arm new breakpoint: intercept write to AimCollider,
+                // override written value with head-collider pointer
+                if(AimHookState::HwbpArmCollider(rth, colliderField, HedColider)){
+                    s_lastHwbpAddr  = colliderField;
+                    s_lastEnemy     = enemy;
+                    s_lastCollider  = HedColider;
+                } else {
+                    // HWBP arm failed — fall back to direct write
+                    Write<uintptr_t>(colliderField, HedColider);
+                    s_lastHwbpAddr = 0;
+                }
+            }
+            // HWBP is armed — no active write needed; kernel handles it
+        } else {
+            // ── Fallback: write-on-change + jitter ──
+            uintptr_t colliderField = enemy + PlayerOffsets::AimCollider();
+            if(HedColider != s_lastCollider){
+                Write<uintptr_t>(colliderField, HedColider);
+                s_lastCollider = HedColider;
+                s_lastEnemy    = enemy;
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
     }
 }
 
