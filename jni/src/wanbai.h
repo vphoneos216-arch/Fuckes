@@ -1262,8 +1262,9 @@ public:
     }
 
     /* ── RT Hook kernel access (hook.h aimbot/aimlock threads use this) ── */
-    RtHookDriver* GetRtHook() { return (use_rt_hook && rt_hook) ? rt_hook : nullptr; }
-    pid_t         GetPid()    const { return this->pid; }
+    RtHookDriver*   GetRtHook()    { return (use_rt_hook && rt_hook) ? rt_hook : nullptr; }
+    paradise_driver* GetParadise() { return (use_paradise && paradise) ? paradise : nullptr; }
+    pid_t           GetPid()       const { return this->pid; }
 };
 
 // ── Global driver instance (initialised in main before game loop) ──

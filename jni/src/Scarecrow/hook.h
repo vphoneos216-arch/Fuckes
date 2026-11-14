@@ -6,6 +6,7 @@
 #include "offsets.h"
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
+#include "../ix_aob.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -1615,10 +1616,10 @@ namespace AimHookState {
     // quaternion by patching the GP registers at the breakpoint hit.
     // We use AArch64 GP regs x0–x3 which hold the four float args in
     // the AAPCS calling convention for set_rotation_Injected.
-    static bool HwbpArmRotation(RtHookDriver* rth, uintptr_t rot_addr,
+    static bool HwbpArmRotation(RtHookDriver* /*rth*/, uintptr_t rot_addr,
                                  const Quaternion& q) {
         HW_BP_INFO info{};
-        info.pid  = rth->GetPid() > 0 ? rth->GetPid() : g_driver->GetPid();
+        info.pid  = g_driver ? g_driver->GetPid() : 0;
         info.addr = rot_addr;
         info.type = HW_BP_TYPE_W;
         info.len  = 4;   // 4-byte granule (Quaternion X — first field)
@@ -1639,7 +1640,7 @@ namespace AimHookState {
     static bool HwbpArmCollider(RtHookDriver* rth, uintptr_t collider_addr,
                                  uintptr_t head_collider_val) {
         HW_BP_INFO info{};
-        info.pid  = rth->GetPid() > 0 ? rth->GetPid() : g_driver->GetPid();
+        info.pid  = g_driver ? g_driver->GetPid() : 0;
         info.addr = collider_addr;
         info.type = HW_BP_TYPE_W;
         info.len  = 8;   // pointer size
@@ -1652,6 +1653,56 @@ namespace AimHookState {
 
         return rth->UpdateAndEnableHwBp(&info);
     }
+    // ── Paradise HWBP helpers ──────────────────────────────────────────
+    // Arms a Paradise hardware write-breakpoint on a rotation/collider field.
+    // Paradise intercepts the game's own store and overrides the GP register
+    // value in-kernel — externally invisible, same as RT Hook HWBP tier.
+    static bool PdHwbpArmRotation(paradise_driver* pd, uintptr_t rot_addr,
+                                   const Quaternion& q) {
+        // Rotation is 4×float at rot_addr.  We arm a 16-byte WRITE watchpoint;
+        // Paradise will fire on every game-write and let us inject our value
+        // via ptebp_set records.  For now we place the watchpoint + rely on
+        // the companion record path (hwbp_set_record) if the driver supports it.
+        // Minimum viable: arm the HWBP so the game's own write is intercepted;
+        // the value override uses hwbp_set_record per float component.
+        paradise_bp_point_config pt{};
+        pt.address  = (uint64_t)rot_addr;
+        pt.type     = PARADISE_HWBP_WRITE;
+        pt.length   = 16;  // Quaternion = 4 floats = 16 bytes
+        pt.scope    = PARADISE_HWBP_ALL_THREADS;
+        pt.reserved = 0;
+        if(!pd->hwbp_set(&pt, 1)) return false;
+        // Inject override values into breakpoint record slots 0–3 (x,y,z,w)
+        // paradise_bp_record is the value-override structure for the BP.
+        // We write each float component as a 4-byte record at its sub-offset.
+        const float components[4] = {q.X, q.Y, q.Z, q.W};
+        for(uint32_t i = 0; i < 4; ++i){
+            uint32_t bits;
+            __builtin_memcpy(&bits, &components[i], 4);
+            pd->hwbp_set_record(0, i, rot_addr + i*4, bits);
+        }
+        return true;
+    }
+
+    static bool PdHwbpArmCollider(paradise_driver* pd, uintptr_t collider_addr,
+                                   uintptr_t head_collider_val) {
+        paradise_bp_point_config pt{};
+        pt.address  = (uint64_t)collider_addr;
+        pt.type     = PARADISE_HWBP_WRITE;
+        pt.length   = 8;   // pointer = 8 bytes
+        pt.scope    = PARADISE_HWBP_ALL_THREADS;
+        pt.reserved = 0;
+        if(!pd->hwbp_set(&pt, 1)) return false;
+        // Override the pointer value the game is about to write
+        pd->hwbp_set_record(0, 0, collider_addr, (uint32_t)(head_collider_val & 0xFFFFFFFFu));
+        pd->hwbp_set_record(0, 1, collider_addr+4, (uint32_t)(head_collider_val >> 32));
+        return true;
+    }
+
+    static void PdHwbpDisarm(paradise_driver* pd) {
+        if(pd) pd->hwbp_remove();
+    }
+
 } // namespace AimHookState
 
 void UpdateAimbotFast(){
@@ -1767,19 +1818,37 @@ void UpdateAimbotFast(){
                 Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
             }
         } else {
-            // ── HWBP path: hardware breakpoint intercepts game write ──
             uintptr_t rotAddr = lp + PlayerOffsets::Rotation();
-            if(!hook_init_done || AimHookState::ab_hook_addr.load() != rotAddr){
-                // Player changed or first run — re-arm HWBP
-                // Try to get any driver that exposes HWBP; RT Hook only but
-                // the struct is reachable via g_driver's internal rt_hook ptr
-                // which UpdateAndEnableHwBp delegates to when available.
-                // If not available, plain write is the only option.
-                AimHookState::ab_hook_addr.store(rotAddr);
-                hook_init_done = true;
+            paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+
+            if(pd){
+                // ── Paradise HWBP tier: kernel intercepts game's own write ──
+                bool need_rearm = (!hook_init_done ||
+                                   AimHookState::ab_hook_addr.load() != rotAddr);
+                if(need_rearm){
+                    // Disarm previous point before re-arming (target may have changed)
+                    if(AimHookState::ab_hook_armed.load())
+                        AimHookState::PdHwbpDisarm(pd);
+                    if(AimHookState::PdHwbpArmRotation(pd, rotAddr, nextRot)){
+                        AimHookState::ab_hook_addr.store(rotAddr);
+                        AimHookState::ab_hook_armed.store(true);
+                        hook_init_done = true;
+                    } else {
+                        // Paradise arm failed — plain write this frame
+                        Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
+                    }
+                } else {
+                    // Breakpoint already armed — update override values in-place
+                    AimHookState::PdHwbpArmRotation(pd, rotAddr, nextRot);
+                }
+            } else {
+                // ── Fallback: write-on-change + jitter (all other drivers) ──
+                if(!hook_init_done || AimHookState::ab_hook_addr.load() != rotAddr){
+                    AimHookState::ab_hook_addr.store(rotAddr);
+                    hook_init_done = true;
+                }
+                Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
             }
-            // Plain write-on-change with jitter (best available without HWBP)
-            Write<Quaternion>(lp + PlayerOffsets::Rotation(), nextRot);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::abJitter()));
@@ -1809,29 +1878,29 @@ void UpdateAimLockNewThread(){
     static uintptr_t s_lastEnemy     = 0;
     static uintptr_t s_lastHwbpAddr  = 0;
 
+    // Helper lambda to disarm both RT Hook and Paradise HWBPs
+    auto disarm_all = [&](){
+        RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+        if(rth && s_lastHwbpAddr)
+            rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
+        if(pd && s_lastHwbpAddr)
+            AimHookState::PdHwbpDisarm(pd);
+        s_lastHwbpAddr = 0;
+        s_lastCollider = 0;
+        s_lastEnemy    = 0;
+    };
+
     while(aimlockNewThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !AimLock){
-            // Disarm HWBP when feature turns off
-            RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
-            if(rth && s_lastHwbpAddr){
-                rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
-                s_lastHwbpAddr = 0;
-            }
-            s_lastCollider = 0;
-            s_lastEnemy    = 0;
+            disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
 
         uintptr_t enemy = g_CurrentBestTarget;
         if(!enemy){
-            RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
-            if(rth && s_lastHwbpAddr){
-                rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
-                s_lastHwbpAddr = 0;
-            }
-            s_lastCollider = 0;
-            s_lastEnemy    = 0;
+            disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
@@ -1871,12 +1940,40 @@ void UpdateAimLockNewThread(){
             }
             // HWBP is armed — no active write needed; kernel handles it
         } else {
-            // ── Fallback: write-on-change + jitter ──
             uintptr_t colliderField = enemy + PlayerOffsets::AimCollider();
-            if(HedColider != s_lastCollider){
-                Write<uintptr_t>(colliderField, HedColider);
-                s_lastCollider = HedColider;
-                s_lastEnemy    = enemy;
+            paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+
+            if(pd){
+                // ── Paradise HWBP tier: kernel intercepts AimCollider write ──
+                bool need_rearm = (enemy     != s_lastEnemy)   ||
+                                  (HedColider != s_lastCollider)||
+                                  (s_lastHwbpAddr == 0);
+                if(need_rearm){
+                    if(s_lastHwbpAddr)
+                        AimHookState::PdHwbpDisarm(pd);
+                    if(AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider)){
+                        s_lastHwbpAddr = colliderField;
+                        s_lastEnemy    = enemy;
+                        s_lastCollider = HedColider;
+                    } else {
+                        // Paradise arm failed — direct write this frame
+                        Write<uintptr_t>(colliderField, HedColider);
+                        s_lastHwbpAddr = 0;
+                    }
+                } else {
+                    // Update override value for new target pointer
+                    if(HedColider != s_lastCollider){
+                        AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider);
+                        s_lastCollider = HedColider;
+                    }
+                }
+            } else {
+                // ── Fallback: write-on-change + jitter (all other drivers) ──
+                if(HedColider != s_lastCollider){
+                    Write<uintptr_t>(colliderField, HedColider);
+                    s_lastCollider = HedColider;
+                    s_lastEnemy    = enemy;
+                }
             }
         }
 
