@@ -2187,9 +2187,9 @@ static inline void DrawExploitFloatUI(){
     };
 
     if (!ix_feat_exploit() || !ix_rt_ready()) return;
-    drawOne("##ix_float_magnet", "pull enemy", &AimMagnet,
-            g_ExploitFloatUI, 24.f, 120.f,
-            ImVec4(0.92f, 0.12f, 0.18f, 1.f));
+    // [REMOVED] floating "pull enemy" button — Pull/AimMagnet feature removed.
+    // AimMagnet and g_ExploitFloatUI are force-cleared everywhere they're
+    // set (main.cpp, SourceMenu.h) so this overlay would never show anyway.
     drawOne("##ix_float_ghost", "Ghost Mod", &GhostHack,
             g_ExploitFloatGhost, 24.f, 250.f,
             ImVec4(0.12f, 0.72f, 0.95f, 1.f));

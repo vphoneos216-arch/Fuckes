@@ -829,6 +829,11 @@ inline void RenderSingleMenuWindow() {
                     // same reason (stale config.json can't bring it back).
                     Aimbot            = false;
                     g_Cfg.Aimbot      = false;
+                    // [REMOVED] Pull / Float-Pull — both force-cleared every
+                    // frame so stale config.json (exp_floatpull) can't bring
+                    // either back silently now their checkboxes are gone.
+                    AimMagnet         = false;
+                    g_ExploitFloatUI  = false;
                     BrutalBT          = g_Cfg.brutalBT;
                     aimBotBoneIndex   = 0;
                     showAimLine       = g_Cfg.showAimLine;
@@ -885,8 +890,8 @@ inline void RenderSingleMenuWindow() {
                     float col    = 236 * scale;  /* fits the content column */
 
                     /* Row 0 */
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY));
-                    ImGui::Checkbox1("Enemies pull", &AimMagnet);
+                    // [REMOVED] "Enemies pull" checkbox — Pull/AimMagnet feature removed.
+                    // AimMagnet force-cleared below so stale config.json can't bring it back.
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
                     ImGui::Checkbox1("Ghost Hack", &GhostHack);
 
@@ -897,18 +902,12 @@ inline void RenderSingleMenuWindow() {
                     ImGui::Checkbox1("No Reload", &NoReload);
 
                     /* Row 2 — floating toggles */
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
-                    ImGui::Checkbox1("Float: pull", &g_ExploitFloatUI);
+                    // [REMOVED] "Float: pull" checkbox — Float-Pull feature removed.
+                    // g_ExploitFloatUI force-cleared below for the same reason.
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row * 2));
                     ImGui::Checkbox1("Float: Ghost", &g_ExploitFloatGhost);
 
-                    /* Row 3 — slider */
-                    dl->AddText(NULL, 20.0f * scale,
-                                ImVec2(startX, startY + row * 3),
-                                COL_TXT_HI((int)(255 * uiAlpha)), "Pull Range");
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3 + 30 * scale));
-                    ImGui::SetNextItemWidth(cardW - 50 * scale);
-                    ImGui::SliderFloat("##PullRange", &MagnetMaxDist, 1.0f, 8.0f, "%.1f m");
+                    // [REMOVED] "Pull Range" slider — no longer needed, Pull removed.
                 }
                     } /* feat gate exploit */
                 else if (现在页面 == 4) {

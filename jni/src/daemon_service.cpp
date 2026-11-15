@@ -273,26 +273,42 @@ static bool is_screen_recording_foreground(const std::string& fg) {
     // AOSP / common OEM recorder packages
     static const char* const kRecorders[] = {
         "com.android.systemui",
+        "com.android.permissioncontroller",   // Android 11+ MediaProjection consent dialog
+        "com.google.android.permissioncontroller",
         "com.miui.screenrecorder",
         "com.samsung.android.app.screenrecorder",
         "com.android.screenrecord",
         "com.mediatek.screenrecorder",
         "com.coloros.screenrecorder",
+        "com.oplus.screenrecorder",            // newer ColorOS/OPPO package id
         "com.vivo.screenrecorder",
+        "com.vivo.smartshot",                  // Vivo screen-record/screenshot service
         "com.asus.screenrecorder",
         "com.oneplus.screenrecorder",
+        "com.oneplus.soundrecorder",
         "com.huawei.screenrecorder",
+        "com.huawei.hiai.screenrecord",
         "com.realme.screenrecorder",
         "com.infinix.screenrecorder",
         "com.tecno.screenrecorder",
+        "com.transsion.screenrecorder",        // Infinix/Tecno/Itel shared platform id
+        "com.lge.screenrecorder",
+        "com.motorola.screenrecorder",
+        "com.sonymobile.screenrecorder",
+        "com.google.android.systemui",         // Pixel-flavoured SysUI package on some ROMs
         nullptr
     };
     for (int i = 0; kRecorders[i]; ++i) {
         if (fg == kRecorders[i]) return true;
     }
-    // Generic: any package whose name contains "screenrecord"
-    if (fg.find("screenrecord") != std::string::npos) return true;
-    if (fg.find("screen_record") != std::string::npos) return true;
+    // Generic: any package whose name contains one of these substrings —
+    // catches OEM/ROM package names not in the explicit list above.
+    static const char* const kSubstrings[] = {
+        "screenrecord", "screen_record", "screencapture", "screen_capture",
+        "permissioncontroller", "mediaprojection", nullptr
+    };
+    for (int i = 0; kSubstrings[i]; ++i)
+        if (fg.find(kSubstrings[i]) != std::string::npos) return true;
     return false;
 }
 

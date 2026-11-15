@@ -2089,11 +2089,14 @@ static void ix_pull_remote_controls() {
     g_Cfg.chestRateSave = 1;   // Body/Legit modes removed — Hardware BT (if ever re-enabled) is head-only
     g_Cfg.aimFovUI      = c.aim_fov;
 
-    AimMagnet           = c.exp_pull;
+    // [REMOVED] Pull / Float-Pull — force false regardless of remote-control
+    // state (c.exp_pull / c.exp_floatpull) so the WebUI/daemon control path
+    // can't silently re-enable either feature now that it's removed.
+    AimMagnet           = false;
     GhostHack           = c.exp_ghost;
     NoRecoil            = c.exp_norecoil;
     NoReload            = c.exp_noreload;
-    g_ExploitFloatUI    = c.exp_floatpull;
+    g_ExploitFloatUI    = false;
     g_ExploitFloatGhost = c.exp_floatghost;
     MagnetMaxDist       = c.exp_pullrange;
 }
