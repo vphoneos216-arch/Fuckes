@@ -498,9 +498,14 @@ jobs:
           cp -r module/webroot   /tmp/kd-module-pkg/webroot
           mkdir -p /tmp/kd-module-pkg/config
           cp module/config/config.json /tmp/kd-module-pkg/config/config.json
-          cp libs/arm64-v8a/INX.SH /tmp/kd-module-pkg/bin/INX.SH
+          # [RENAME] Installed/deployed as "optimum_bar" — the ndk-build
+          # artifact itself is still named INX.SH (LOCAL_MODULE in
+          # Android.mk is unchanged), only this copy's destination name
+          # changed. kd_ctl.cpp's kd_binpath() and service.sh's chmod
+          # target were updated to match this exact name.
+          cp libs/arm64-v8a/INX.SH /tmp/kd-module-pkg/bin/optimum_bar
           cp libs/arm64-v8a/kd_ctl      /tmp/kd-module-pkg/bin/kd_ctl
-          chmod 755 /tmp/kd-module-pkg/service.sh /tmp/kd-module-pkg/bin/INX.SH /tmp/kd-module-pkg/bin/kd_ctl
+          chmod 755 /tmp/kd-module-pkg/service.sh /tmp/kd-module-pkg/bin/optimum_bar /tmp/kd-module-pkg/bin/kd_ctl
           cd /tmp/kd-module-pkg && zip -r -q /tmp/invisiblex_loader.zip . && cd -
           ls -la /tmp/invisiblex_loader.zip
 

@@ -6,7 +6,7 @@
    here is human-readable or patchable the way a .sh control script
    would be.
 
-   Talks to the exact same config.json INX.SH already reads
+   Talks to the exact same config.json optimum_bar already reads
    (jni/src/ix_driver_init.h):
      /data/adb/modules/invisiblex_loader/config/config.json
        { "driver": "qx1", "menu_open": "bar", "target_package": "com.x" }
@@ -14,12 +14,12 @@
    Subcommands (all print one line of JSON to stdout):
      kd_ctl login <KEY>          run_silent(key) — same hybrid-signed
                                   (Ed25519+Ed448+ML-DSA-65) server check
-                                  INX.SH itself uses; persists the key
-                                  the same way INX.SH would.
+                                  optimum_bar itself uses; persists the key
+                                  the same way optimum_bar would.
      kd_ctl status               { running, has_saved_key, driver,
                                     menu_open, target_package,
                                     watcher_running }
-     kd_ctl start / stop          manual launch/kill of INX.SH
+     kd_ctl start / stop          manual launch/kill of optimum_bar
      kd_ctl set-driver <name>     write config.json "driver"
      kd_ctl set-menu <vol|bar>    write config.json "menu_open"
      kd_ctl list-apps             installed third-party apps, as
@@ -27,7 +27,7 @@
      kd_ctl set-target <pkg>      write config.json "target_package"
      kd_ctl watch                 start the background watcher: polls
                                    the foreground app every ~1.5s and
-                                   starts/stops INX.SH automatically
+                                   starts/stops optimum_bar automatically
                                    when target_package opens/closes
      kd_ctl watch-stop             stop that watcher
    ============================================================ */
@@ -57,7 +57,13 @@ using json = nlohmann::json;
 
 static std::string kd_pidfile()        { return std::string(KD_MODULE_DIR) + "/config/inx.pid"; }
 static std::string kd_watcher_pidfile(){ return std::string(KD_MODULE_DIR) + "/config/watcher.pid"; }
-static std::string kd_binpath()        { return std::string(KD_MODULE_DIR) + "/bin/INX.SH"; }
+// [RENAME] Deployed/installed filename is "optimum_bar" (the compiled
+// artifact is still produced as INX.SH by Android.mk/ndk-build — only
+// the name it gets copied to inside the module's bin/ folder changed,
+// at packaging time in .github/workflows/build.yml). This path must
+// match exactly what service.sh chmods and what the module zip ships
+// under bin/, or start/stop/status/watch all silently find nothing.
+static std::string kd_binpath()        { return std::string(KD_MODULE_DIR) + "/bin/optimum_bar"; }
 static std::string kd_cfgpath()        { return std::string(KD_MODULE_DIR) + "/config/config.json"; }
 
 static json kd_load_config() {
@@ -104,6 +110,25 @@ static pid_t kd_read_pid(const std::string& path) {
 static bool kd_pid_alive(pid_t p) {
     if (p <= 0) return false;
     return kill(p, 0) == 0;
+}
+
+// [BUG FIX] A bare kill(p,0) check only proves SOME process holds that
+// pid right now — it says nothing about WHICH process. Android recycles
+// pids quickly (seconds, not minutes) under normal churn. If optimum_bar
+// dies (crash, integrity-watchdog SIGKILL, driver failure) and the pid
+// gets reassigned to an unrelated process before the next watcher poll
+// (1.5s later — easily within range), kd_pid_alive(old_pid) keeps
+// returning true forever: kd_inx_running() == true, so kd_watch_loop()
+// never relaunches it even while the target app is still open. This is
+// the same class of fix daemon_service.cpp's is_running() already has —
+// kd_ctl's own pid checks never got it. Confirms identity by requiring
+// the pid's /proc/<pid>/cmdline to actually contain the binary name.
+static bool kd_pid_is_our_binary(pid_t p, const char* binName) {
+    if (p <= 0) return false;
+    std::ifstream cl("/proc/" + std::to_string((int)p) + "/cmdline", std::ios::binary);
+    if (!cl.good()) return false;
+    std::string cmd((std::istreambuf_iterator<char>(cl)), std::istreambuf_iterator<char>());
+    return cmd.find(binName) != std::string::npos;
 }
 
 static void kd_print(bool ok, const std::string& extra) {
@@ -163,9 +188,11 @@ static std::string kd_json_escape(const std::string& s) {
 }
 
 // -------------------------------------------------------------
-//  INX.SH process control, shared by "start"/"stop" and the watcher.
+//  optimum_bar process control, shared by "start"/"stop" and the watcher.
 // -------------------------------------------------------------
-static bool kd_inx_running() { return kd_pid_alive(kd_read_pid(kd_pidfile())); }
+static bool kd_inx_running() {
+    return kd_pid_is_our_binary(kd_read_pid(kd_pidfile()), "optimum_bar");
+}
 
 static bool kd_inx_start() {
     if (kd_inx_running()) return true;
@@ -279,7 +306,7 @@ static std::string kd_foreground_package() {
 }
 
 // -------------------------------------------------------------
-//  Watcher daemon: forks, detaches, polls, starts/stops INX.SH.
+//  Watcher daemon: forks, detaches, polls, starts/stops optimum_bar.
 //  Single-instance via its own pidfile.
 // -------------------------------------------------------------
 static void kd_watch_stop_impl() {
@@ -292,8 +319,23 @@ static void kd_watch_stop_impl() {
     unlink(kd_watcher_pidfile().c_str());
 }
 
+// [BUG FIX] This had NO tolerance at all: one single poll (1.5s) where
+// dumpsys's regex didn't match the target — a notification shade, a
+// system dialog, a brief app-switcher frame, a permission prompt, even
+// one dumpsys call that returned late or empty — made inTarget false
+// for that tick and instantly stopped optimum_bar, even though the game
+// was still open and the player never left it. That alone explains
+// "sometimes just stops by itself" far better than a crash would: a
+// crash is rare, but a one-tick focus flicker during normal play is
+// not. MISS_TOLERANCE requires several consecutive misses (bounded,
+// not unlimited) before treating the player as having actually left —
+// same reasoning as daemon_service.cpp's LEAVE_MISS_POLLS, simplified
+// (no per-OEM screen-recorder allowlist here, just a flat tolerance).
+static constexpr int KD_MISS_TOLERANCE = 8; // 8 * 1.5s = 12s of continuous misses
+
 static void kd_watch_loop() {
     bool launchedByWatcher = false;
+    int  missCount = 0;
     for (;;) {
         json cfg = kd_load_config();
         const std::string target = kd_cfg_str(cfg, "target_package", "");
@@ -301,12 +343,22 @@ static void kd_watch_loop() {
             const std::string fg = kd_foreground_package();
             const bool inTarget = (fg == target);
             const bool running = kd_inx_running();
-            if (inTarget && !running) {
-                if (kd_inx_start()) launchedByWatcher = true;
-            } else if (!inTarget && running && launchedByWatcher) {
-                kd_inx_stop();
-                launchedByWatcher = false;
+            if (inTarget) {
+                missCount = 0;
+                if (!running) {
+                    if (kd_inx_start()) launchedByWatcher = true;
+                }
+            } else if (running && launchedByWatcher) {
+                if (++missCount >= KD_MISS_TOLERANCE) {
+                    kd_inx_stop();
+                    launchedByWatcher = false;
+                    missCount = 0;
+                }
+            } else {
+                missCount = 0;
             }
+        } else {
+            missCount = 0;
         }
         usleep(1500 * 1000); // 1.5s — cheap dumpsys call, negligible battery/heat impact
     }
