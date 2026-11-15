@@ -71,11 +71,13 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <time.h>
 #include <errno.h>
+#include <atomic>
 #include <cstring>
 #include <json.hpp>
 #include "ix_controls.h"
@@ -620,8 +622,66 @@ static void ix_remote_publish_info_from(const json& cfg) {
 }
 
 // ─── zombie reaping ──────────────────────────────────────────
+// [DIAGNOSTIC FIX] This used to discard the exit status entirely
+// (waitpid(..., nullptr, ...)), so when optimum_bar died the only record
+// was "exited on its own" — no signal, no exit code, nothing to tell a
+// clean quit (driver missing, auth gate failed — these already print to
+// cheat.log before exiting) apart from an unexplained kill: SIGKILL from
+// ix_ic_die() in login.h's integrity watchdog, SIGSEGV/SIGBUS from a bad
+// offset, SIGABRT, OOM-kill, etc. "Sometimes stops by itself, not stable
+// on every phone" cannot be diagnosed without that distinction.
+//
+// A signal handler must stay async-signal-safe: no daemon_log() (it opens
+// files, does iostream formatting), no malloc via std::string/vector in a
+// way that could reenter a held lock. So the handler only records
+// (pid, status) pairs into a small fixed array using relaxed atomics —
+// all of which are safe here — and the main poll loop (not the handler)
+// decodes and writes them to daemon.log.
+struct ReapRecord { std::atomic<pid_t> pid{0}; std::atomic<int> status{0}; };
+static constexpr int REAP_RING_SIZE = 16;
+static ReapRecord g_reapRing[REAP_RING_SIZE];
+static std::atomic<unsigned> g_reapWriteIdx{0};
+static std::atomic<unsigned> g_reapReadIdx{0};
+
 static void reap_children(int /*sig*/) {
-    while (waitpid(-1, nullptr, WNOHANG) > 0) {}
+    int status;
+    pid_t p;
+    while ((p = waitpid(-1, &status, WNOHANG)) > 0) {
+        unsigned idx = g_reapWriteIdx.fetch_add(1, std::memory_order_relaxed) % REAP_RING_SIZE;
+        g_reapRing[idx].status.store(status, std::memory_order_relaxed);
+        g_reapRing[idx].pid.store(p, std::memory_order_release); // publish last
+    }
+}
+
+// Called from the main loop only (never from signal context). Drains
+// whatever reap_children queued and writes a human-readable reason to
+// daemon.log: "killed by signal N (NAME)" or "exited, code N".
+static void drain_reap_log() {
+    for (;;) {
+        unsigned widx = g_reapWriteIdx.load(std::memory_order_acquire);
+        unsigned ridx = g_reapReadIdx.load(std::memory_order_relaxed);
+        if (ridx == widx) break;
+        unsigned slot = ridx % REAP_RING_SIZE;
+        pid_t p = g_reapRing[slot].pid.load(std::memory_order_acquire);
+        int st  = g_reapRing[slot].status.load(std::memory_order_relaxed);
+        g_reapReadIdx.store(ridx + 1, std::memory_order_relaxed);
+        if (p <= 0) continue;
+
+        if (WIFSIGNALED(st)) {
+            int sig = WTERMSIG(st);
+            daemon_log("child pid %d killed by signal %d (%s)%s",
+                       (int)p, sig, strsignal(sig),
+                       sig == SIGKILL ? " — SIGKILL: check login.h integrity"
+                                       " watchdog (ix_ic_die) or OOM-killer, not"
+                                       " a crash in the usual sense" : "");
+        } else if (WIFEXITED(st)) {
+            int code = WEXITSTATUS(st);
+            if (code != 0 && code != 127)
+                daemon_log("child pid %d exited with code %d", (int)p, code);
+            // code 0/127 (normal stop / exec failure) already has its own
+            // daemon_log() call at the call site — avoid double-logging those.
+        }
+    }
 }
 
 // ─── daemon pidfile ──────────────────────────────────────────
@@ -665,6 +725,28 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     daemon_log("daemon_service_@api started (pid %d)", (int)getpid());
 
+    // [DIAGNOSTIC] Log kernel + Android version once at boot. "Works on
+    // some phones, not on others / not on Android 17" needs this correlated
+    // against daemon.log's kill/exit reasons — without it every report is
+    // just "doesn't work" with no way to tell a kernel-ABI-mismatched KPM
+    // driver (wanbai.h's "driver not found"/"failed to initialise" paths)
+    // apart from an OS-version-specific foreground-detection or watchdog
+    // issue. getprop/uname cost nothing at startup (not in the hot poll loop).
+    {
+        struct utsname uts;
+        std::string kernel = (uname(&uts) == 0) ? uts.release : "unknown";
+        std::string relVer = run_shell("getprop ro.build.version.release 2>/dev/null");
+        std::string sdkVer = run_shell("getprop ro.build.version.sdk 2>/dev/null");
+        std::string fp     = run_shell("getprop ro.build.fingerprint 2>/dev/null");
+        auto trim = [](std::string s) {
+            while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
+            return s;
+        };
+        daemon_log("device: Android %s (sdk %s), kernel %s, fp %s",
+                   trim(relVer).c_str(), trim(sdkVer).c_str(),
+                   kernel.c_str(), trim(fp).c_str());
+    }
+
     // Remote control is started from inside the poll loop, not here: the
     // daemon comes up at boot, long before anyone flips the switch in the
     // module, and reading the setting once at startup meant turning it on did
@@ -685,6 +767,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool     awaitingForeground = false;
 
     for (;;) {
+        // Decode whatever SIGCHLD queued this tick (see reap_children above)
+        // into daemon.log before anything else, so the exit reason for a
+        // binary that just died is on record before the next block even
+        // checks is_running() for it.
+        drain_reap_log();
+
         json cfg = load_config_cached();
 
         // Determine target package (default: com.dts.freefiremax)
