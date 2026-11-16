@@ -42,6 +42,106 @@ static void LoadMenuOpenMode() {
     g_MenuOpenMode = ix_get_menu_open_mode();
 }
 
+#ifdef IX_INTERACTIVE_CLI
+// [STANDALONE BUILD] Terminal driver + bar/vol prompt, run once after
+// login succeeds and before LoadMenuOpenMode()/ix_get_driver_choice() are
+// called a few lines later in main() — this only has to set the env vars
+// those two already read (IX_DRIVER_NAME, IX_MENU_OPEN; see
+// ix_driver_init.h), nothing else changes downstream. Names/aliases below
+// match ix_driver_init.h's ix_driver_number() exactly, so whatever is
+// typed here is guaranteed understood.
+//
+// Loading the chosen driver's .ko.sh (when it needs one) reproduces
+// daemon_service.cpp's load_driver(): chmod 0755 + chown root (a driver
+// script is about to run AS root, so it must not stay writable by
+// whatever put it on disk), detached fork+exec, half a second to settle.
+// Resolved relative to this binary's own location (login.h's
+// kd_exe_dir()) since a standalone run has no module directory.
+static void ix_interactive_driver_and_menu_prompt() {
+    printf("\nStep - Driver\n");
+    static const char* names[] = {
+        "auto","qx1","gt","rt-dev","rt-proc","qx2","tb-kpm",
+        "ditpro","kma","ldk","paradise","bing","ditkpm","rthook"
+    };
+    static const char* labels[] = {
+        "Auto (let the binary choose)","QX1","GT","RT (dev)","RT (proc)",
+        "QX2","TB KPM","DitPro KPM","KMA KPM","LDK KPM",
+        "Paradise (recommended)","Bing","Dit KPM","RT Hook"
+    };
+    for (int i = 0; i < 14; ++i) printf("  %d) %s\n", i + 1, labels[i]);
+    printf("\nSelect [1-14, default=1]: ");
+    fflush(stdout);
+
+    char line[32] = {0};
+    std::cin.getline(line, sizeof(line));
+    int sel = atoi(line);
+    if (sel < 1 || sel > 14) sel = 1;
+    const std::string driver = names[sel - 1];
+    setenv("IX_DRIVER_NAME", driver.c_str(), 1);
+    printf("-> Driver: %s\n", driver.c_str());
+
+    if (driver == "paradise") {
+        std::string rel;
+        FILE* p = popen("uname -r 2>/dev/null", "r");
+        if (p) {
+            char buf[256];
+            if (fgets(buf, sizeof(buf), p)) rel = buf;
+            pclose(p);
+        }
+        while (!rel.empty() && (rel.back() == '\n' || rel.back() == '\r')) rel.pop_back();
+
+        int major = 0, minor = 0;
+        if (!rel.empty()) sscanf(rel.c_str(), "%d.%d", &major, &minor);
+        const int kv = major * 1000 + minor;
+
+        std::string sub;
+        if      (kv >= 5010 && kv <= 6006) sub = "paradise_old";
+        else if (kv >= 5010 && kv <= 6018) sub = "paradise_new";
+
+        if (sub.empty()) {
+            printf("[WARN] Kernel %s is outside Paradise's supported range "
+                   "(5.10-6.18) or could not be read -- skipping driver load.\n",
+                   rel.empty() ? "?" : rel.c_str());
+        } else {
+            char verbuf[32];
+            snprintf(verbuf, sizeof(verbuf), "%d.%d", major, minor);
+            const std::string path = kd_exe_dir() + "/drivers/" + sub + "/" + verbuf + ".ko.sh";
+            if (access(path.c_str(), F_OK) != 0) {
+                printf("[WARN] No driver script for kernel %s at:\n  %s\n"
+                       "       Continuing without loading a driver.\n",
+                       rel.c_str(), path.c_str());
+            } else {
+                chmod(path.c_str(), 0755);
+                chown(path.c_str(), 0, 0);
+                printf("Loading driver: %s\n", path.c_str());
+                pid_t child = fork();
+                if (child == 0) {
+                    setsid();
+                    int devnull = open("/dev/null", O_RDWR);
+                    if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
+                    execl("/system/bin/sh", "sh", path.c_str(), (char*)nullptr);
+                    execl(path.c_str(), path.c_str(), (char*)nullptr);
+                    _exit(127);
+                } else if (child > 0) {
+                    usleep(500 * 1000);
+                } else {
+                    printf("[WARN] fork() failed for driver load: %s\n", strerror(errno));
+                }
+            }
+        }
+    }
+
+    printf("\nStep - Menu\n  1) Bar (on-screen tap bar)\n"
+           "  2) Volume (volume-key toggle)\n\nSelect [1-2, default=1]: ");
+    fflush(stdout);
+    char mline[16] = {0};
+    std::cin.getline(mline, sizeof(mline));
+    const std::string mode = (mline[0] == '2') ? "vol" : "bar";
+    setenv("IX_MENU_OPEN", mode.c_str(), 1);
+    printf("-> Menu mode: %s\n", mode.c_str());
+}
+#endif
+
 // ── Source UI Assets ─────────────────────────────────────────
 #include "stb_image.h"
 #include "UI/images/Background.h"
@@ -2255,8 +2355,25 @@ int main(int argc,char* argv[]){
     // needed either way.
     // =============================================================
     Authentication auth;
+#ifdef IX_INTERACTIVE_CLI
+    // [STANDALONE BUILD — IX_INTERACTIVE_CLI] This binary (inx_standalone)
+    // is the SAME main.cpp as the module's optimum_bar, just compiled with
+    // this one extra flag (see jni/Android.mk) -- one binary, one codebase,
+    // nothing duplicated or re-implemented. The ONLY difference is which
+    // already-existing Authentication method runs: run() instead of
+    // run_silent(argKey). run() is the pre-existing interactive terminal
+    // login (banner, HWID, saved-key check, 3 tries, format check, save on
+    // success) that was already written and already used elsewhere (the
+    // comment above explains why optimum_bar normally can't use it — no
+    // stdin when launched by the daemon). Run by hand from a real
+    // terminal, stdin exists, so the original reason it was swapped out
+    // doesn't apply here, and nothing about the login itself changes.
+    (void)argc; (void)argv;
+    bool ok = auth.run();
+#else
     const std::string argKey = (argc >= 2 && argv[1] != nullptr) ? std::string(argv[1]) : std::string();
     bool ok = auth.run_silent(argKey);
+#endif
     if (!ok || !g_AuthKernelOk || !ix_rt_ready() || !ix_feat_ok()) {
         ix_features_lock();
         ix_rt_clear();
@@ -2278,6 +2395,10 @@ int main(int argc,char* argv[]){
     }
 
     printf("\n[LAUNCHING InvisibleX Reborn]\n");
+
+#ifdef IX_INTERACTIVE_CLI
+    ix_interactive_driver_and_menu_prompt();
+#endif
 
     LoadMenuOpenMode();
     printf("[INX] menu open mode: %s\n", g_MenuOpenMode.c_str());

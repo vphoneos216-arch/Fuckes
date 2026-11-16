@@ -582,61 +582,61 @@ jobs:
           git -C /tmp/dist-inxmods-zip-checkout push -q -f origin dist-inxmods-zip
 
       # ===================================================================
-      #  Standalone CLI package (inx_cli.zip) — no module/daemon involved.
-      #  Same login binary, same overlay binary, same driver scripts the
-      #  module ships, plus inx_cli itself (jni/src/standalone_cli.cpp),
-      #  laid out so inx_cli's kd_exe_dir()-relative paths resolve with
-      #  nothing else installed.
+      #  Standalone binary (inx_standalone) — ONE executable, no module,
+      #  no daemon, no separate login binary. Built from the exact same
+      #  main.cpp as INX.SH (see jni/Android.mk's inx_standalone target),
+      #  just with -DIX_INTERACTIVE_CLI=1, so the login/overlay logic is
+      #  not duplicated anywhere -- it's the same compiled code. Only
+      #  drivers/ ships alongside it, because a kernel-module loader
+      #  script can't be folded into this ELF; everything else (login,
+      #  driver-select UI, bar/vol-select UI, the overlay itself) is
+      #  inside the one binary.
       # ===================================================================
-      - name: Package standalone CLI (inx_cli.zip)
+      - name: Package standalone binary (inx_standalone.zip)
         run: |
           set -e
-          rm -rf /tmp/inxcli-pkg
-          mkdir -p /tmp/inxcli-pkg/bin/arm64-v8a /tmp/inxcli-pkg/api/arm64-v8a
-          cp -r module-inxmods/drivers /tmp/inxcli-pkg/drivers
-          cp libs/arm64-v8a/INX.SH               /tmp/inxcli-pkg/bin/arm64-v8a/optimum_bar
-          cp "libs/arm64-v8a/inx_login_@api"     /tmp/inxcli-pkg/api/arm64-v8a/inx_login_@api
-          cp libs/arm64-v8a/inx_cli              /tmp/inxcli-pkg/inx_cli
-          chmod 755 \
-            /tmp/inxcli-pkg/inx_cli \
-            /tmp/inxcli-pkg/bin/arm64-v8a/optimum_bar \
-            "/tmp/inxcli-pkg/api/arm64-v8a/inx_login_@api"
-          find /tmp/inxcli-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
-          cat > /tmp/inxcli-pkg/README.txt << 'EOF'
-          InvisibleX standalone CLI
-          ==========================
-          No module, no daemon. Run as root:
+          rm -rf /tmp/inxstandalone-pkg
+          mkdir -p /tmp/inxstandalone-pkg
+          cp -r module-inxmods/drivers /tmp/inxstandalone-pkg/drivers
+          cp libs/arm64-v8a/inx_standalone /tmp/inxstandalone-pkg/inx_standalone
+          chmod 755 /tmp/inxstandalone-pkg/inx_standalone
+          find /tmp/inxstandalone-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
+          cat > /tmp/inxstandalone-pkg/README.txt << 'EOF'
+          InvisibleX standalone binary
+          =============================
+          One binary, no module, no daemon. Run as root:
 
-            su -c ./inx_cli
+            su -c ./inx_standalone
 
-          Keep this folder's layout as-is (inx_cli, api/, bin/, drivers/ all
-          together) -- inx_cli finds everything relative to its own location.
+          Prompts for your key, then the driver, then bar/vol, then runs.
+          Keep the drivers/ folder next to it if you plan to pick Paradise
+          -- every other driver option needs no extra files at all.
           EOF
-          cd /tmp/inxcli-pkg && zip -r -q /tmp/inx_cli.zip . && cd -
-          ls -la /tmp/inx_cli.zip
+          cd /tmp/inxstandalone-pkg && zip -r -q /tmp/inx_standalone.zip . && cd -
+          ls -la /tmp/inx_standalone.zip
 
-      - name: Upload inx_cli.zip (Actions artifact)
+      - name: Upload inx_standalone.zip (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: inx-cli-standalone
-          path: /tmp/inx_cli.zip
+          name: inx-standalone-binary
+          path: /tmp/inx_standalone.zip
           if-no-files-found: error
 
-      - name: Also commit inx_cli.zip to its own dist branch
+      - name: Also commit inx_standalone.zip to its own dist branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          mkdir -p /tmp/dist-inxcli-zip-checkout
-          git -C /tmp/dist-inxcli-zip-checkout init -q
-          git -C /tmp/dist-inxcli-zip-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git -C /tmp/dist-inxcli-zip-checkout checkout -q -B dist-inxcli-zip
-          cp /tmp/inx_cli.zip /tmp/dist-inxcli-zip-checkout/inx_cli.zip
-          git -C /tmp/dist-inxcli-zip-checkout config user.name "github-actions[bot]"
-          git -C /tmp/dist-inxcli-zip-checkout config user.email "github-actions[bot]@users.noreply.github.com"
-          git -C /tmp/dist-inxcli-zip-checkout add inx_cli.zip
-          git -C /tmp/dist-inxcli-zip-checkout commit -q -m "inx_cli.zip from run ${{ github.run_id }} (commit ${{ github.sha }})"
-          git -C /tmp/dist-inxcli-zip-checkout push -q -f origin dist-inxcli-zip
+          mkdir -p /tmp/dist-inxstandalone-zip-checkout
+          git -C /tmp/dist-inxstandalone-zip-checkout init -q
+          git -C /tmp/dist-inxstandalone-zip-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-inxstandalone-zip-checkout checkout -q -B dist-inxstandalone-zip
+          cp /tmp/inx_standalone.zip /tmp/dist-inxstandalone-zip-checkout/inx_standalone.zip
+          git -C /tmp/dist-inxstandalone-zip-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-inxstandalone-zip-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-inxstandalone-zip-checkout add inx_standalone.zip
+          git -C /tmp/dist-inxstandalone-zip-checkout commit -q -m "inx_standalone.zip from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-inxstandalone-zip-checkout push -q -f origin dist-inxstandalone-zip
 
       # ===================================================================
       # Commit inx_login_@api + daemon_service_@api to their own dist
