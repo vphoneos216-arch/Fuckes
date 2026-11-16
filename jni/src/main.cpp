@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <csignal>
 #include <ctime>
+#include <cerrno>
 #include <thread>
 #include <chrono>
 #include <linux/input.h>
@@ -146,10 +147,37 @@ static void ix_install_crash_handler() {
 #endif
     g_crashLogFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
 
+#ifdef IX_INTERACTIVE_CLI
+    // Printed so the exact path is on-screen instead of something to
+    // guess at after a crash.
+    if (g_crashLogFd >= 0) {
+        printf("[INX] crash log: %s\n", logPath.c_str());
+    } else {
+        printf("[INX] WARNING: could not open crash log at %s (errno=%d)\n",
+               logPath.c_str(), errno);
+    }
+    fflush(stdout);
+#endif
+
+    // [FIX] A handler installed on the normal stack goes silent on a
+    // stack-overflow-class SIGSEGV — the fault IS the stack, so the
+    // signal delivery itself has nowhere to push a frame, and the
+    // process dies with nothing written, which is indistinguishable
+    // from "handler never ran". A dedicated alt stack (SA_ONSTACK)
+    // means the handler still runs even then, so an empty/missing
+    // crash.log after this build means the crash is NOT a stack
+    // overflow, not that logging silently failed.
+    static char altStack[SIGSTKSZ * 4];
+    stack_t ss;
+    ss.ss_sp = altStack;
+    ss.ss_size = sizeof(altStack);
+    ss.ss_flags = 0;
+    sigaltstack(&ss, nullptr);
+
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = ix_crash_handler;
-    sa.sa_flags = SA_SIGINFO;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGABRT, &sa, nullptr);
