@@ -478,10 +478,11 @@ inline void RenderSingleMenuWindow() {
                     btnWidths[i] = btnFont->CalcTextSizeA(btnFontSize, FLT_MAX, -1.f, btnList[i]).x
                                  + btnPadX * 2.0f;
 
-                // Keep the row clear of the close button on narrow panels.
+                // Keep the row clear of the close + [NEW] exit buttons
+                // on narrow panels (two circles now, not one).
                 float rowW = 0.0f;
                 for (int i = 0; i < 按钮总数; i++) rowW += btnWidths[i] + (i ? btnGap : 0.0f);
-                const float rowLimit = p.x + windowSize.x - 72 * scale;
+                const float rowLimit = p.x + windowSize.x - 110 * scale;
                 if (btnStartX + rowW > rowLimit) btnStartX = rowLimit - rowW;
 
                 float btnX = btnStartX;
@@ -528,7 +529,9 @@ inline void RenderSingleMenuWindow() {
                     if (ImGui::InvisibleButton(btnList[i], ImVec2(btnW, btnH))) 现在页面 = i;
                 }
 
-                // Close button
+                // Close button — only minimizes/hides the overlay panel,
+                // does not stop the process (触发关闭动画 is a visual
+                // close animation, nothing more).
                 ImVec2 closeCenter = ImVec2(p.x + windowSize.x - 38 * scale, btnCenterY);
                 dl->AddCircleFilled(closeCenter, 15 * scale, COL_BTN_IDLE((int)(235 * uiAlpha)), 18);
                 dl->AddText(NULL, 28.0f * scale, ImVec2(closeCenter.x - 7 * scale, closeCenter.y - 14 * scale),
@@ -536,6 +539,25 @@ inline void RenderSingleMenuWindow() {
                 ImGui::SetCursorScreenPos(ImVec2(closeCenter.x - 19 * scale, closeCenter.y - 19 * scale));
                 if (ImGui::InvisibleButton("##close", ImVec2(38 * scale, 38 * scale))) {
                     触发关闭动画(windowPos);
+                }
+
+                // [NEW — "exit button cheat ke side mein laga do"] The
+                // REAL program-exit button (stops the whole process),
+                // moved here next to the minimize "x" so it's reachable
+                // from every page, not only buried on the Config/
+                // Settings page. Drawn as a small power-style circle
+                // just to the left of the minimize button.
+                ImVec2 exitCenter = ImVec2(closeCenter.x - 46 * scale, btnCenterY);
+                dl->AddCircleFilled(exitCenter, 15 * scale, COL_BTN_IDLE((int)(235 * uiAlpha)), 18);
+                dl->AddText(NULL, 18.0f * scale, ImVec2(exitCenter.x - 13 * scale, exitCenter.y - 9 * scale),
+                            COL_ACCENT((int)(255 * uiAlpha)), "EX");
+                ImGui::SetCursorScreenPos(ImVec2(exitCenter.x - 19 * scale, exitCenter.y - 19 * scale));
+                if (ImGui::InvisibleButton("##hard_exit", ImVec2(38 * scale, 38 * scale))) {
+                    UpdateAndSaveSettings();
+                    main_thread_flag = false;
+                    shutdown();
+                    Touch_Close();
+                    _exit(0);
                 }
             }
 

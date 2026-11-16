@@ -334,6 +334,49 @@ static std::string ix_extract_embedded_collider_stub() {
 }
 #endif
 
+#ifdef IX_INTERACTIVE_CLI
+// [NEW — "error terminal mein pura dikhna chahiye"] Terminal apps
+// (Termux etc.) have limited scrollback, so a long run's early output
+// can be gone by the time something crashes near the end. This tees
+// everything written to stdout/stderr to a persistent log file as
+// well as the real terminal — same text, both places — so there's
+// always a complete copy to send over instead of relying on what the
+// terminal still has on screen.
+static void ix_install_output_tee() {
+    std::string logPath = kd_exe_dir() + "/run.log";
+    int logFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (logFd < 0) return; // best-effort — a tee failure is not worth stopping for
+
+    int pipeFds[2];
+    if (pipe(pipeFds) != 0) { close(logFd); return; }
+
+    int realStdout = dup(STDOUT_FILENO);
+    if (realStdout < 0) { close(logFd); close(pipeFds[0]); close(pipeFds[1]); return; }
+
+    // Both stdout AND stderr feed the same pipe, so crash-handler output
+    // (which also goes to STDOUT_FILENO directly — see ix_crash_handler)
+    // and anything printed via stderr end up in the one log too.
+    dup2(pipeFds[1], STDOUT_FILENO);
+    dup2(pipeFds[1], STDERR_FILENO);
+    close(pipeFds[1]);
+    setvbuf(stdout, nullptr, _IOLBF, 0); // line-buffered, same as a normal terminal
+
+    std::thread([pipeFds, realStdout, logFd]() {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(pipeFds[0], buf, sizeof(buf))) > 0) {
+            ssize_t off = 0;
+            while (off < n) { ssize_t w = write(realStdout, buf + off, n - off); if (w <= 0) break; off += w; }
+            off = 0;
+            while (off < n) { ssize_t w = write(logFd,     buf + off, n - off); if (w <= 0) break; off += w; }
+        }
+    }).detach();
+
+    printf("[INX] full run log: %s\n", logPath.c_str());
+    fflush(stdout);
+}
+#endif
+
 // [NEW — internal collider aim-lock] Creates the shared IPC region and
 // injects collider_stub.so into game_pid. Called once automatically
 // right after driver attach, and again on demand from the "Inject
@@ -2667,6 +2710,9 @@ int main(int argc,char* argv[]){
     // enough information yet to know WHAT in the crash to fix, so this
     // makes the next occurrence self-diagnosing instead of guessing.
     ix_install_crash_handler();
+#ifdef IX_INTERACTIVE_CLI
+    ix_install_output_tee();
+#endif
 
     // =============================================================
     // [FIX — ONE LOGIN, NOT TWO SEPARATE ONES] This used to call
