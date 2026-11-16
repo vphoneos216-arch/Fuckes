@@ -40,6 +40,9 @@
 #ifndef SYS_process_vm_writev
 #define SYS_process_vm_writev 271
 #endif
+#ifndef SYS_process_vm_readv
+#define SYS_process_vm_readv 270
+#endif
 #ifndef NT_PRSTATUS
 #define NT_PRSTATUS 1
 #endif
@@ -83,6 +86,18 @@ inline bool WriteRemote(pid_t pid, uintptr_t remoteAddr, const void* data, size_
     struct iovec remote{ (void*)remoteAddr, len };
     ssize_t n = syscall(SYS_process_vm_writev, pid, &local, 1, &remote, 1, 0);
     return n == (ssize_t)len;
+}
+
+// Reads up to `len` bytes from the target's memory at `remoteAddr`
+// into `outBuf`. Returns the number of bytes actually read (0 on
+// failure) — used only for dlerror()'s message, so a short/failed
+// read just means a shorter/empty string gets reported, never a
+// reason to abort anything else.
+inline size_t ReadRemote(pid_t pid, uintptr_t remoteAddr, void* outBuf, size_t len) {
+    struct iovec local{ outBuf, len };
+    struct iovec remote{ (void*)remoteAddr, len };
+    ssize_t n = syscall(SYS_process_vm_readv, pid, &local, 1, &remote, 1, 0);
+    return n > 0 ? (size_t)n : 0;
 }
 
 #if defined(__aarch64__)
@@ -218,6 +233,7 @@ inline bool ix_inject_shared_library(pid_t targetPid, const std::string& soPath,
 
         uintptr_t remoteDlopen = remoteBase + ((uintptr_t)localDlopen - localBase);
         uintptr_t remoteDlsym  = remoteBase + ((uintptr_t)localDlsym  - localBase);
+        uintptr_t remoteDlerror = remoteBase + ((uintptr_t)(void*)dlerror - localBase);
 
         printf("[INX] inject: lib=%s localBase=0x%zx remoteBase=0x%zx "
                "remoteDlopen=0x%zx remoteDlsym=0x%zx\n",
@@ -244,9 +260,29 @@ inline bool ix_inject_shared_library(pid_t targetPid, const std::string& soPath,
         uint64_t handle = 0;
         int sig = 0;
         // dlopen(path, RTLD_NOW)
-        if (!RemoteCall(targetPid, remoteDlopen, scratch, RTLD_NOW, 0, 0, &handle, &sig) || !handle) {
-            printf("[INX] inject: remote dlopen failed (handle=0x%llx, stop_signal=%d)\n",
-                   (unsigned long long)handle, sig);
+        bool dlopenCallOk = RemoteCall(targetPid, remoteDlopen, scratch, RTLD_NOW, 0, 0, &handle, &sig);
+        if (!dlopenCallOk || !handle) {
+            // [NEW] stop_signal here is near-always 11 (SIGSEGV) — that's
+            // the expected trap from the LR=0 "return" trick itself
+            // (jumping to address 0 IS a segfault), not evidence of a
+            // crash inside dlopen. The real question when handle==0 is
+            // WHY dlopen rejected the library, which only dlerror() in
+            // the TARGET process's own context can answer — remote-call
+            // it the same way and read its returned string back.
+            if (dlopenCallOk) {
+                uint64_t errPtr = 0;
+                if (RemoteCall(targetPid, remoteDlerror, 0, 0, 0, 0, &errPtr) && errPtr) {
+                    char errBuf[256] = {0};
+                    size_t n = ReadRemote(targetPid, (uintptr_t)errPtr, errBuf, sizeof(errBuf) - 1);
+                    printf("[INX] inject: remote dlopen returned null — dlerror(): %s\n",
+                           n ? errBuf : "(could not read error string)");
+                } else {
+                    printf("[INX] inject: remote dlopen returned null, dlerror() unavailable/empty\n");
+                }
+            } else {
+                printf("[INX] inject: remote dlopen call itself faulted (not a clean return)\n");
+            }
+            fflush(stdout);
             break;
         }
 
