@@ -1,0 +1,14 @@
+{
+    "binary": "optimum_bar",
+    "duration": "1d",
+    "key": "",
+    "seller": "",
+    "status": "",
+    "validity": "",
+    "driver": "",
+    "menu_open": "bar",
+    "remote_control": false,
+    "remote_url": "",
+    "driver_load_on_boot": false,
+    "driver_keep_alive": false
+}

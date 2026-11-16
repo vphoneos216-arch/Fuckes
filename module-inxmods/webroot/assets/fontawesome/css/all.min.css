@@ -1,0 +1,142 @@
+/*!
+ * Font Awesome Free 6.7.2 — Fixed for Android WebView
+ * Self-hosted webfonts, no base64 inline, no network dependency
+ */
+
+@font-face {
+  font-family: "Font Awesome 6 Free";
+  font-style: normal;
+  font-weight: 900;
+  font-display: block;
+  src: url("../webfonts/fa-solid-900.woff2") format("woff2"),
+       url("../webfonts/fa-solid-900.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Font Awesome 6 Free";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../webfonts/fa-regular-400.woff2") format("woff2"),
+       url("../webfonts/fa-regular-400.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Font Awesome 6 Brands";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../webfonts/fa-brands-400.woff2") format("woff2"),
+       url("../webfonts/fa-brands-400.ttf") format("truetype");
+}
+
+/* ── Base Display ── */
+.fa, .fas, .far, .fab,
+.fa-solid, .fa-regular, .fa-brands {
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
+  display: inline-block;
+  font-style: normal;
+  font-variant: normal;
+  line-height: 1;
+  text-rendering: auto;
+}
+
+.fas, .fa-solid {
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+}
+
+.far, .fa-regular {
+  font-family: "Font Awesome 6 Free";
+  font-weight: 400;
+}
+
+.fab, .fa-brands {
+  font-family: "Font Awesome 6 Brands";
+  font-weight: 400;
+}
+
+/* ── Content injection via CSS variable ── */
+.fas::before, .fa-solid::before,
+.far::before, .fa-regular::before,
+.fab::before, .fa-brands::before {
+  content: var(--fa);
+}
+
+/* ── Animations ── */
+.fa-spin {
+  animation: fa-spin 2s linear infinite;
+}
+
+@keyframes fa-spin {
+  0%  { transform: rotate(0deg); }
+  to  { transform: rotate(360deg); }
+}
+
+/* ═══════════════════════════════════════
+   ICON DEFINITIONS 
+   ═══════════════════════════════════════ */
+
+/* Navigation */
+.fa-home::before,
+.fa-house::before          { --fa: "\f015"; }
+.fa-gamepad::before        { --fa: "\f11b"; }
+.fa-cog::before,
+.fa-gear::before           { --fa: "\f013"; }
+
+/* Quick Actions */
+.fa-download::before       { --fa: "\f019"; }
+.fa-sync::before,
+.fa-arrows-rotate::before,
+.fa-refresh::before        { --fa: "\f021"; }
+.fa-sync-alt::before,
+.fa-rotate::before         { --fa: "\f2f1"; }
+.fa-trash-alt::before,
+.fa-trash-can::before      { --fa: "\f2ed"; }
+.fa-power-off::before      { --fa: "\f011"; }
+
+/* Header / Theme */
+.fa-sun::before            { --fa: "\f185"; }
+.fa-moon::before           { --fa: "\f186"; }
+
+/* Section Icons */
+.fa-bolt::before,
+.fa-zap::before            { --fa: "\f0e7"; }
+.fa-info-circle::before,
+.fa-circle-info::before    { --fa: "\f05a"; }
+.fa-heart::before          { --fa: "\f004"; }
+.fa-memory::before         { --fa: "\f538"; }
+.fa-microchip::before      { --fa: "\f2db"; }
+.fa-server::before         { --fa: "\f233"; }
+.fa-hdd::before,
+.fa-hard-drive::before     { --fa: "\f0a0"; }
+.fa-cogs::before,
+.fa-gears::before          { --fa: "\f085"; }
+.fa-sliders-h::before,
+.fa-sliders::before        { --fa: "\f1de"; }
+.fa-tools::before,
+.fa-screwdriver-wrench::before { --fa: "\f7d9"; }
+.fa-code::before           { --fa: "\f121"; }
+.fa-rocket::before         { --fa: "\f135"; }
+.fa-palette::before        { --fa: "\f53f"; }
+.fa-desktop::before,
+.fa-desktop-alt::before    { --fa: "\f390"; }
+.fa-save::before,
+.fa-floppy-disk::before    { --fa: "\f0c7"; }
+.fa-hand-pointer::before   { --fa: "\f25a"; }
+.fa-mobile-alt::before,
+.fa-mobile-screen-button::before { --fa: "\f3cd"; }
+
+/* Support */
+.fa-coffee::before,
+.fa-mug-saucer::before     { --fa: "\f0f4"; }
+
+/* Brands */
+.fa-android::before        { --fa: "\f17b"; }
+.fa-telegram-plane::before,
+.fa-telegram::before       { --fa: "\f2c6"; }
+.fa-user-lock::before       { --fa: "\f502"; }
+.fa-clock::before           { --fa: "\f017"; }
+
+.fa-logs::before              { --fa: "\f550"; }

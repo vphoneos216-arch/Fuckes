@@ -510,12 +510,80 @@ jobs:
           ls -la /tmp/invisiblex_loader.zip
 
       # ===================================================================
+      # Package the real, flashable InxMods module.zip. This is the one
+      # actually deployed on-device (module.prop id=inx_mods) — the
+      # module.prop id=invisiblex_loader one packaged above is a separate,
+      # unrelated control surface (kd_ctl) that isn't used for this.
+      #
+      # module-inxmods/ (static scripts, webroot UI, META-INF, KPM driver
+      # .ko.sh files) was imported from a device-pulled copy of the real
+      # module — it previously existed nowhere in source control, only on
+      # whatever phone it was flashed to. bin/arm64-v8a/optimum_bar is the
+      # exact same ndk-build artifact as INX.SH above, just deployed under
+      # the name daemon_service_@api/kd_ctl... no: under the name this
+      # module's own scripts (svc.sh, service.sh, watchdog.sh) all expect.
+      # api/arm64-v8a/{inx_login_@api,daemon_service_@api} are built from
+      # jni/src/inx_login.cpp and jni/src/daemon_service.cpp earlier in
+      # this same job.
+      # ===================================================================
+      - name: Package inx_mods module.zip
+        run: |
+          set -e
+          rm -rf /tmp/inxmods-pkg
+          mkdir -p /tmp/inxmods-pkg/bin/arm64-v8a /tmp/inxmods-pkg/api/arm64-v8a
+          cp -r module-inxmods/META-INF   /tmp/inxmods-pkg/META-INF
+          cp -r module-inxmods/drivers    /tmp/inxmods-pkg/drivers
+          cp -r module-inxmods/webroot    /tmp/inxmods-pkg/webroot
+          cp module-inxmods/module.prop      /tmp/inxmods-pkg/module.prop
+          cp module-inxmods/forgex.gki       /tmp/inxmods-pkg/forgex.gki
+          cp module-inxmods/customize.sh     /tmp/inxmods-pkg/customize.sh
+          cp module-inxmods/post-fs-data.sh  /tmp/inxmods-pkg/post-fs-data.sh
+          cp module-inxmods/service.sh       /tmp/inxmods-pkg/service.sh
+          cp module-inxmods/svc.sh           /tmp/inxmods-pkg/svc.sh
+          cp module-inxmods/uninstall.sh     /tmp/inxmods-pkg/uninstall.sh
+          cp module-inxmods/watchdog.sh      /tmp/inxmods-pkg/watchdog.sh
+          cp module-inxmods/inxlaunch.sh     /tmp/inxmods-pkg/inxlaunch.sh
+          cp libs/arm64-v8a/INX.SH               /tmp/inxmods-pkg/bin/arm64-v8a/optimum_bar
+          cp "libs/arm64-v8a/inx_login_@api"     /tmp/inxmods-pkg/api/arm64-v8a/inx_login_@api
+          cp "libs/arm64-v8a/daemon_service_@api" /tmp/inxmods-pkg/api/arm64-v8a/daemon_service_@api
+          chmod 755 \
+            /tmp/inxmods-pkg/customize.sh /tmp/inxmods-pkg/post-fs-data.sh \
+            /tmp/inxmods-pkg/service.sh /tmp/inxmods-pkg/svc.sh \
+            /tmp/inxmods-pkg/uninstall.sh /tmp/inxmods-pkg/watchdog.sh \
+            /tmp/inxmods-pkg/inxlaunch.sh \
+            /tmp/inxmods-pkg/bin/arm64-v8a/optimum_bar \
+            "/tmp/inxmods-pkg/api/arm64-v8a/inx_login_@api" \
+            "/tmp/inxmods-pkg/api/arm64-v8a/daemon_service_@api"
+          find /tmp/inxmods-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
+          cd /tmp/inxmods-pkg && zip -r -q /tmp/inx_mods.zip . && cd -
+          ls -la /tmp/inx_mods.zip
+
+      - name: Upload inx_mods.zip (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: inx-mods-module
+          path: /tmp/inx_mods.zip
+          if-no-files-found: error
+
+      - name: Also commit inx_mods.zip to its own dist branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-inxmods-zip-checkout
+          git -C /tmp/dist-inxmods-zip-checkout init -q
+          git -C /tmp/dist-inxmods-zip-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-inxmods-zip-checkout checkout -q -B dist-inxmods-zip
+          cp /tmp/inx_mods.zip /tmp/dist-inxmods-zip-checkout/inx_mods.zip
+          git -C /tmp/dist-inxmods-zip-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-inxmods-zip-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-inxmods-zip-checkout add inx_mods.zip
+          git -C /tmp/dist-inxmods-zip-checkout commit -q -m "inx_mods.zip from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-inxmods-zip-checkout push -q -f origin dist-inxmods-zip
+
+      # ===================================================================
       # Commit inx_login_@api + daemon_service_@api to their own dist
       # branch so they can be fetched directly (same pattern as INX.SH).
-      # The final InxMods module zip is assembled outside CI by injecting
-      # these two binaries into the module's api/arm64-v8a/ folder — the
-      # pre-built bin/arm64-v8a/{optimum_bar,optimum_vol} binaries have no
-      # source and are never touched by this workflow.
       # ===================================================================
       - name: Commit InxMods API binaries to dist-inxmods branch
         env:

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0A0A0C">
+    <title>Performance AI Manager</title>
+    <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="assets/fonts/Rajdhani-Bold.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="assets/fontawesome/css/all.min.css?v=2.5">
+    <link rel="stylesheet" href="/styles.css?v=2.6">
+</head>
+<body>
+<div id="app">
+    <div class="container">
+        <header class="header-block">
+            <div class="header-title-area">
+                <h1 class="main-title">Invisible X</h1>
+                <span class="main-subtitle">Web Manager</span>
+            </div>
+            <div class="header-controls">
+                <button id="theme-toggle-btn" class="header-icon-btn" title="Toggle Theme"><i class="fas fa-sun"></i></button>
+            </div>
+        </header>
+
+        <main id="main-content">
+
+            <div id="home-view" class="view-content active">
+                <div class="hero-card">
+                    <div class="hero-visual">
+                        <img id="service-banner" src="img/stopped.webp" alt="Status Visual" class="status-visual-img">
+                    </div>
+                    <div class="hero-bg-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-header">
+                            <span id="service-status" class="hero-status status-unknown">Checking...</span>
+                        </div>
+                        <div class="hero-footer">
+                            <span id="current-profile-mode" class="hero-profile-mode">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section-title">
+                    <h3><i class="fas fa-bolt"></i> Quick Actions</h3>
+                </div>
+                
+                <div class="action-grid">
+                    <button id="action-start-button" class="action-card">
+                        <div class="ac-icon install"><i class="fas fa-download"></i></div>
+                        <div class="ac-text"><span class="ac-title">Install</span></div>
+                    </button>
+                    <button id="action-reload-button" class="action-card">
+                        <div class="ac-icon reload"><i class="fas fa-sync"></i></div>
+                        <div class="ac-text"><span class="ac-title">Reload</span></div>
+                    </button>
+                    <button id="action-uninstall-button" class="action-card danger">
+                        <div class="ac-icon uninstall"><i class="fas fa-trash-alt"></i></div>
+                        <div class="ac-text"><span class="ac-title">Uninistall</span></div>
+                    </button>
+                    <button id="action-cheat-button" class="action-card danger" id="exit-button">
+                        <div class="ac-icon exit"><i class="fas fa-power-off"></i></div>
+                        <div class="ac-text"><span class="ac-title">Cheat</span></div>
+                    </button>
+                </div>
+                
+                <div class="secondary-grid">
+                    <div class="info-box card-block">
+                        <h4><i class="fas fa-info-circle"></i> Module Info</h4>
+                        <div class="module-info-grid">
+                            <strong>Module:</strong>
+                            <div><span id="module-name">InvisibleX</span> <span id="module-version" class="badge">v1.0</span></div>
+                            <!-- <strong>By:</strong> -->
+                            <!-- <div id="module-developer">@itsribo</div> -->
+                            <strong>Plugins:</strong>
+                            <div id="module-plugins">Deamon</div>
+                        </div>
+                    </div>
+                </div>
+                
+            </div> <!-- Home -->
+            
+            <div id="gamelist-view" class="view-content">
+                <div class="control-block card-block">
+                    <h2><i class="fas fa-user-lock"></i> <span>Login Panel</span></h2>
+                    <p>Enter your key to login.</p>
+                    <input type="text" id="input-key-field" class="text-input" placeholder="Key 🗝">
+                    <div style="height: 34px;"></div>
+                    <button id="login-key-button" class="action-button">
+                        <i class="fas fa-login"></i>
+                        <span>Login</span>
+                    </button>
+                </div>
+                
+                <div class="secondary-grid">
+                    <div class="info-box card-block">
+                        <h4><i class="fas fa-info-circle"></i> Key Info</h4>
+                        <div class="module-info-grid">
+                            <strong>Key :</strong>
+                            <div><span id="key-name">N/A</span></div>
+                            <strong>Validity :</strong>
+                            <div id="validity-date">N/A</div>
+                            <strong>Seller :</strong>
+                            <div id="seller-name">N/A</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-block card-block">
+                    <h2><i class="fas fa-logs"></i> <span>Cheat Logs</span></h2>
+                    <div id="cheat-logs-list" class="logs-list">
+                    </div>
+                </div>
+                
+            </div> <!-- Login -->
+            
+            <div id="settings-view" class="view-content">
+                <div class="control-block card-block">
+                            <h2><i class="fas fa-sliders-h"></i> <span>General Settings</span></h2>
+                            <div class="setting-item">
+                                <label><i class="fas fa-sliders-h"></i> <span>Menu Toggler</span></label>
+                                <div class="selection-group">
+                                    <div class="bar-selection" id="binary-selection-bar">
+                                        <span class="selected-value" id="binary-selected-value">Reset</span>
+                                        <div class="available-options" id="binary-available-options">
+                                            <div class="options-header"><span class="options-title">Select an Option</span><button class="options-close-btn" type="button">&times;</button></div>
+                                            <div class="options-content">
+                                                <button class="option-button" data-param="optimum_bar"><span>Bar</span></button>
+                                                <button class="option-button" data-param="optimum_vol"><span>Volume</span></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button class="action-button" id="binary-apply-button"><span>Apply</span></button>
+                                </div>
+                            </div>
+                            
+                            <div class="setting-item">
+                                <label><i class="fas fa-sliders-h"></i> <span>Remote Control</span></label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="remote-control-toggle">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <p class="setting-hint" id="remote-control-hint">Off: controls stay in the in-game menu.</p>
+                            <div id="remote-url-box" class="remote-url" hidden>
+                                <span id="remote-url-text">Open the game once to get the link.</span>
+                                <button id="remote-url-copy" class="action-button" type="button"><span>Copy</span></button>
+                            </div>
+
+                            <div class="setting-item">
+                                <label><i class="fas fa-clock"></i> <span>Deamon Log Duration</span></label>
+                                <div class="selection-group">
+                                    <div class="bar-selection" id="deamon-log-duration">
+                                        <span class="selected-value" id="duration-selected-value">Reset</span>
+                                        <div class="available-options" id="duration-available-options">
+                                            <div class="options-header"><span class="options-title">Select an Option</span><button class="options-close-btn" type="button">&times;</button></div>
+                                            <div class="options-content">
+                                                <button class="option-button" data-param="1d"><span>24 Hours</span></button>
+                                                <button class="option-button" data-param="2d"><span>2 Days</span></button>
+                                                <button class="option-button" data-param="3d"><span>3 Days</span></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button class="action-button" id="duration-apply-button"><span>Apply</span></button>
+                                </div>
+                            </div>
+                            
+                    </div>
+
+                    <div class="control-block card-block">
+                        <h2><i class="fas fa-microchip"></i> <span>Driver</span></h2>
+
+                        <div class="setting-item">
+                            <label><i class="fas fa-code-branch"></i> <span>Paradise Version</span></label>
+                            <div class="selection-group">
+                                <div class="bar-selection" id="driver-paradise-variant-bar">
+                                    <span class="selected-value" id="driver-paradise-variant-value">New</span>
+                                    <div class="available-options" id="driver-paradise-variant-options">
+                                        <div class="options-header"><span class="options-title">Paradise Version</span><button class="options-close-btn" type="button">&times;</button></div>
+                                        <div class="options-content">
+                                            <button class="option-button" data-param="old"><span>Paradise (Old)</span></button>
+                                            <button class="option-button" data-param="new"><span>Paradise (New)</span></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="setting-hint">Old = original driver build. New = latest driver build, with auto-retry if a stale copy is already loaded.</p>
+
+                        <div class="setting-item">
+                            <label><i class="fas fa-unlock"></i> <span>Load Method</span></label>
+                            <div class="selection-group">
+                                <div class="bar-selection" id="driver-load-method-bar">
+                                    <span class="selected-value" id="driver-load-method-value">Normal</span>
+                                    <div class="available-options" id="driver-load-method-options">
+                                        <div class="options-header"><span class="options-title">Load Method</span><button class="options-close-btn" type="button">&times;</button></div>
+                                        <div class="options-content">
+                                            <button class="option-button" data-param="1"><span>Normal (insmod)</span></button>
+                                            <button class="option-button" data-param="2"><span>Jailbreak (ksud)</span></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="setting-hint">Jailbreak (ksud) only applies to Paradise (New) — the Old build always uses Normal insmod.</p>
+
+                        <div style="height: 10px;"></div>
+
+                        <button id="driver-execute-button" class="action-button">
+                            <i class="fas fa-play"></i>
+                            <span>Execute Driver</span>
+                        </button>
+                        <p class="setting-hint" style="margin-top: 12px;">Paradise is picked automatically from your kernel version (5.10, 5.15, 6.1, 6.6, 6.12, 6.18). If no driver matches, you will see "driver not found".</p>
+
+                        <pre id="driver-terminal" class="driver-terminal">Terminal output will appear here after Execute Driver.</pre>
+
+                        <div style="height: 14px;"></div>
+
+                        <div class="setting-item">
+                            <label><i class="fas fa-power-off"></i> <span>Load on Boot</span></label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="driver-boot-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Runs the preset driver (Paradise/DitPro) as soon as the phone finishes booting.</p>
+
+                        <div class="setting-item">
+                            <label><i class="fas fa-redo"></i> <span>Don't Stop</span></label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="driver-keepalive-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">If the menu ever starts without its driver, the driver is run again and the menu retried at once.</p>
+
+                        <div style="height: 20px;"></div>
+
+                        <div class="setting-item">
+                            <label><i class="fas fa-layer-group"></i> <span>Preset Driver</span></label>
+                            <div class="selection-group">
+                                <div class="bar-selection" id="driver-preset-selection-bar">
+                                    <span class="selected-value" id="driver-preset-selected-value">Select</span>
+                                    <div class="available-options" id="driver-preset-available-options">
+                                        <div class="options-header"><span class="options-title">Select a Driver</span><button class="options-close-btn" type="button">&times;</button></div>
+                                        <div class="options-content">
+                                            <button class="option-button" data-param="paradise"><span>Paradise</span></button>
+                                            <button class="option-button" data-param="ditpro"><span>DitPro-KPM</span></button>
+                                            <button class="option-button" data-param="rthook"><span>RT Hook</span></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button class="action-button" id="driver-preset-use-button"><span>Use</span></button>
+                            </div>
+                        </div>
+                        <p class="setting-hint" style="margin-top: 10px;">Paradise: kernel 5.10 se 6.18 tak chalta hai.</p>
+                        <p class="setting-hint">DitPro-KPM: kernel ke hisaab se. Kernel 4.4 se 5.4 tak: KPM recommended.</p>
+                    </div>
+
+                    <div class="control-block card-block">
+                        <h2><i class="fas fa-logs"></i> <span>Daemon Logs</span></h2>
+                        <div id="daemon-logs-list" class="logs-list">
+
+                            <!-- <div class="log-item"> -->
+                                <!-- <div class="log-header"> -->
+                                    <!-- <span class="log-date">12 Jan 2026</span> -->
+                                    <!-- <span class="log-time">22:30:59</span> -->
+                                <!-- </div> -->
+                                <!-- <span class="log-message"> -->
+                                    <!-- This is an example log message -->
+                                <!-- </span> -->
+                            <!-- </div> -->
+
+                            <!-- <div class="log-item"> -->
+                                <!-- <div class="log-header"> -->
+                                    <!-- <span class="log-date">13 Jan 2026</span> -->
+                                    <!-- <span class="log-time">11:12:45</span> -->
+                                <!-- </div> -->
+                                <!-- <span class="log-message"> -->
+                                    <!-- Another aligned log entry -->
+                                <!-- </span> -->
+                            <!-- </div> -->
+
+                        </div>
+                    </div>
+            </div>
+            
+        </main>
+    </div>
+
+    <nav id="bottom-nav">
+        <button class="nav-btn active" data-view="home-view">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </button>
+        <button class="nav-btn" data-view="gamelist-view">
+            <i class="fas fa-user-lock"></i>
+            <span>Login</span>
+        </button>
+        <button id="settings-nav-btn" class="nav-btn">
+            <i class="fas fa-cog"></i>
+            <span>Settings</span>
+        </button>
+    </nav>
+
+    <div id="notification-container"></div>
+
+    <script type="module" src="/script.js?v=3.4"></script>
+</div>
+</body>
+</html>
