@@ -16,6 +16,8 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <csignal>
+#include <ctime>
 #include <thread>
 #include <chrono>
 #include <linux/input.h>
@@ -42,6 +44,120 @@ static void LoadMenuOpenMode() {
     g_MenuOpenMode = ix_get_menu_open_mode();
 }
 
+// =====================================================================
+// [NEW] Crash logging — "Driver attached ... (signal 11)" told us WHERE
+// the run got to, but nothing about WHY: no fault address, no idea
+// whether the bad access was inside this binary, inside the loaded
+// driver's kernel interface, or inside the game's own libraries. This
+// does not fix the Android 17 crash (no log evidence exists yet that
+// points at any one specific cause — guessing at a fix with nothing to
+// go on would risk hiding the real bug instead of catching it), but it
+// means the NEXT crash on that device writes down the one thing that
+// turns "it crashed" into something fixable: the fault address, which
+// region of /proc/self/maps it falls in, and which binary/library that
+// is. Deliberately only async-signal-safe calls here (write/open/
+// read/close, no malloc, no printf/FILE*, no std::string formatting) —
+// the process is already in an undefined state when this runs.
+// =====================================================================
+static int g_crashLogFd = -1;
+
+static void ix_write_raw(const char* s) {
+    if (g_crashLogFd < 0 || !s) return;
+    size_t len = 0;
+    while (s[len]) ++len;
+    ssize_t off = 0;
+    while (off < (ssize_t)len) {
+        ssize_t w = write(g_crashLogFd, s + off, len - off);
+        if (w <= 0) break;
+        off += w;
+    }
+}
+
+// Async-signal-safe unsigned hex formatter (no snprintf/sprintf — those
+// are not guaranteed async-signal-safe, and this runs inside the
+// handler itself).
+static void ix_write_hex(uintptr_t v) {
+    char buf[2 + sizeof(uintptr_t) * 2 + 1];
+    buf[0] = '0'; buf[1] = 'x';
+    const char* digits = "0123456789abcdef";
+    int n = (int)(sizeof(uintptr_t) * 2);
+    for (int i = 0; i < n; ++i) {
+        buf[2 + i] = digits[(v >> ((n - 1 - i) * 4)) & 0xF];
+    }
+    buf[2 + n] = '\0';
+    ix_write_raw(buf);
+}
+
+static void ix_write_int(long v) {
+    char buf[24];
+    int i = 23;
+    buf[i--] = '\0';
+    bool neg = v < 0;
+    unsigned long uv = neg ? (unsigned long)(-v) : (unsigned long)v;
+    if (uv == 0) buf[i--] = '0';
+    while (uv > 0) { buf[i--] = '0' + (uv % 10); uv /= 10; }
+    if (neg) buf[i--] = '-';
+    ix_write_raw(&buf[i + 1]);
+}
+
+static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
+    if (g_crashLogFd >= 0) {
+        ix_write_raw("\n=== CRASH === signal=");
+        ix_write_int(sig);
+        ix_write_raw(" si_code=");
+        ix_write_int(info ? info->si_code : 0);
+        ix_write_raw(" fault_addr=");
+        ix_write_hex(info ? (uintptr_t)info->si_addr : 0);
+        ix_write_raw(" pid=");
+        ix_write_int((long)getpid());
+        ix_write_raw(" tid=");
+        ix_write_int((long)gettid());
+        ix_write_raw("\n--- /proc/self/maps ---\n");
+
+        int mapsFd = open("/proc/self/maps", O_RDONLY);
+        if (mapsFd >= 0) {
+            char buf[4096];
+            ssize_t n;
+            while ((n = read(mapsFd, buf, sizeof(buf))) > 0) {
+                ssize_t off = 0;
+                while (off < n) {
+                    ssize_t w = write(g_crashLogFd, buf + off, n - off);
+                    if (w <= 0) break;
+                    off += w;
+                }
+            }
+            close(mapsFd);
+        }
+        ix_write_raw("--- end maps ---\n");
+        fsync(g_crashLogFd);
+    }
+    // Restore the default handler and re-raise, so the process still
+    // terminates/core-dumps the normal way — this handler only logs,
+    // it never tries to recover from a corrupted process.
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void ix_install_crash_handler() {
+#ifdef IX_INTERACTIVE_CLI
+    std::string logPath = kd_exe_dir() + "/crash.log";
+#else
+    std::string logPath = std::string(INX_MODULE_DIR) + "/webroot/cheat.log";
+#endif
+    g_crashLogFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = ix_crash_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+    sigaction(SIGBUS,  &sa, nullptr);
+    sigaction(SIGILL,  &sa, nullptr);
+    sigaction(SIGFPE,  &sa, nullptr);
+}
+
 #ifdef IX_INTERACTIVE_CLI
 // [STANDALONE BUILD] Terminal driver + bar/vol prompt, run once after
 // login succeeds and before LoadMenuOpenMode()/ix_get_driver_choice() are
@@ -58,24 +174,21 @@ static void LoadMenuOpenMode() {
 // Resolved relative to this binary's own location (login.h's
 // kd_exe_dir()) since a standalone run has no module directory.
 static void ix_interactive_driver_and_menu_prompt() {
+    // [NARROWED] Only Paradise and DitPro offered here — every other
+    // driver name ix_driver_init.h understands still works if set via
+    // IX_DRIVER_NAME directly, this just keeps the interactive menu to
+    // the two the user actually wants shown.
     printf("\nStep - Driver\n");
-    static const char* names[] = {
-        "auto","qx1","gt","rt-dev","rt-proc","qx2","tb-kpm",
-        "ditpro","kma","ldk","paradise","bing","ditkpm","rthook"
-    };
-    static const char* labels[] = {
-        "Auto (let the binary choose)","QX1","GT","RT (dev)","RT (proc)",
-        "QX2","TB KPM","DitPro KPM","KMA KPM","LDK KPM",
-        "Paradise (recommended)","Bing","Dit KPM","RT Hook"
-    };
-    for (int i = 0; i < 14; ++i) printf("  %d) %s\n", i + 1, labels[i]);
-    printf("\nSelect [1-14, default=1]: ");
+    static const char* names[] = { "paradise", "ditpro" };
+    static const char* labels[] = { "Paradise (recommended)", "DitPro KPM" };
+    for (int i = 0; i < 2; ++i) printf("  %d) %s\n", i + 1, labels[i]);
+    printf("\nSelect [1-2, default=1]: ");
     fflush(stdout);
 
     char line[32] = {0};
     std::cin.getline(line, sizeof(line));
     int sel = atoi(line);
-    if (sel < 1 || sel > 14) sel = 1;
+    if (sel < 1 || sel > 2) sel = 1;
     const std::string driver = names[sel - 1];
     setenv("IX_DRIVER_NAME", driver.c_str(), 1);
     printf("-> Driver: %s\n", driver.c_str());
@@ -2324,6 +2437,14 @@ void RenderMenu(){
 }
 
 int main(int argc,char* argv[]){
+    // Installed before anything else — the Android 17 crash happens
+    // after the driver attaches, well past this point, so this needs
+    // to already be in place by then. See ix_install_crash_handler()
+    // above for why this is the right fix to make here: we don't have
+    // enough information yet to know WHAT in the crash to fix, so this
+    // makes the next occurrence self-diagnosing instead of guessing.
+    ix_install_crash_handler();
+
     // =============================================================
     // [FIX — ONE LOGIN, NOT TWO SEPARATE ONES] This used to call
     // auth.run() unconditionally — the fully INTERACTIVE terminal
