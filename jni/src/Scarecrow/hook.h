@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <map>
 #include <cfloat>
+#include <cstdlib>
 
 extern int  selectedBoneIndex;
 extern int  aimBotBoneIndex;
@@ -2050,8 +2051,31 @@ void UpdateHardwareBTFast(){
         }
         Vector3 targetPos = SilentAimBone(currentTarget);
         if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
-            if (chestRate == 1)      targetPos.Y += 0.04f;
-            else if (chestRate == 2) targetPos.Y -= 0.08f;
+            if (chestRate == 1) {
+                targetPos.Y += 0.04f;
+            } else if (chestRate == 2) {
+                targetPos.Y -= 0.08f;
+            } else if (chestRate == 3) {
+                // [RE-ADDED] Legit Mode. This case fell through to no offset
+                // at all before — not a 70/30 split, nothing, which is why
+                // it never looked like anything was happening. A human
+                // player hits head most of the time and body the rest, not
+                // a fixed ratio repeated every shot on the same spot, so the
+                // split is decided ONCE per target lock and held — re-rolling
+                // it every tick would read as the aim point visibly
+                // twitching between head and chest, which is the opposite of
+                // "legit". Same offsets as the Head/Body modes above, so
+                // switching between modes mid-game doesn't change behaviour,
+                // only how it is chosen.
+                static uintptr_t legitLastTarget = 0;
+                static bool      legitBodyThisTarget = false;
+                if (currentTarget != legitLastTarget) {
+                    legitLastTarget = currentTarget;
+                    legitBodyThisTarget = (rand() % 100) < 30; // 30% body, 70% head
+                }
+                if (legitBodyThisTarget) targetPos.Y -= 0.08f;
+                else                     targetPos.Y += 0.04f;
+            }
             Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
             Vector3 dir;
             dir.X = targetPos.X - startPos.X;

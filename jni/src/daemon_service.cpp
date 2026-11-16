@@ -276,6 +276,14 @@ static std::string pkg_from_dumpsys(const std::string& dumpsys_cmd, const char* 
 
 static std::string foreground_package() {
     std::string pkg = pkg_from_dumpsys("dumpsys window", "mCurrentFocus=");
+    // [NEW] mCurrentFocus can read "null" for a frame or two on some OEMs
+    // while a screen-recorder's own overlay/permission dialog is being
+    // created or torn down — that's a real, documented Android window-
+    // manager state, not specific to any one device. mFocusedApp tracks the
+    // last non-null foreground app task through exactly that gap, so try it
+    // before falling through to "dumpsys activity top" (which can report a
+    // launcher/recents task mid-transition instead of the game).
+    if (pkg.empty()) pkg = pkg_from_dumpsys("dumpsys window", "mFocusedApp=");
     if (pkg.empty()) pkg = pkg_from_dumpsys("dumpsys activity top", "ACTIVITY ");
     return pkg;
 }

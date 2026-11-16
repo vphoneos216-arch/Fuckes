@@ -49,6 +49,7 @@ inline Voice            g_voices[kVoices];
 inline AAudioStream*    g_stream   = nullptr;
 inline std::atomic<bool> g_ready{false};
 inline std::atomic<bool> g_tried{false};
+inline std::atomic<bool> g_muted{false};
 
 inline aaudio_data_callback_result_t on_audio(AAudioStream*, void*, void* audioData,
                                               int32_t numFrames) {
@@ -121,6 +122,7 @@ inline bool ensure_stream() {
 // while the same clip is still playing — it takes the next free voice.
 inline void ix_sound_play(IxSound which) {
     using namespace ix_audio_detail;
+    if (g_muted.load(std::memory_order_relaxed)) return;
     if (!ensure_stream()) return;
 
     const Clip c = clip_for(which);
@@ -138,6 +140,17 @@ inline void ix_sound_play(IxSound which) {
         return;
     }
     // every voice busy: drop this one rather than cutting another short
+}
+
+// [NEW] Mute toggle for the "Volume Off" setting. Muting does not stop a
+// clip already mixing in the callback (it will finish on its own in well
+// under a second); it only blocks new clips from starting, which is what
+// a mute switch is expected to do and keeps on_audio() itself untouched.
+inline void ix_sound_set_muted(bool muted) {
+    ix_audio_detail::g_muted.store(muted, std::memory_order_relaxed);
+}
+inline bool ix_sound_is_muted() {
+    return ix_audio_detail::g_muted.load(std::memory_order_relaxed);
 }
 
 // Plays once per process, the first time the menu is shown.

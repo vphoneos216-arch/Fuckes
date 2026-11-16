@@ -741,11 +741,11 @@ inline void RenderSingleMenuWindow() {
                        switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    // Hardware BT's Body/Legit mode selector was removed
-                    // (replaced by Body Kill below), so despite adding Body
-                    // Kill's checkbox+slider the card only needs to grow
-                    // 450 → 470 to fit everything without overlap.
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 470 * scale);
+                    // Card grown 470 -> 610 to fit the [RE-ADDED] Hardware BT
+                    // checkbox (its own row) plus the Head/Body/Legit mode
+                    // selector block, on top of everything that was already
+                    // here (Body Kill included, unchanged).
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 610 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -761,29 +761,31 @@ inline void RenderSingleMenuWindow() {
                     // AimLock / AimLockNew / aimCollider force-cleared below
                     // so a stale config.json value can't bring it back silently.
 
-                    // Row 1 — Body Kill (Aimbot checkbox removed from this slot)
-                    // [REMOVED] Hardware BT checkbox — Body Kill replaces it
-                    // here. HardwareBT is force-cleared below so a stale
-                    // config.json value can't bring it back silently.
+                    // Row 1 — Body Kill
                     // [REMOVED] Aimbot checkbox — Aimbot feature removed.
                     // Aimbot force-cleared below so a stale config.json
                     // value can't bring it back silently.
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
                     ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
 
-                    // Row 2 — FOV Circle (moved down one row)
+                    // Row 2 — FOV Circle
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
                     ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
 
-                    // [REMOVED] Hardware BT's old Body/Legit mode selector.
-                    // Body Kill (below) replaces it: Hardware BT now always
-                    // targets head (chestRate forced to 1).
-                    g_Cfg.chestRateSave = 1;
+                    // Row 3 — [RE-ADDED] Hardware BT. Independent of Body
+                    // Kill: this only gates whether the mode selector below
+                    // (Head/Body/Legit) has any effect — see
+                    // UpdateHardwareBTFast() in hook.h, which no-ops the
+                    // whole offset calculation while this is off.
+                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3));
+                    ImGui::Checkbox1("Hardware BT", &g_Cfg.hardwareBT);
 
                     // Label drawn here rather than by the slider: ImGui puts an
                     // inline label to the RIGHT of the widget, which pushed
                     // "FOV Range" outside the card and over the artwork.
-                    float fovLabelY = startY + row * 4.1f;
+                    // (moved down one row, row*4.1 -> row*5.1, to clear the
+                    // new Hardware BT row above)
+                    float fovLabelY = startY + row * 5.1f;
                     dl->AddText(NULL, 20.0f * scale,
                                 ImVec2(startX, fovLabelY),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "FOV Range");
@@ -791,16 +793,40 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
-                    // ── Body Kill HP slider ─────────────────────────────
+                    // -- [RE-ADDED] Hardware BT mode selector --
+                    // Head / Body / Legit — reuses chestRateSlider() and
+                    // ChestRateHint(), both already written in main.cpp
+                    // above this file's #include, and already correct, just
+                    // never called from anywhere after this card stopped
+                    // drawing them. Legit's actual 70/30 head/body split is
+                    // implemented in UpdateHardwareBTFast() in hook.h; this
+                    // is only the picker for which of the three it runs.
+                    float modeY = fovLabelY + 30 * scale + 56 * scale;
+                    dl->AddText(NULL, 20.0f * scale,
+                                ImVec2(startX, modeY),
+                                COL_TXT_HI((int)(255 * uiAlpha)), "Hardware BT Mode");
+                    {
+                        int cr = g_Cfg.chestRateSave;
+                        if (cr < 1) cr = 1;
+                        if (cr > 3) cr = 3;
+                        ImGui::SetCursorScreenPos(ImVec2(startX, modeY + 30 * scale));
+                        if (chestRateSlider("##HWBTMode", &cr, uiAlpha)) g_Cfg.chestRateSave = cr;
+                        chestRate = cr; // UpdateHardwareBTFast() reads this global directly
+                        dl->AddText(NULL, 16.0f * scale,
+                                    ImVec2(startX, modeY + 30 * scale + 46 * scale),
+                                    COL_TXT_MID((int)(200 * uiAlpha)), ChestRateHint());
+                    }
+
+                    // -- Body Kill HP slider --
                     // Threshold switch, not a forced-HP hack — see
                     // BodyKillThresholdReached()/BodyKillBone() in hook.h.
                     // Standalone toggle (works without Aim Silent also
-                    // being on — checkbox is now in Row 1 above, replacing
-                    // the removed Hardware BT control). Aim stays on the
-                    // head (real damage) until the enemy's actual HP drops
-                    // to/below this slider value; only then does aim
-                    // redirect to the body. HP is read-only, never written.
-                    float bkY = fovLabelY + 30 * scale + 56 * scale;
+                    // being on). Aim stays on the head (real damage) until
+                    // the enemy's actual HP drops to/below this slider
+                    // value; only then does aim redirect to the body. HP is
+                    // read-only, never written. (moved down to make room
+                    // for the Hardware BT mode selector above it)
+                    float bkY = modeY + 30 * scale + 56 * scale + 56 * scale;
                     dl->AddText(NULL, 18.0f * scale,
                                 ImVec2(startX, bkY - 26 * scale),
                                 COL_TXT_MID((int)(180 * uiAlpha)),
@@ -840,11 +866,10 @@ inline void RenderSingleMenuWindow() {
                     chestRate         = g_Cfg.chestRateSave;
                     if (chestRate < 1) chestRate = 1;
                     if (chestRate > 3) chestRate = 3;
-                    // [REMOVED] Hardware BT — force-cleared every frame so a
-                    // stale config.json value (aim_hwbt) can never silently
-                    // re-enable it now that its checkbox is gone.
-                    HardwareBT        = false;
-                    g_Cfg.hardwareBT  = false;
+                    // [RE-ADDED] Hardware BT — real checkbox is Row 3 above
+                    // now; just mirror it into the global the hook thread
+                    // reads, same pattern as every other feature here.
+                    HardwareBT        = g_Cfg.hardwareBT;
                     BodyKill          = g_Cfg.bodyKill;
                     BodyKillHP        = g_Cfg.bodyKillHP;
                     /* threads are idempotent (guarded by running flags).
@@ -959,8 +984,10 @@ inline void RenderSingleMenuWindow() {
 
                     InfoRow(3, "Expiry", sd.expiry.c_str(), COL_TXT_HI((int)(255 * uiAlpha)));
 
-                    // ── SETTINGS CARD (Exit only) ──────────────────
-                    float cardH2      = 130 * scale;
+                    // ── SETTINGS CARD (Mute + Exit) ─────────────────
+                    // [RE-ADDED SPACE] grown 130 -> 190 to fit the
+                    // [NEW] "Volume Off" checkbox above the Exit button.
+                    float cardH2      = 190 * scale;
                     float cardSpacing = 20 * scale;
                     ImVec2 c2Min = ImVec2(centerX - cardW * 0.5f, contentY + cardH1 + cardSpacing);
                     ImVec2 c2Max = ImVec2(centerX + cardW * 0.5f, contentY + cardH1 + cardSpacing + cardH2);
@@ -971,9 +998,17 @@ inline void RenderSingleMenuWindow() {
                                 ImVec2(c2Min.x + 25 * scale, c2Min.y + 16 * scale),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Settings");
 
+                    // [NEW] Volume Off — mutes the menu's own click/toggle
+                    // sounds (ix_audio.h). Checkbox is the source of truth
+                    // (same pattern as Body Kill etc. above); applied every
+                    // frame so it takes effect immediately either way.
+                    ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 58 * scale));
+                    ImGui::Checkbox1("Volume Off", &g_Cfg.soundMuted);
+                    ix_sound_set_muted(g_Cfg.soundMuted);
+
                     float btnW = 380 * scale;
                     float btnH = 45 * scale;
-                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 62 * scale);
+                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 112 * scale);
                     ImGui::SetCursorScreenPos(btnPos);
                     if (ImGui::Button("Exit", ImVec2(btnW, btnH))) {
                         UpdateAndSaveSettings();

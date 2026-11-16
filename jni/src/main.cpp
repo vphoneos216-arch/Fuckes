@@ -130,6 +130,9 @@ struct SavedSettings {
     // Body Kill — deal fixed HP damage on aim-silent hit
     bool  bodyKill=false;
     float bodyKillHP=100.f;   // slider 1–200; write this HP to target's health
+    // [NEW] "Volume Off" — mutes the menu's own click/toggle sounds
+    // (ix_audio.h), not game audio; see ix_sound_set_muted().
+    bool  soundMuted=false;
 };
 static SavedSettings g_Cfg;
 static bool g_SettingsLoaded = false;
@@ -2079,14 +2082,17 @@ static void ix_pull_remote_controls() {
     textSize            = c.esp_textsize;
 
     AimSilent           = c.aim_silent;
-    // [REMOVED] Hardware BT retired — Body Kill replaces it in the menu.
-    // Force false here too (not just in the per-frame menu sync) so a
-    // stale config.json "aim_hwbt": true from before this change can never
-    // bring it back, even if the user never opens the AIM page this run.
+    // [RE-ADDED] Hardware BT + its Head/Body/Legit mode, back in the menu
+    // (SourceMenu.h). c.aim_hwbt / c.aim_chestrate aren't in IxControls (the
+    // remote-control struct) yet, so remote control still can't set these —
+    // only the in-game menu checkbox/selector can, which is the same
+    // limitation the Body Kill controls just above/below already have
+    // (esp_* etc. are the only fields IxControls carries). Loads as off/head
+    // by default rather than reviving whatever a stale config.json said.
     HardwareBT          = false;
     g_Cfg.hardwareBT    = false;
     g_Cfg.showFovCircle = c.aim_fovcircle;
-    g_Cfg.chestRateSave = 1;   // Body/Legit modes removed — Hardware BT (if ever re-enabled) is head-only
+    g_Cfg.chestRateSave = 1;
     g_Cfg.aimFovUI      = c.aim_fov;
 
     // [REMOVED] Pull / Float-Pull — force false regardless of remote-control
@@ -2127,6 +2133,11 @@ static void ix_apply_control_sync() {
     chestRate         = g_Cfg.chestRateSave;
     if (chestRate < 1) chestRate = 1;
     if (chestRate > 3) chestRate = 3;
+    // [RE-ADDED] Without this, Hardware BT only ever synced inside the AIM
+    // page's own block in SourceMenu.h — if that page was never opened this
+    // run, HardwareBT would stay stuck at whatever it was on the previous
+    // run (or false on a fresh process), ignoring the checkbox entirely.
+    HardwareBT        = g_Cfg.hardwareBT;
     StartSilentAimThread();
     StartHardwareBTThread();
     // Body Kill globals synced from config — no separate thread: the
