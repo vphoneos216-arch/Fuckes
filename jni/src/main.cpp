@@ -21,6 +21,7 @@
 #include <csignal>
 #include <ctime>
 #include <cerrno>
+#include <elf.h>
 #include <thread>
 #include <chrono>
 #include <linux/input.h>
@@ -247,6 +248,92 @@ static void ix_install_crash_handler() {
     sigaction(SIGFPE,  &sa, nullptr);
 }
 
+#ifdef IX_INTERACTIVE_CLI
+// [NEW — "lib ko bhi binary mein daal do, only binary do"] The
+// standalone build no longer ships libcollider_stub.so as a second
+// file — build.yml's "Embed collider_stub.so into inx_standalone"
+// step adds it as an extra ELF section (named "collider_stub") inside
+// this very binary. This reads that section back out of this
+// process's own /proc/self/exe and writes it to a short-lived temp
+// file next to the binary — the injector still needs an actual path
+// on disk to remote-dlopen, but nothing the user has to keep paired
+// with inx_standalone; the temp file is deleted right after the
+// injection attempt, successful or not.
+static std::string ix_extract_embedded_collider_stub() {
+    FILE* f = fopen("/proc/self/exe", "rb");
+    if (!f) {
+        printf("[INX] collider-stub: could not open /proc/self/exe\n");
+        return "";
+    }
+
+    Elf64_Ehdr ehdr{};
+    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1 ||
+        memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0) {
+        printf("[INX] collider-stub: not a readable ELF image\n");
+        fclose(f);
+        return "";
+    }
+
+    std::vector<Elf64_Shdr> shdrs(ehdr.e_shnum);
+    if (fseek(f, (long)ehdr.e_shoff, SEEK_SET) != 0 ||
+        fread(shdrs.data(), sizeof(Elf64_Shdr), ehdr.e_shnum, f) != ehdr.e_shnum) {
+        printf("[INX] collider-stub: failed reading section header table\n");
+        fclose(f);
+        return "";
+    }
+
+    const Elf64_Shdr& shstrtabHdr = shdrs[ehdr.e_shstrndx];
+    std::vector<char> shstrtab(shstrtabHdr.sh_size);
+    if (fseek(f, (long)shstrtabHdr.sh_offset, SEEK_SET) != 0 ||
+        fread(shstrtab.data(), 1, shstrtabHdr.sh_size, f) != shstrtabHdr.sh_size) {
+        printf("[INX] collider-stub: failed reading section name table\n");
+        fclose(f);
+        return "";
+    }
+
+    const Elf64_Shdr* target = nullptr;
+    for (const auto& sh : shdrs) {
+        if (sh.sh_name < shstrtab.size() &&
+            strcmp(&shstrtab[sh.sh_name], "collider_stub") == 0) {
+            target = &sh;
+            break;
+        }
+    }
+    if (!target || target->sh_size == 0) {
+        printf("[INX] collider-stub: no embedded \"collider_stub\" section found in this binary "
+               "(built without the CI embed step?)\n");
+        fclose(f);
+        return "";
+    }
+
+    std::vector<uint8_t> blob(target->sh_size);
+    if (fseek(f, (long)target->sh_offset, SEEK_SET) != 0 ||
+        fread(blob.data(), 1, target->sh_size, f) != target->sh_size) {
+        printf("[INX] collider-stub: failed reading embedded section data\n");
+        fclose(f);
+        return "";
+    }
+    fclose(f);
+
+    std::string outPath = kd_exe_dir() + "/.collider_stub_tmp.so";
+    FILE* out = fopen(outPath.c_str(), "wb");
+    if (!out) {
+        printf("[INX] collider-stub: could not write temp file at %s (errno=%d)\n",
+               outPath.c_str(), errno);
+        return "";
+    }
+    size_t wrote = fwrite(blob.data(), 1, blob.size(), out);
+    fclose(out);
+    if (wrote != blob.size()) {
+        printf("[INX] collider-stub: short write extracting embedded .so\n");
+        unlink(outPath.c_str());
+        return "";
+    }
+    chmod(outPath.c_str(), 0644);
+    return outPath;
+}
+#endif
+
 // [NEW — internal collider aim-lock] Creates the shared IPC region and
 // injects collider_stub.so into game_pid. Called once automatically
 // right after driver attach, and again on demand from the "Inject
@@ -269,11 +356,22 @@ void ix_retry_collider_injection() {
     }
 
 #ifdef IX_INTERACTIVE_CLI
-    std::string stubPath = kd_exe_dir() + "/libcollider_stub.so";
+    std::string stubPath = ix_extract_embedded_collider_stub();
+    if (stubPath.empty()) {
+        g_ColliderIpc = nullptr;
+        return; // extractor already printed exactly why
+    }
 #else
     std::string stubPath = std::string(INX_MODULE_DIR) + "/libcollider_stub.so";
 #endif
     bool injected = ix_inject_shared_library((pid_t)game_pid, stubPath, "ix_collider_stub_init");
+#ifdef IX_INTERACTIVE_CLI
+    // Only ever needed for the remote dlopen() call just above — once
+    // that call has returned (either the library is mapped into the
+    // target now, or it failed and nothing references this path),
+    // this temp file has no further purpose.
+    unlink(stubPath.c_str());
+#endif
     printf("[INX] collider-stub injection %s\n",
            injected ? "requested (waiting for stub to come up)"
                     : "failed — using direct in-process HWBP path");

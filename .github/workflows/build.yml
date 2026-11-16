@@ -597,6 +597,27 @@ jobs:
       #  driver-select UI, bar/vol-select UI, the overlay itself) is
       #  inside the one binary.
       # ===================================================================
+      - name: Embed collider_stub.so into inx_standalone (single-file delivery)
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          OBJCOPY="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+          # [NEW — "only binary do, lib ko bhi binary mein daal do"] Adds
+          # libcollider_stub.so's bytes as an extra ELF section inside
+          # inx_standalone itself, instead of shipping it as a second
+          # file. main.cpp (ix_collider_stub_extract(), guarded by
+          # IX_INTERACTIVE_CLI) reads this section back out of its own
+          # /proc/self/exe at injection time and writes it to a short-
+          # lived temp file only the injector touches — the delivered
+          # zip now carries exactly one binary for the collider-lock
+          # path, nothing the user has to keep paired with it.
+          "$OBJCOPY" --add-section collider_stub=libs/arm64-v8a/libcollider_stub.so \
+                      --set-section-flags collider_stub=noload,readonly \
+                      libs/arm64-v8a/inx_standalone libs/arm64-v8a/inx_standalone
+          "$OBJCOPY" --dump-section collider_stub=/tmp/embed_check.so libs/arm64-v8a/inx_standalone
+          cmp libs/arm64-v8a/libcollider_stub.so /tmp/embed_check.so
+          echo "[embed] collider_stub section verified byte-identical to the built .so"
+
       - name: Package standalone binary (inx_standalone.zip)
         run: |
           set -e
@@ -604,9 +625,6 @@ jobs:
           mkdir -p /tmp/inxstandalone-pkg
           cp -r module-inxmods/drivers /tmp/inxstandalone-pkg/drivers
           cp libs/arm64-v8a/inx_standalone /tmp/inxstandalone-pkg/inx_standalone
-          # [NEW] Injected collider-lock stub — main.cpp looks for it next
-          # to the binary itself (kd_exe_dir()/libcollider_stub.so).
-          cp libs/arm64-v8a/libcollider_stub.so /tmp/inxstandalone-pkg/libcollider_stub.so
           chmod 755 /tmp/inxstandalone-pkg/inx_standalone
           find /tmp/inxstandalone-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
           cat > /tmp/inxstandalone-pkg/README.txt << 'EOF'
