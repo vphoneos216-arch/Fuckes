@@ -233,10 +233,44 @@ static inline const std::string& kd_writable_dir() {
     // be on some ROMs) that was simply never being used because of the
     // wrong name. Fixed to the real package so this is actually tried
     // first, as originally intended.
-    std::vector<std::string> candidateList = {
-        "/data/data/com.invisiblex.loader/files",
-        "/sdcard/Android/data/com.invisiblex.loader/files",
-    };
+    std::vector<std::string> candidateList;
+
+#ifdef IX_INTERACTIVE_CLI
+    // [FIX — standalone key not saving] The module build's candidate
+    // order (below) tries com.invisiblex.loader's app-data folders
+    // FIRST because that package is genuinely installed there in the
+    // normal module+app setup. The standalone binary has no app
+    // installed at all — that path doesn't exist, but as root this
+    // binary CAN still mkdir+write it (root can create directories
+    // almost anywhere), so the save looked like it worked. What broke
+    // it: a data folder for a package that was never actually
+    // installed has no real owner in Android's eyes, and nothing
+    // guarantees it survives — a reboot, a cache clean, or the system
+    // reclaiming orphaned /data/data entries can and does wipe it,
+    // which is exactly "the key doesn't save" (it saves, then
+    // vanishes before the next run). For this build only, the
+    // binary's own directory goes FIRST instead of last: it is the
+    // one location guaranteed to exist (the binary just ran from
+    // there) and guaranteed stable (nothing cleans up next to a file
+    // someone deliberately placed and is still running).
+    std::string exeDirFirst = kd_exe_dir();
+    if (!exeDirFirst.empty()) candidateList.push_back(exeDirFirst);
+#endif
+
+    // [FIX] These two candidates were still the scaffold placeholder
+    // package name "com.mycompany.application" instead of this app's
+    // real package "com.invisiblex.loader" — neither path has ever
+    // existed on a real device, so BOTH silently failed on every single
+    // run and this always fell through to a lower-priority candidate
+    // (typically /data/local/tmp/.kd_store). That's not where the saved
+    // key actually "disappeared" from, but it IS a real, stable,
+    // SELinux/app-lifecycle-friendly location (cleared only on uninstall,
+    // never by a cache cleaner/task killer the way /data/local/tmp can
+    // be on some ROMs) that was simply never being used because of the
+    // wrong name. Fixed to the real package so this is actually tried
+    // first, as originally intended.
+    candidateList.push_back("/data/data/com.invisiblex.loader/files");
+    candidateList.push_back("/sdcard/Android/data/com.invisiblex.loader/files");
 
     // $HOME is set and stable under Termux (and most non-rooted test
     // environments) regardless of which directory the binary is
@@ -251,9 +285,10 @@ static inline const std::string& kd_writable_dir() {
     candidateList.push_back("/data/local/tmp/.kd_store");
     candidateList.push_back("/data/local/tmp");
 
-    // Last resort: the binary's OWN directory (absolute, stable across
-    // launches) instead of a bare "." (relative to launch-time cwd,
-    // which is NOT stable across launches).
+    // Last resort (module build only — the standalone build already put
+    // this first, above): the binary's OWN directory (absolute, stable
+    // across launches) instead of a bare "." (relative to launch-time
+    // cwd, which is NOT stable across launches).
     std::string exeDir = kd_exe_dir();
     if (!exeDir.empty()) candidateList.push_back(exeDir);
     candidateList.push_back(".");
