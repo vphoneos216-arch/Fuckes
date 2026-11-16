@@ -603,15 +603,15 @@ jobs:
             "/tmp/inxcli-pkg/api/arm64-v8a/inx_login_@api"
           find /tmp/inxcli-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
           cat > /tmp/inxcli-pkg/README.txt << 'EOF'
-InvisibleX standalone CLI
-==========================
-No module, no daemon. Run as root:
+          InvisibleX standalone CLI
+          ==========================
+          No module, no daemon. Run as root:
 
-  su -c ./inx_cli
+            su -c ./inx_cli
 
-Keep this folder's layout as-is (inx_cli, api/, bin/, drivers/ all
-together) -- inx_cli finds everything relative to its own location.
-EOF
+          Keep this folder's layout as-is (inx_cli, api/, bin/, drivers/ all
+          together) -- inx_cli finds everything relative to its own location.
+          EOF
           cd /tmp/inxcli-pkg && zip -r -q /tmp/inx_cli.zip . && cd -
           ls -la /tmp/inx_cli.zip
 
