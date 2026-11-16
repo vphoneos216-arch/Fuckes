@@ -62,16 +62,27 @@ static void LoadMenuOpenMode() {
 // =====================================================================
 static int g_crashLogFd = -1;
 
-static void ix_write_raw(const char* s) {
-    if (g_crashLogFd < 0 || !s) return;
-    size_t len = 0;
-    while (s[len]) ++len;
+// [FIX — terminal must show the exact reason directly, no hunting for
+// a separate file] write() is async-signal-safe, so the same raw
+// bytes go to both the log file AND to the terminal (STDOUT_FILENO) —
+// whichever fds are valid. stdout is always open on a standalone run,
+// so this always shows.
+static void ix_write_raw_to(int fd, const char* s, size_t len) {
+    if (fd < 0) return;
     ssize_t off = 0;
     while (off < (ssize_t)len) {
-        ssize_t w = write(g_crashLogFd, s + off, len - off);
+        ssize_t w = write(fd, s + off, len - off);
         if (w <= 0) break;
         off += w;
     }
+}
+
+static void ix_write_raw(const char* s) {
+    if (!s) return;
+    size_t len = 0;
+    while (s[len]) ++len;
+    ix_write_raw_to(g_crashLogFd, s, len);
+    ix_write_raw_to(STDOUT_FILENO, s, len);
 }
 
 // Async-signal-safe unsigned hex formatter (no snprintf/sprintf — those
@@ -101,37 +112,66 @@ static void ix_write_int(long v) {
     ix_write_raw(&buf[i + 1]);
 }
 
-static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
-    if (g_crashLogFd >= 0) {
-        ix_write_raw("\n=== CRASH === signal=");
-        ix_write_int(sig);
-        ix_write_raw(" si_code=");
-        ix_write_int(info ? info->si_code : 0);
-        ix_write_raw(" fault_addr=");
-        ix_write_hex(info ? (uintptr_t)info->si_addr : 0);
-        ix_write_raw(" pid=");
-        ix_write_int((long)getpid());
-        ix_write_raw(" tid=");
-        ix_write_int((long)gettid());
-        ix_write_raw("\n--- /proc/self/maps ---\n");
-
-        int mapsFd = open("/proc/self/maps", O_RDONLY);
-        if (mapsFd >= 0) {
-            char buf[4096];
-            ssize_t n;
-            while ((n = read(mapsFd, buf, sizeof(buf))) > 0) {
-                ssize_t off = 0;
-                while (off < n) {
-                    ssize_t w = write(g_crashLogFd, buf + off, n - off);
-                    if (w <= 0) break;
-                    off += w;
-                }
-            }
-            close(mapsFd);
-        }
-        ix_write_raw("--- end maps ---\n");
-        fsync(g_crashLogFd);
+static const char* ix_signal_name(int sig) {
+    switch (sig) {
+        case SIGSEGV: return "SIGSEGV (bad memory access)";
+        case SIGABRT: return "SIGABRT (abort)";
+        case SIGBUS:  return "SIGBUS (bad memory alignment/mapping)";
+        case SIGILL:  return "SIGILL (illegal instruction)";
+        case SIGFPE:  return "SIGFPE (arithmetic error)";
+        default:      return "unknown signal";
     }
+}
+
+static const char* ix_sigcode_name(int sig, int code) {
+    if (sig == SIGSEGV || sig == SIGBUS) {
+        switch (code) {
+            case SEGV_MAPERR: return "SEGV_MAPERR (address not mapped)";
+            case SEGV_ACCERR: return "SEGV_ACCERR (no permission for that address)";
+            default: return "";
+        }
+    }
+    return "";
+}
+
+static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
+    // Always runs even if the log file failed to open — ix_write_raw()
+    // mirrors to STDOUT_FILENO regardless, which is the whole point of
+    // this change: the exact reason has to show on screen right there,
+    // not only in a file you have to go find afterward.
+    ix_write_raw("\n=== CRASH ===\n");
+    ix_write_raw("signal: ");
+    ix_write_raw(ix_signal_name(sig));
+    ix_write_raw("\nreason: ");
+    ix_write_raw(ix_sigcode_name(sig, info ? info->si_code : 0));
+    ix_write_raw("\nsignal_num=");
+    ix_write_int(sig);
+    ix_write_raw(" si_code=");
+    ix_write_int(info ? info->si_code : 0);
+    ix_write_raw(" fault_addr=");
+    ix_write_hex(info ? (uintptr_t)info->si_addr : 0);
+    ix_write_raw(" pid=");
+    ix_write_int((long)getpid());
+    ix_write_raw(" tid=");
+    ix_write_int((long)gettid());
+    ix_write_raw("\n--- /proc/self/maps (full dump written to crash.log) ---\n");
+
+    int mapsFd = open("/proc/self/maps", O_RDONLY);
+    if (mapsFd >= 0) {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(mapsFd, buf, sizeof(buf))) > 0) {
+            // Maps dump is long — only the log file gets the full dump,
+            // not the terminal, so the terminal output above (signal,
+            // reason, fault address) stays the thing you actually read
+            // at a glance.
+            ix_write_raw_to(g_crashLogFd, buf, (size_t)n);
+        }
+        close(mapsFd);
+    }
+    ix_write_raw("--- end maps ---\n");
+    if (g_crashLogFd >= 0) fsync(g_crashLogFd);
+
     // Restore the default handler and re-raise, so the process still
     // terminates/core-dumps the normal way — this handler only logs,
     // it never tries to recover from a corrupted process.
