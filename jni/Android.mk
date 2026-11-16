@@ -439,6 +439,73 @@ LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
 include $(BUILD_EXECUTABLE)
 
 # =====================================================================
+#  inx_cli — standalone launcher. No module/daemon dependency: resolves
+#  everything relative to its own directory (kd_exe_dir() in login.h)
+#  instead of INX_MODULE_DIR, so no -DINX_MODULE_DIR override here.
+#  Same login.h security stack as inx_login_@api (shells out to that
+#  same binary for the verify step, then hands the key to optimum_bar's
+#  own argv[1] the normal way) -- same flags/libs as that target.
+# =====================================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE          := inx_cli
+LOCAL_MODULE_FILENAME := inx_cli
+
+LOCAL_CFLAGS   := -std=c17   -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  $(KD_PINNED_PUBKEY_DEF)
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -fno-rtti -fexceptions \
+                  $(KD_PINNED_PUBKEY_DEF)
+
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_ED448=1
+LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/external/openssl3-ed448/include $(LOCAL_C_INCLUDES)
+LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/include/external/openssl3-ed448/kd_ossl_rename.h
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_CFLAGS   += -DKD_HAVE_MLDSA=1
+LOCAL_CPPFLAGS += -DKD_HAVE_MLDSA=1
+endif
+LOCAL_CFLAGS   += -DIX_ANTITAMPER_OFF
+LOCAL_CPPFLAGS += -DIX_ANTITAMPER_OFF
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/libsodium-android-arm64-v8a/include
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/liboqs-android/include
+endif
+
+LOCAL_SRC_FILES := \
+    src/standalone_cli.cpp \
+    src/Scarecrow/oxorany.cpp
+
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/lib/libcurl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libssl.a
+LOCAL_LDLIBS += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/lib/libcrypto.a
+
+LOCAL_STATIC_LIBRARIES := sodium
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_STATIC_LIBRARIES += oqs_mldsa
+endif
+
+LOCAL_LDLIBS += -llog -lz
+
+LOCAL_LDFLAGS += -s
+LOCAL_LDFLAGS += -Wl,--gc-sections
+LOCAL_LDFLAGS += -pie
+LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
+
+include $(BUILD_EXECUTABLE)
+
+# =====================================================================
 #  daemon_service_@api — InxMods background daemon.
 #  Boot-started by service.sh (nohup/pgrep self-healing).
 #  Monitors foreground app; when target package (com.dts.freefiremax) opens:

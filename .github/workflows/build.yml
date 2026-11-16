@@ -582,6 +582,63 @@ jobs:
           git -C /tmp/dist-inxmods-zip-checkout push -q -f origin dist-inxmods-zip
 
       # ===================================================================
+      #  Standalone CLI package (inx_cli.zip) — no module/daemon involved.
+      #  Same login binary, same overlay binary, same driver scripts the
+      #  module ships, plus inx_cli itself (jni/src/standalone_cli.cpp),
+      #  laid out so inx_cli's kd_exe_dir()-relative paths resolve with
+      #  nothing else installed.
+      # ===================================================================
+      - name: Package standalone CLI (inx_cli.zip)
+        run: |
+          set -e
+          rm -rf /tmp/inxcli-pkg
+          mkdir -p /tmp/inxcli-pkg/bin/arm64-v8a /tmp/inxcli-pkg/api/arm64-v8a
+          cp -r module-inxmods/drivers /tmp/inxcli-pkg/drivers
+          cp libs/arm64-v8a/INX.SH               /tmp/inxcli-pkg/bin/arm64-v8a/optimum_bar
+          cp "libs/arm64-v8a/inx_login_@api"     /tmp/inxcli-pkg/api/arm64-v8a/inx_login_@api
+          cp libs/arm64-v8a/inx_cli              /tmp/inxcli-pkg/inx_cli
+          chmod 755 \
+            /tmp/inxcli-pkg/inx_cli \
+            /tmp/inxcli-pkg/bin/arm64-v8a/optimum_bar \
+            "/tmp/inxcli-pkg/api/arm64-v8a/inx_login_@api"
+          find /tmp/inxcli-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
+          cat > /tmp/inxcli-pkg/README.txt << 'EOF'
+InvisibleX standalone CLI
+==========================
+No module, no daemon. Run as root:
+
+  su -c ./inx_cli
+
+Keep this folder's layout as-is (inx_cli, api/, bin/, drivers/ all
+together) -- inx_cli finds everything relative to its own location.
+EOF
+          cd /tmp/inxcli-pkg && zip -r -q /tmp/inx_cli.zip . && cd -
+          ls -la /tmp/inx_cli.zip
+
+      - name: Upload inx_cli.zip (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: inx-cli-standalone
+          path: /tmp/inx_cli.zip
+          if-no-files-found: error
+
+      - name: Also commit inx_cli.zip to its own dist branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p /tmp/dist-inxcli-zip-checkout
+          git -C /tmp/dist-inxcli-zip-checkout init -q
+          git -C /tmp/dist-inxcli-zip-checkout remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C /tmp/dist-inxcli-zip-checkout checkout -q -B dist-inxcli-zip
+          cp /tmp/inx_cli.zip /tmp/dist-inxcli-zip-checkout/inx_cli.zip
+          git -C /tmp/dist-inxcli-zip-checkout config user.name "github-actions[bot]"
+          git -C /tmp/dist-inxcli-zip-checkout config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/dist-inxcli-zip-checkout add inx_cli.zip
+          git -C /tmp/dist-inxcli-zip-checkout commit -q -m "inx_cli.zip from run ${{ github.run_id }} (commit ${{ github.sha }})"
+          git -C /tmp/dist-inxcli-zip-checkout push -q -f origin dist-inxcli-zip
+
+      # ===================================================================
       # Commit inx_login_@api + daemon_service_@api to their own dist
       # branch so they can be fetched directly (same pattern as INX.SH).
       # ===================================================================

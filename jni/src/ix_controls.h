@@ -18,6 +18,7 @@
 
 #include <fstream>
 #include <string>
+#include <cstdlib>
 #include <sys/stat.h>
 #include <json.hpp>
 
@@ -25,7 +26,24 @@
 #define INX_MODULE_DIR "/data/adb/modules/inx_mods"
 #endif
 
-static const char* IX_CONTROLS_PATH = INX_MODULE_DIR "/webroot/controls.json";
+// [NEW] "INX_STANDALONE_DIR" lets the exact same optimum_bar binary run
+// with no module installed at all: the standalone CLI (standalone_cli.cpp)
+// sets this env var to its own directory before exec'ing optimum_bar, and
+// everything that used to be hardcoded to INX_MODULE_DIR reads from there
+// instead for that one process. Unset (the normal module launch path from
+// the daemon), nothing changes — same compiled-in path as before. Checked
+// once and cached: an env var read every frame would be wasteful, and
+// nothing legitimately changes it mid-process.
+inline const std::string& ix_controls_base_dir() {
+    static const std::string base = []() -> std::string {
+        const char* v = getenv("INX_STANDALONE_DIR");
+        return (v && v[0] != '\0') ? std::string(v) : std::string(INX_MODULE_DIR);
+    }();
+    return base;
+}
+inline std::string ix_controls_path() {
+    return ix_controls_base_dir() + "/webroot/controls.json";
+}
 
 // Every control the menu has, and nothing else. Defaults match the binary's.
 struct IxControls {
@@ -83,7 +101,7 @@ inline void ix_controls_from_json(const nlohmann::json& j, IxControls& c) {
 }
 
 inline bool ix_controls_load(IxControls& c) {
-    std::ifstream f(IX_CONTROLS_PATH);
+    std::ifstream f(ix_controls_path());
     if (!f.good()) return false;
     try {
         nlohmann::json j; f >> j;
@@ -95,7 +113,8 @@ inline bool ix_controls_load(IxControls& c) {
 
 // Written to a temp file and renamed, so a reader never sees half a file.
 inline bool ix_controls_save(const IxControls& c) {
-    const std::string tmp = std::string(IX_CONTROLS_PATH) + ".tmp";
+    const std::string path = ix_controls_path();
+    const std::string tmp = path + ".tmp";
     {
         std::ofstream o(tmp, std::ios::trunc);
         if (!o.good()) return false;
@@ -103,7 +122,7 @@ inline bool ix_controls_save(const IxControls& c) {
         if (!o.good()) return false;
     }
     chmod(tmp.c_str(), 0644);
-    return rename(tmp.c_str(), IX_CONTROLS_PATH) == 0;
+    return rename(tmp.c_str(), path.c_str()) == 0;
 }
 
 // True when the file changed since the last call, so the overlay can skip the
@@ -112,7 +131,7 @@ inline bool ix_controls_changed() {
     static time_t last = 0;
     static off_t  lastSize = 0;
     struct stat st;
-    if (stat(IX_CONTROLS_PATH, &st) != 0) return false;
+    if (stat(ix_controls_path().c_str(), &st) != 0) return false;
     if (st.st_mtime == last && st.st_size == lastSize) return false;
     last = st.st_mtime;
     lastSize = st.st_size;

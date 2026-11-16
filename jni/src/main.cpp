@@ -2082,15 +2082,16 @@ static void ix_pull_remote_controls() {
     textSize            = c.esp_textsize;
 
     AimSilent           = c.aim_silent;
-    // [RE-ADDED] Hardware BT + its Head/Body/Legit mode, back in the menu
-    // (SourceMenu.h). c.aim_hwbt / c.aim_chestrate aren't in IxControls (the
-    // remote-control struct) yet, so remote control still can't set these —
-    // only the in-game menu checkbox/selector can, which is the same
-    // limitation the Body Kill controls just above/below already have
-    // (esp_* etc. are the only fields IxControls carries). Loads as off/head
-    // by default rather than reviving whatever a stale config.json said.
-    HardwareBT          = false;
-    g_Cfg.hardwareBT    = false;
+    // [FIX] aim_hwbt / aim_mode were already fields on IxControls the whole
+    // time (ix_controls.h serializes and deserializes both) — an earlier
+    // comment here claimed they weren't, which was wrong. They just weren't
+    // being read into g_Cfg by this function, so the WebUI's remote-control
+    // page had no effect on Hardware BT even though the wire format already
+    // carried it end to end. Wired through now, same as every other field
+    // here.
+    g_Cfg.hardwareBT    = c.aim_hwbt;
+    HardwareBT          = c.aim_hwbt;
+    if (c.aim_mode >= 1 && c.aim_mode <= 3) g_Cfg.chestRateSave = c.aim_mode;
     g_Cfg.showFovCircle = c.aim_fovcircle;
     g_Cfg.chestRateSave = 1;
     g_Cfg.aimFovUI      = c.aim_fov;
