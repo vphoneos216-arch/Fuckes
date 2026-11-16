@@ -75,7 +75,24 @@ do_start() {
     if daemon_pid >/dev/null; then
         blog "daemon already running (pid $(daemon_pid))"
     else
-        detach "$DAEMON"
+        # [NEW] detach() throws away stdout+stderr, so a daemon that fails
+        # to even exec (wrong ABI, "Exec format error" from a 16KB-page
+        # mismatch, SELinux denial, missing library) left nothing behind
+        # except "daemon did NOT come up after 10s" ten seconds later --
+        # true, but no reason, and no way to tell an exec failure apart
+        # from the daemon starting fine and just taking its time. This is
+        # the SAME single detached launch as before, not a second probe
+        # instance (two daemon_service processes racing for even a second
+        # is not a risk worth taking) -- its stderr goes to a small file
+        # next to the pidfile instead of /dev/null, and the "did not come
+        # up" branch below reads it back if the daemon never confirms.
+        STARTERR="$MOD/config/daemon_start.err"
+        : > "$STARTERR" 2>/dev/null
+        if command -v setsid >/dev/null 2>&1; then
+            ( setsid "$DAEMON" </dev/null >/dev/null 2>"$STARTERR" & ) </dev/null >/dev/null 2>&1
+        else
+            ( nohup "$DAEMON" </dev/null >/dev/null 2>"$STARTERR" & ) </dev/null >/dev/null 2>&1
+        fi
         blog "daemon started"
     fi
 
@@ -94,6 +111,13 @@ do_start() {
         i=$((i + 1))
         sleep 1
     done
+    # [NEW] Read back whatever the launch itself wrote to stderr -- an exec
+    # failure (wrong ABI, 16KB-page mismatch, missing library, SELinux
+    # denial) writes here immediately and explains the "did NOT come up"
+    # below instead of leaving it a bare timeout.
+    if [ -s "$STARTERR" ]; then
+        blog "daemon stderr: $(tr '\n' ' ' < "$STARTERR" 2>/dev/null)"
+    fi
     blog "daemon did NOT come up after 10s"
     echo "error: daemon did not start"
     return 1
