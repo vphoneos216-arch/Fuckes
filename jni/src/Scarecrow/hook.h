@@ -1924,8 +1924,19 @@ void UpdateAimLockNewThread(){
         paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
         if(rth && s_lastHwbpAddr)
             rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
-        if(pd && s_lastHwbpAddr)
-            AimHookState::PdHwbpDisarm(pd);
+        // [NEW — internal collider aim-lock] If the injected stub is
+        // alive, the live arm/disarm went through it (see below) —
+        // tell it to disarm too, instead of calling PdHwbpDisarm here
+        // (that would be disarming a breakpoint from a process that
+        // may not even be the one that armed it).
+        if(pd && s_lastHwbpAddr){
+            if(g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire)){
+                g_ColliderIpc->active = 0;
+                g_ColliderIpc->generation.fetch_add(1, std::memory_order_release);
+            } else {
+                AimHookState::PdHwbpDisarm(pd);
+            }
+        }
         s_lastHwbpAddr = 0;
         s_lastCollider = 0;
         s_lastEnemy    = 0;
@@ -1985,13 +1996,40 @@ void UpdateAimLockNewThread(){
 
             if(pd){
                 // ── Paradise HWBP tier: kernel intercepts AimCollider write ──
+                // [NEW — internal collider aim-lock] When the injected
+                // collider_stub.so is alive, it owns the actual
+                // hwbp_set/hwbp_set_record/hwbp_remove calls now (from
+                // inside the game's own PID, per request) — this thread
+                // only writes the target fields into the shared IPC
+                // region. Everything else about this branch (rearm
+                // conditions, fallback-to-direct-write on failure) is
+                // unchanged; it just applies via the stub instead of
+                // via `pd` directly when the stub is up.
+                bool useStub = g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
+
                 bool need_rearm = (enemy     != s_lastEnemy)   ||
                                   (HedColider != s_lastCollider)||
                                   (s_lastHwbpAddr == 0);
                 if(need_rearm){
-                    if(s_lastHwbpAddr)
+                    if(s_lastHwbpAddr && !useStub)
                         AimHookState::PdHwbpDisarm(pd);
-                    if(AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider)){
+
+                    bool armed;
+                    if(useStub){
+                        g_ColliderIpc->colliderField   = (uint64_t)colliderField;
+                        g_ColliderIpc->headColliderVal = (uint64_t)HedColider;
+                        g_ColliderIpc->active          = 1;
+                        g_ColliderIpc->generation.fetch_add(1, std::memory_order_release);
+                        armed = true; // stub's own hwbp_set() result isn't
+                                      // observable from here; if it fails,
+                                      // the stub simply leaves nothing armed
+                                      // this frame — no local fallback write
+                                      // is possible without racing the stub.
+                    } else {
+                        armed = AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider);
+                    }
+
+                    if(armed){
                         s_lastHwbpAddr = colliderField;
                         s_lastEnemy    = enemy;
                         s_lastCollider = HedColider;
@@ -2003,7 +2041,14 @@ void UpdateAimLockNewThread(){
                 } else {
                     // Update override value for new target pointer
                     if(HedColider != s_lastCollider){
-                        AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider);
+                        if(useStub){
+                            g_ColliderIpc->colliderField   = (uint64_t)colliderField;
+                            g_ColliderIpc->headColliderVal = (uint64_t)HedColider;
+                            g_ColliderIpc->active          = 1;
+                            g_ColliderIpc->generation.fetch_add(1, std::memory_order_release);
+                        } else {
+                            AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider);
+                        }
                         s_lastCollider = HedColider;
                     }
                 }

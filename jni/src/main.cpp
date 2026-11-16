@@ -3,6 +3,8 @@
 #include "login.h"
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
+#include "collider_ipc.h"
+#include "Scarecrow/ix_inject.h"
 #include <string>
 #include <map>
 #include <sstream>
@@ -31,6 +33,14 @@
 #include <ctime>
 #include "Scarecrow/oxorany_include.h"
 #include "Scarecrow/oxorany.h"
+// [NEW — internal collider aim-lock] Shared-memory handle to the
+// collider_stub.so injected into the game process. nullptr until the
+// injection in main() below succeeds (or if it fails/is skipped) —
+// hook.h's AimLock code checks this and falls back to its existing
+// direct in-process HWBP call whenever it's null, so the feature
+// never silently stops working because the stub wasn't loaded.
+IxColliderIpc* g_ColliderIpc = nullptr;
+
 #include "wanbai.h"
 #include "Scarecrow/hook.h"
 #include "UI/bar.hpp"
@@ -2652,6 +2662,32 @@ int main(int argc,char* argv[]){
             g_driver->initialize((pid_t)game_pid);
             g_driver->initKey("InvisibleX");
             printf("[+] Driver attached to PID: %d\n",game_pid);
+
+            // [NEW — internal collider aim-lock] Create the shared IPC
+            // region first (as the writer/"creator"), then inject
+            // collider_stub.so into the game PID and have it start
+            // polling that region. g_ColliderIpc stays null — and
+            // hook.h's existing direct in-process HWBP call keeps
+            // running exactly as before — if either step fails.
+            g_ColliderIpc = ix_collider_ipc_open(/*creator=*/true);
+            if (g_ColliderIpc) {
+#ifdef IX_INTERACTIVE_CLI
+                std::string stubPath = kd_exe_dir() + "/libcollider_stub.so";
+#else
+                std::string stubPath = std::string(INX_MODULE_DIR) + "/libcollider_stub.so";
+#endif
+                bool injected = ix_inject_shared_library((pid_t)game_pid, stubPath,
+                                                           "ix_collider_stub_init");
+                printf("[INX] collider-stub injection %s\n",
+                       injected ? "requested (waiting for stub to come up)" : "failed — using direct in-process HWBP path");
+                fflush(stdout);
+                if (!injected) {
+                    g_ColliderIpc = nullptr; // nothing will ever poll this region
+                }
+            } else {
+                printf("[INX] collider IPC region unavailable — using direct in-process HWBP path\n");
+                fflush(stdout);
+            }
         }
     }
 

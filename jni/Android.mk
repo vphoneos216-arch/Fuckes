@@ -525,6 +525,40 @@ LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
 include $(BUILD_EXECUTABLE)
 
 # =====================================================================
+#  collider_stub — injected into the game process (ptrace, see
+#  Scarecrow/ix_inject.h) so the collider aim-lock's HWBP arm/disarm
+#  runs from inside the game's own PID. Deliberately tiny: just the
+#  Paradise driver API + the shared-memory IPC struct it polls, none
+#  of ESP/menu/ImGui/Vulkan/the rest, which all stay in INX.SH/
+#  inx_standalone exactly as before. Built by both the module and
+#  standalone configs (same .so either way) and placed next to the
+#  main binary at runtime.
+# =====================================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := collider_stub
+
+LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -ffunction-sections -fdata-sections \
+                  -fno-rtti -fexceptions
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+# Paradise driver API
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src/Paradise
+
+LOCAL_SRC_FILES := src/collider_stub.cpp
+
+LOCAL_STATIC_LIBRARIES := paradise_driver
+
+LOCAL_LDLIBS += -llog
+LOCAL_LDFLAGS += -s
+LOCAL_LDFLAGS += -Wl,--gc-sections
+LOCAL_LDFLAGS += -Wl,-z,relro,-z,now
+LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
+
+include $(BUILD_SHARED_LIBRARY)
+
+# =====================================================================
 #  kd_ctl — compiled control/daemon helper for the WebUI module.
 #  Shares login.h's full hybrid-signed (Ed25519+Ed448+ML-DSA-65) auth
 #  path with INX.SH (same server check, same key-at-rest file),
