@@ -29,6 +29,16 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
         InitVulkan();
         SetupVulkan();
         ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, false);
+        // [FIX — Android 17 crash: SIGSEGV, fault_addr=0x0] Create() can
+        // return null (e.g. a private-API symbol this OS build doesn't
+        // have under the name this code looked for — see
+        // ANativeWindowCreator.h); SetupVulkanWindow() has no null guard
+        // of its own, so calling it on a null window crashed right here.
+        if (!::native_window) {
+            printf("[INX] ANativeWindowCreator::Create returned null — cannot init the overlay window\n");
+            fflush(stdout);
+            return false;
+        }
         SetupVulkanWindow(::native_window, (int) _screen_x, (int) _screen_y);
     #endif
     if (!ImGui_init()) {
@@ -44,6 +54,15 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
 
 bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     ::native_window = android::ANativeWindowCreator::Create("AImGui", _screen_x, _screen_y, false);
+
+    // [FIX — Android 17 crash: SIGSEGV, fault_addr=0x0] Same gap as the
+    // Vulkan branch in initGUI_draw() — Create() can return null, and
+    // ANativeWindow_acquire() has no null guard of its own.
+    if (!native_window) {
+        printf("[INX] ANativeWindowCreator::Create returned null — cannot init the overlay window\n");
+        fflush(stdout);
+        return false;
+    }
 
     ANativeWindow_acquire(native_window);
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);

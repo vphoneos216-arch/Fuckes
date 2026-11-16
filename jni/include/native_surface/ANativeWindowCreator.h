@@ -7,15 +7,27 @@
 #include <sys/system_properties.h>
 
 #include <cstddef>
+#include <cstdio>
 #include <unordered_map>
 #include <string>
 #include <vector>
 
+// [FIX — Android 17 crash] This used to only log a resolution failure
+// to logcat via __android_log_print, which is invisible in a plain
+// terminal run (standalone binary, no `logcat` attached) — so when a
+// private-API symbol failed to resolve on a newer OS version, nothing
+// showed on screen and the NEXT call through that null function
+// pointer crashed with no visible cause at all (exactly what happened:
+// signal 11, fault_addr=0x0, right after driver attach, with nothing
+// printed in between). Now it also prints to stdout, so a resolution
+// failure is visible directly in the run that crashes from it.
 #define ResolveMethod(ClassName, MethodName, Handle, MethodSignature)                                                                    \
     ClassName##__##MethodName = reinterpret_cast<decltype(ClassName##__##MethodName)>(symbolMethod.Find(Handle, MethodSignature));       \
     if (nullptr == ClassName##__##MethodName)                                                                                            \
     {                                                                                                                                    \
         __android_log_print(ANDROID_LOG_ERROR, "ImGui", "[-] Method not found: %s -> %s::%s", MethodSignature, #ClassName, #MethodName); \
+        printf("[INX] private-API symbol not found: %s -> %s::%s\n", MethodSignature, #ClassName, #MethodName);                         \
+        fflush(stdout);                                                                                                                  \
     }
 
 namespace android {
@@ -178,6 +190,9 @@ namespace android {
                     exit(0);
                     return;
                 }
+                printf("[INX] ro.build.version.release=%s -> systemVersion=%zu\n",
+                       systemVersionString.c_str(), systemVersion);
+                fflush(stdout);
 
                 static std::unordered_map<size_t, std::unordered_map<void **, const char *>> patchesTable = {
                         {
@@ -285,6 +300,26 @@ namespace android {
 
                 ResolveMethod(SurfaceControl, Validate, libgui, "_ZNK7android14SurfaceControl8validateEv");
                 ResolveMethod(SurfaceControl, GetSurface, libgui, "_ZN7android14SurfaceControl10getSurfaceEv");
+                // [FIX — Android 17] The patchesTable below already proves
+                // this exact method has shipped under two different
+                // manglings across real Android versions: the const-
+                // qualified "_ZNK...getSurfaceEv" (patched in for versions
+                // 8-11) and the non-const one just resolved above (assumed
+                // for every version from 12 up, 17 included, since no
+                // patch entry exists past 16). If a newer OS build reverted
+                // to the const-qualified form and the base lookup above
+                // came back null, try that known alternate before giving
+                // up — this is a signature this file has already seen on
+                // real devices, not a guess at a new one.
+                if (nullptr == SurfaceControl__GetSurface) {
+                    SurfaceControl__GetSurface = reinterpret_cast<decltype(SurfaceControl__GetSurface)>(
+                        symbolMethod.Find(libgui, "_ZNK7android14SurfaceControl10getSurfaceEv"));
+                    if (nullptr != SurfaceControl__GetSurface) {
+                        printf("[INX] SurfaceControl::getSurface resolved via const-qualified "
+                               "fallback signature (base signature not found on this OS build)\n");
+                        fflush(stdout);
+                    }
+                }
                 ResolveMethod(SurfaceControl, DisConnect, libgui, "_ZN7android14SurfaceControl10disconnectEv");
 
                 auto it = patchesTable.find(systemVersion);
@@ -366,6 +401,24 @@ namespace android {
             Surface *GetSurface() {
                 if (nullptr == data)
                     return nullptr;
+
+                // [FIX — Android 17 crash: SIGSEGV, fault_addr=0x0, right
+                // after driver attach] Only the SurfaceControl handle
+                // (`data`) was null-checked above. If the
+                // SurfaceControl::getSurface() symbol itself failed to
+                // resolve (patchesTable has no entry past Android 16 —
+                // see Functionals' constructor — and the base mangled
+                // name may not match every later OS build), the
+                // function pointer stays nullptr and this called
+                // straight through address 0: exactly signal 11 at
+                // fault_addr=0x0. Guard it the same way Validate() and
+                // DisConnect() already guard their own pointers.
+                if (nullptr == Functionals::GetInstance().SurfaceControl__GetSurface) {
+                    printf("[INX] SurfaceControl::getSurface not resolved on this OS build — "
+                           "cannot create the overlay window here.\n");
+                    fflush(stdout);
+                    return nullptr;
+                }
 
                 auto result = Functionals::GetInstance().SurfaceControl__GetSurface(data);
 
@@ -594,6 +647,22 @@ namespace android {
 
             auto surfaceControl = surfaceComposerClient.CreateSurface(name, width, height, hide, secure, trustedOverlay);
             auto nativeWindow = reinterpret_cast<ANativeWindow *>(surfaceControl.GetSurface());
+
+            // [FIX — Android 17 crash] Create() had no null check at all:
+            // a null nativeWindow (CreateSurface failing, or GetSurface's
+            // own guard above kicking in) used to get cached and handed
+            // straight back to callers that then call ANativeWindow_acquire
+            // / SetupVulkanWindow on it with zero guard of their own —
+            // that is the exact SIGSEGV/fault_addr=0x0 reported. Caching
+            // and returning a null window is never useful, so just report
+            // it here and skip the cache entry.
+            if (nullptr == nativeWindow) {
+                printf("[INX] ANativeWindowCreator::Create(\"%s\") failed — "
+                       "surface creation did not produce a usable window on this OS build\n",
+                       name);
+                fflush(stdout);
+                return nullptr;
+            }
 
             m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
             return nativeWindow;
