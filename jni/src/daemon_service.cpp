@@ -241,8 +241,21 @@ static json load_config_cached() {
 
 // ─── foreground app detection ────────────────────────────────
 // Pulls "<pkg>" out of the first line containing `key`, where the line has
-// the form "... <pkg>/<activity> ...". grep -m1 means only one line ever
-// reaches us, so no multi-megabyte dumpsys dump is read or regex-scanned.
+// the form "... <pkg>/<activity> ..." OR "... <pkg>:<process>/<activity> ...".
+// grep -m1 means only one line ever reaches us, so no multi-megabyte dumpsys
+// dump is read or regex-scanned.
+//
+// [BUG FIX] The backward scan used to stop at ':' (it wasn't in the allowed
+// charset), so a window belonging to a secondary process — "<pkg>:<process>/
+// <Activity>" — returned only "<process>", never the real package. This is
+// exactly the shape of window many screen-recorder apps' floating stop/pause
+// overlay runs under (a named sub-process of the recorder, not its main
+// process), so during recording the extracted "package" matched neither the
+// target game nor anything in is_screen_recording_foreground()'s allowlist —
+// it was a process name like "floating" or "overlay" that matched nothing at
+// all, and every such reading counted as "player left". Now ':' is included
+// in the backward scan and the "<process>" part (if any) is cut off before
+// returning, so the actual package is recovered either way.
 static std::string pkg_from_dumpsys(const std::string& dumpsys_cmd, const char* key) {
     const std::string line = run_shell(dumpsys_cmd + " 2>/dev/null | grep -m1 '" + key + "'");
     const size_t k = line.find(key);
@@ -252,10 +265,13 @@ static std::string pkg_from_dumpsys(const std::string& dumpsys_cmd, const char* 
     size_t start = slash;
     while (start > 0) {
         const unsigned char c = (unsigned char)line[start - 1];
-        if (!(isalnum(c) || c == '_' || c == '.')) break;
+        if (!(isalnum(c) || c == '_' || c == '.' || c == ':')) break;
         --start;
     }
-    return line.substr(start, slash - start);
+    std::string pkg = line.substr(start, slash - start);
+    const size_t colon = pkg.find(':');
+    if (colon != std::string::npos) pkg = pkg.substr(0, colon);
+    return pkg;
 }
 
 static std::string foreground_package() {
@@ -881,7 +897,29 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 // starts. Freeze missCount at its current value so a brief
                 // screen-recorder popup never stops the binary.
                 daemon_log("Screen recorder in foreground — holding miss count at %d", missCount);
+            } else if (fg.empty()) {
+                // [BUG FIX] An empty read means dumpsys matched a window with
+                // no "<pkg>/<activity>" shape at all — not "some other app is
+                // in front", just "this particular window's title couldn't be
+                // parsed". That is exactly the shape of a transient system
+                // overlay with no package attached (a brief layout change
+                // while a screen recorder's floating control, MediaProjection
+                // consent, or any other capture-related surface briefly takes
+                // focus) — not evidence the player went anywhere. Treating it
+                // the same as a confirmed other-app reading is what was
+                // killing the binary mid-match: a read that could not be
+                // parsed was being read as "definitely not the game" instead
+                // of "inconclusive". Only a CONFIRMED other package counts
+                // as a miss now; an unparseable one freezes missCount, same
+                // as the recorder-allowlist case above.
+                daemon_log("Foreground reading was empty/unparseable — holding miss count at %d", missCount);
             } else if (++missCount >= LEAVE_MISS_POLLS) {
+                // Name the package that was actually in foreground when the
+                // binary gets stopped — if this is ever a screen-recorder app
+                // that isn't in is_screen_recording_foreground()'s list, this
+                // line is what tells us which package to add to it.
+                daemon_log("Foreground was '%s' for %d consecutive checks — treating as player left",
+                           fg.c_str(), missCount);
                 inGame = false;
             }
         }
