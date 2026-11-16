@@ -40,6 +40,17 @@
 // direct in-process HWBP call whenever it's null, so the feature
 // never silently stops working because the stub wasn't loaded.
 IxColliderIpc* g_ColliderIpc = nullptr;
+// [NEW] Menu toggle — "Internal Collider Lock" on the Settings page.
+// On by default (matches what was asked: collider-lock should run via
+// the injected stub whenever possible). Switching it off makes
+// hook.h's AimLock code use the direct in-process HWBP call even if
+// the stub is alive, with no other effect on anything else.
+bool g_ColliderInternalEnabled = true;
+
+// Forward-declared here, defined further down (needs game_pid, which
+// isn't known yet at this point in the file) — SourceMenu.h's "Inject
+// Collider Stub" button calls this directly.
+void ix_retry_collider_injection();
 
 #include "wanbai.h"
 #include "Scarecrow/hook.h"
@@ -234,6 +245,42 @@ static void ix_install_crash_handler() {
     sigaction(SIGBUS,  &sa, nullptr);
     sigaction(SIGILL,  &sa, nullptr);
     sigaction(SIGFPE,  &sa, nullptr);
+}
+
+// [NEW — internal collider aim-lock] Creates the shared IPC region and
+// injects collider_stub.so into game_pid. Called once automatically
+// right after driver attach, and again on demand from the "Inject
+// Collider Stub" button on the Settings page — both call sites just
+// need g_ColliderIpc to end up non-null (and the stub to mark itself
+// alive shortly after) for hook.h to start using it; either failing
+// leaves the existing direct in-process HWBP path running, unchanged.
+void ix_retry_collider_injection() {
+    if (game_pid <= 0) {
+        printf("[INX] collider-stub inject: no game PID yet\n");
+        fflush(stdout);
+        return;
+    }
+
+    g_ColliderIpc = ix_collider_ipc_open(/*creator=*/true);
+    if (!g_ColliderIpc) {
+        printf("[INX] collider IPC region unavailable — using direct in-process HWBP path\n");
+        fflush(stdout);
+        return;
+    }
+
+#ifdef IX_INTERACTIVE_CLI
+    std::string stubPath = kd_exe_dir() + "/libcollider_stub.so";
+#else
+    std::string stubPath = std::string(INX_MODULE_DIR) + "/libcollider_stub.so";
+#endif
+    bool injected = ix_inject_shared_library((pid_t)game_pid, stubPath, "ix_collider_stub_init");
+    printf("[INX] collider-stub injection %s\n",
+           injected ? "requested (waiting for stub to come up)"
+                    : "failed — using direct in-process HWBP path");
+    fflush(stdout);
+    if (!injected) {
+        g_ColliderIpc = nullptr; // nothing will ever poll this region
+    }
 }
 
 #ifdef IX_INTERACTIVE_CLI
@@ -2663,31 +2710,12 @@ int main(int argc,char* argv[]){
             g_driver->initKey("InvisibleX");
             printf("[+] Driver attached to PID: %d\n",game_pid);
 
-            // [NEW — internal collider aim-lock] Create the shared IPC
-            // region first (as the writer/"creator"), then inject
-            // collider_stub.so into the game PID and have it start
-            // polling that region. g_ColliderIpc stays null — and
-            // hook.h's existing direct in-process HWBP call keeps
-            // running exactly as before — if either step fails.
-            g_ColliderIpc = ix_collider_ipc_open(/*creator=*/true);
-            if (g_ColliderIpc) {
-#ifdef IX_INTERACTIVE_CLI
-                std::string stubPath = kd_exe_dir() + "/libcollider_stub.so";
-#else
-                std::string stubPath = std::string(INX_MODULE_DIR) + "/libcollider_stub.so";
-#endif
-                bool injected = ix_inject_shared_library((pid_t)game_pid, stubPath,
-                                                           "ix_collider_stub_init");
-                printf("[INX] collider-stub injection %s\n",
-                       injected ? "requested (waiting for stub to come up)" : "failed — using direct in-process HWBP path");
-                fflush(stdout);
-                if (!injected) {
-                    g_ColliderIpc = nullptr; // nothing will ever poll this region
-                }
-            } else {
-                printf("[INX] collider IPC region unavailable — using direct in-process HWBP path\n");
-                fflush(stdout);
-            }
+            // [NEW — internal collider aim-lock] First automatic attempt.
+            // Same steps the "Inject Collider Stub" menu button re-runs
+            // (ix_retry_collider_injection(), below) — if this fails,
+            // g_ColliderIpc stays null and hook.h's direct in-process
+            // HWBP call keeps running exactly as before.
+            ix_retry_collider_injection();
         }
     }
 

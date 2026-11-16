@@ -984,10 +984,11 @@ inline void RenderSingleMenuWindow() {
 
                     InfoRow(3, "Expiry", sd.expiry.c_str(), COL_TXT_HI((int)(255 * uiAlpha)));
 
-                    // ── SETTINGS CARD (Mute + Exit) ─────────────────
-                    // [RE-ADDED SPACE] grown 130 -> 190 to fit the
-                    // [NEW] "Volume Off" checkbox above the Exit button.
-                    float cardH2      = 190 * scale;
+                    // ── SETTINGS CARD (Mute + Collider inject + Exit) ──
+                    // [RE-ADDED SPACE] grown 130 -> 190 for Volume Off,
+                    // then -> 290 for the [NEW] internal-collider-lock
+                    // toggle + manual re-inject button below it.
+                    float cardH2      = 290 * scale;
                     float cardSpacing = 20 * scale;
                     ImVec2 c2Min = ImVec2(centerX - cardW * 0.5f, contentY + cardH1 + cardSpacing);
                     ImVec2 c2Max = ImVec2(centerX + cardW * 0.5f, contentY + cardH1 + cardSpacing + cardH2);
@@ -1006,9 +1007,34 @@ inline void RenderSingleMenuWindow() {
                     ImGui::Checkbox1("Volume Off", &g_Cfg.soundMuted);
                     ix_sound_set_muted(g_Cfg.soundMuted);
 
+                    // [NEW] Internal collider lock — when on (default),
+                    // the AimLock HWBP arm/disarm uses the injected
+                    // collider_stub.so whenever it's alive; when off, it
+                    // always uses the direct in-process call regardless
+                    // of whether the stub is up. Doesn't affect anything
+                    // else — ESP, menu, driver-based reads are unrelated.
+                    ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 106 * scale));
+                    ImGui::Checkbox1("Internal Collider Lock", &g_ColliderInternalEnabled);
+
                     float btnW = 380 * scale;
                     float btnH = 45 * scale;
-                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 112 * scale);
+
+                    // [NEW] Manual retry — the stub is injected once,
+                    // automatically, right after driver attach; if that
+                    // attempt failed (see the printed [INX] inject: ...
+                    // reason), this retries it without restarting the
+                    // whole binary. Harmless to press again even if the
+                    // stub is already alive (ix_retry_collider_injection
+                    // just re-does the same create-IPC + inject steps).
+                    ImVec2 injBtnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 156 * scale);
+                    ImGui::SetCursorScreenPos(injBtnPos);
+                    bool stubAlive = g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
+                    if (ImGui::Button(stubAlive ? "Re-Inject Collider Stub (alive)" : "Inject Collider Stub",
+                                       ImVec2(btnW, btnH))) {
+                        ix_retry_collider_injection();
+                    }
+
+                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 212 * scale);
                     ImGui::SetCursorScreenPos(btnPos);
                     if (ImGui::Button("Exit", ImVec2(btnW, btnH))) {
                         UpdateAndSaveSettings();

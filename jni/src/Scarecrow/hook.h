@@ -2005,7 +2005,8 @@ void UpdateAimLockNewThread(){
                 // conditions, fallback-to-direct-write on failure) is
                 // unchanged; it just applies via the stub instead of
                 // via `pd` directly when the stub is up.
-                bool useStub = g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
+                bool useStub = g_ColliderInternalEnabled && g_ColliderIpc &&
+                               g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
 
                 bool need_rearm = (enemy     != s_lastEnemy)   ||
                                   (HedColider != s_lastCollider)||
