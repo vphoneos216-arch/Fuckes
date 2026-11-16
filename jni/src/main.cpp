@@ -2710,12 +2710,13 @@ int main(int argc,char* argv[]){
             g_driver->initKey("InvisibleX");
             printf("[+] Driver attached to PID: %d\n",game_pid);
 
-            // [NEW — internal collider aim-lock] First automatic attempt.
-            // Same steps the "Inject Collider Stub" menu button re-runs
-            // (ix_retry_collider_injection(), below) — if this fails,
-            // g_ColliderIpc stays null and hook.h's direct in-process
-            // HWBP call keeps running exactly as before.
-            ix_retry_collider_injection();
+            // [CHANGED — no longer automatic] The ptrace attach this
+            // needs stops a thread in the live game process; doing that
+            // unconditionally on every launch was reported crashing the
+            // app. Injection now only happens when the "Inject Collider
+            // Stub" button on the Settings page is pressed — g_ColliderIpc
+            // stays null until then, so hook.h's direct in-process HWBP
+            // call is what actually runs by default.
         }
     }
 

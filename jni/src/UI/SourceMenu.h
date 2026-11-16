@@ -1007,31 +1007,33 @@ inline void RenderSingleMenuWindow() {
                     ImGui::Checkbox1("Volume Off", &g_Cfg.soundMuted);
                     ix_sound_set_muted(g_Cfg.soundMuted);
 
-                    // [NEW] Internal collider lock — when on (default),
-                    // the AimLock HWBP arm/disarm uses the injected
-                    // collider_stub.so whenever it's alive; when off, it
-                    // always uses the direct in-process call regardless
-                    // of whether the stub is up. Doesn't affect anything
-                    // else — ESP, menu, driver-based reads are unrelated.
-                    ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 106 * scale));
-                    ImGui::Checkbox1("Internal Collider Lock", &g_ColliderInternalEnabled);
-
+                    // [CHANGED — injection is manual-only now, per report
+                    // of the app crashing] Button always shows first. The
+                    // "Internal Collider Lock" toggle only appears AFTER
+                    // a successful injection (stub reports itself alive)
+                    // — nothing calls ix_retry_collider_injection() on its
+                    // own anymore, so the ptrace attach it does only ever
+                    // happens when this button is pressed, not on every
+                    // launch.
                     float btnW = 380 * scale;
                     float btnH = 45 * scale;
-
-                    // [NEW] Manual retry — the stub is injected once,
-                    // automatically, right after driver attach; if that
-                    // attempt failed (see the printed [INX] inject: ...
-                    // reason), this retries it without restarting the
-                    // whole binary. Harmless to press again even if the
-                    // stub is already alive (ix_retry_collider_injection
-                    // just re-does the same create-IPC + inject steps).
-                    ImVec2 injBtnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 156 * scale);
-                    ImGui::SetCursorScreenPos(injBtnPos);
                     bool stubAlive = g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
+
+                    ImVec2 injBtnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 106 * scale);
+                    ImGui::SetCursorScreenPos(injBtnPos);
                     if (ImGui::Button(stubAlive ? "Re-Inject Collider Stub (alive)" : "Inject Collider Stub",
                                        ImVec2(btnW, btnH))) {
                         ix_retry_collider_injection();
+                    }
+
+                    if (stubAlive) {
+                        // Only shown once the stub is confirmed alive —
+                        // before that there is nothing for this to
+                        // switch between (hook.h already falls back to
+                        // the direct in-process call whenever the stub
+                        // isn't up, toggle or no toggle).
+                        ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 164 * scale));
+                        ImGui::Checkbox1("Internal Collider Lock", &g_ColliderInternalEnabled);
                     }
 
                     ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 212 * scale);
