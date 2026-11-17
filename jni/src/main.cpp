@@ -597,21 +597,28 @@ void ix_retry_collider_injection() {
 // Resolved relative to this binary's own location (login.h's
 // kd_exe_dir()) since a standalone run has no module directory.
 static void ix_interactive_driver_and_menu_prompt() {
-    // [NARROWED] Only Paradise and DitPro offered here — every other
-    // driver name ix_driver_init.h understands still works if set via
-    // IX_DRIVER_NAME directly, this just keeps the interactive menu to
-    // the two the user actually wants shown.
+    // [NARROWED, then extended] Paradise/DitPro were the only two shown
+    // here; every other driver name ix_driver_init.h understands still
+    // works if set via IX_DRIVER_NAME directly. TwT and Wind (Options
+    // 14/15 in wanbai.h/ix_driver_init.h) are added here as entries 3/4
+    // so they're actually reachable from this interactive prompt — the
+    // one place a standalone-binary user sees a driver list at all; they
+    // were already fully wired in the backend but never appeared here,
+    // which is why the binary still only showed 2. Same as "ditpro"
+    // below, neither has an auto-load branch — the user is expected to
+    // already have the matching kernel module loaded.
     printf("\nStep - Driver\n");
-    static const char* names[] = { "paradise", "ditpro" };
-    static const char* labels[] = { "Paradise (recommended)", "DitPro KPM" };
-    for (int i = 0; i < 2; ++i) printf("  %d) %s\n", i + 1, labels[i]);
-    printf("\nSelect [1-2, default=1]: ");
+    static const char* names[]  = { "paradise", "ditpro", "twt", "wind" };
+    static const char* labels[] = { "Paradise (recommended)", "DitPro KPM", "TwT", "Wind" };
+    const int kDriverCount = 4;
+    for (int i = 0; i < kDriverCount; ++i) printf("  %d) %s\n", i + 1, labels[i]);
+    printf("\nSelect [1-%d, default=1]: ", kDriverCount);
     fflush(stdout);
 
     char line[32] = {0};
     std::cin.getline(line, sizeof(line));
     int sel = atoi(line);
-    if (sel < 1 || sel > 2) sel = 1;
+    if (sel < 1 || sel > kDriverCount) sel = 1;
     const std::string driver = names[sel - 1];
     setenv("IX_DRIVER_NAME", driver.c_str(), 1);
     printf("-> Driver: %s\n", driver.c_str());
