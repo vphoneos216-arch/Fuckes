@@ -189,20 +189,20 @@ typedef struct _WIND_NL_MSG
 	int64_t  result;
 } WIND_NL_MSG, *PWIND_NL_MSG;
 
-typedef struct _COPY_MEMORY
+typedef struct _WIND_COPY_MEMORY
 {
 	pid_t pid;
 	uintptr_t addr;
 	void *buffer;
 	size_t size;
-} COPY_MEMORY, *PCOPY_MEMORY;
+} WIND_COPY_MEMORY, *PWIND_COPY_MEMORY;
 
-typedef struct _MODULE_BASE
+typedef struct _WIND_MODULE_BASE
 {
 	pid_t pid;
 	char *name;
 	uintptr_t base;
-} MODULE_BASE, *PMODULE_BASE;
+} WIND_MODULE_BASE, *PWIND_MODULE_BASE;
 
 typedef struct _BATCH_ITEM
 {
@@ -732,7 +732,7 @@ public:
 		memset(&sa, 0, sizeof(sa));
 		sa.nl_family = AF_NETLINK;
 		sa.nl_pid = (uint32_t)getpid();
-		if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 &&
+		if (::bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 &&
 		    errno != EADDRINUSE)
 		{
 			close(fd);
@@ -811,7 +811,7 @@ public:
 
 	bool read(uintptr_t addr, void *buffer, size_t size)
 	{
-		COPY_MEMORY cm;
+		WIND_COPY_MEMORY cm;
 
 		cm.pid = pid;
 		cm.addr = addr;
@@ -822,7 +822,7 @@ public:
 
 	bool write(uintptr_t addr, const void *buffer, size_t size)
 	{
-		COPY_MEMORY cm;
+		WIND_COPY_MEMORY cm;
 
 		cm.pid = pid;
 		cm.addr = addr;
@@ -933,7 +933,7 @@ public:
 
 	uintptr_t get_module_base(const char *name)
 	{
-		MODULE_BASE mb;
+		WIND_MODULE_BASE mb;
 		char buf[0x100] = {0};
 
 		if (!name)
