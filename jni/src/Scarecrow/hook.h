@@ -2039,25 +2039,56 @@ void UpdateAimLockNewThread(){
         s_lastEnemy    = 0;
     };
 
+    // [NEW — "collider not working" diagnostics] Edge-triggered prints
+    // (only when the state actually changes, never spamming every
+    // poll) so the next test shows exactly which stage is failing
+    // instead of guessing again: no target selected at all vs a
+    // target but no collider field vs the humanizer gate holding vs
+    // an actual HWBP-arm failure.
+    static bool s_dbgNoFeatureLogged  = false;
+    static bool s_dbgNoTargetLogged   = false;
+    static bool s_dbgNoColliderLogged = false;
+    static bool s_dbgGateBlocked      = false;
+
     while(aimlockNewThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !AimLock){
+            if(AimLock && !s_dbgNoFeatureLogged){
+                printf("[INX] collider-lock: checkbox is on but blocked — ix_feat_aim()=%d ix_rt_ready()=%d\n",
+                       (int)ix_feat_aim(), (int)ix_rt_ready());
+                fflush(stdout);
+                s_dbgNoFeatureLogged = true;
+            }
             disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
+        s_dbgNoFeatureLogged = false;
 
         uintptr_t enemy = g_CurrentBestTarget;
         if(!enemy){
+            if(!s_dbgNoTargetLogged){
+                printf("[INX] collider-lock: on, but no target selected (g_CurrentBestTarget == 0)\n");
+                fflush(stdout);
+                s_dbgNoTargetLogged = true;
+            }
             disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
+        s_dbgNoTargetLogged = false;
 
         uintptr_t HedColider = Read<uintptr_t>(enemy + PlayerOffsets::ColliderNode());
         if(!HedColider){
+            if(!s_dbgNoColliderLogged){
+                printf("[INX] collider-lock: target acquired (0x%llx) but ColliderNode read is 0\n",
+                       (unsigned long long)enemy);
+                fflush(stdout);
+                s_dbgNoColliderLogged = true;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
+        s_dbgNoColliderLogged = false;
 
         // [NEW — humanized engagement gate] Decides WHEN to engage this
         // target (reaction delay / per-target skip chance / streak
@@ -2066,12 +2097,38 @@ void UpdateAimLockNewThread(){
         // "not yet" / "skip", treat it exactly like no valid target:
         // disarm whatever was armed and wait for the next poll.
         if(!s_humanizer.ShouldEngage(enemy)){
+            if(!s_dbgGateBlocked){
+                printf("[INX] collider-lock: target+collider valid, humanizer gate holding "
+                       "(reaction delay / skip / cooldown)\n");
+                fflush(stdout);
+                s_dbgGateBlocked = true;
+            }
             disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
+        if(s_dbgGateBlocked){
+            printf("[INX] collider-lock: humanizer gate passed, engaging target 0x%llx\n",
+                   (unsigned long long)enemy);
+            fflush(stdout);
+            s_dbgGateBlocked = false;
+        }
 
         RtHookDriver* rth = g_driver ? g_driver->GetRtHook() : nullptr;
+
+        // [NEW] Which driver tier the collider lock is actually running
+        // on — printed once (edge-triggered), not every poll, since
+        // this only changes if the driver connection itself changes.
+        {
+            static int s_dbgLastTier = -1; // 0=rth 1=pd 2=fallback
+            int tier = rth ? 0 : ((g_driver && g_driver->GetParadise()) ? 1 : 2);
+            if(tier != s_dbgLastTier){
+                printf("[INX] collider-lock: driver tier = %s\n",
+                       tier == 0 ? "RT Hook HWBP" : (tier == 1 ? "Paradise HWBP" : "fallback write-on-change"));
+                fflush(stdout);
+                s_dbgLastTier = tier;
+            }
+        }
 
         if(rth){
             // ── HWBP path: intercept AimCollider write in-kernel ──
@@ -2093,6 +2150,8 @@ void UpdateAimLockNewThread(){
                     s_lastEnemy     = enemy;
                     s_lastCollider  = HedColider;
                 } else {
+                    printf("[INX] collider-lock: RT Hook HwbpArmCollider() failed — falling back to direct write\n");
+                    fflush(stdout);
                     // HWBP arm failed — fall back to direct write
                     Write<uintptr_t>(colliderField, HedColider);
                     s_lastHwbpAddr = 0;
@@ -2137,6 +2196,10 @@ void UpdateAimLockNewThread(){
                                       // is possible without racing the stub.
                     } else {
                         armed = AimHookState::PdHwbpArmCollider(pd, colliderField, HedColider);
+                        if(!armed){
+                            printf("[INX] collider-lock: Paradise PdHwbpArmCollider() failed — falling back to direct write\n");
+                            fflush(stdout);
+                        }
                     }
 
                     if(armed){
