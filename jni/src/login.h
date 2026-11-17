@@ -206,15 +206,48 @@ struct KdPrivateUmaskGuard {
 // "~" and once from "/data/local/tmp"), making a saved key silently
 // "disappear" even though kd_save_key() succeeded each time - the key
 // was always being written, just to a different file each run.
+// [FIX — root cause of the collider-stub "/.collider_stub_tmp.so"
+// write failing with errno=30/EROFS] On at least one real device,
+// readlink("/proc/self/exe") itself fails with ENOENT even though
+// /proc/self/maps opens fine for the very same process — so this
+// used to silently return "" here, and every caller then built a
+// path like "" + "/.collider_stub_tmp.so" = "/.collider_stub_tmp.so",
+// i.e. the filesystem ROOT, which is mounted read-only on Android
+// (hence EROFS). Every other caller of this (crash.log, run.log,
+// the drivers/ lookup) had the exact same silent failure mode, just
+// never hit a path where it was reported back loudly. Falls back to
+// parsing /proc/self/maps for this binary's own load-segment path
+// when the symlink can't be resolved directly.
 static inline std::string kd_exe_dir() {
     char buf[1024];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return "";
-    buf[n] = '\0';
-    std::string exe(buf);
-    size_t slash = exe.find_last_of('/');
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string exe(buf);
+        if (exe.size() < 10 || exe.substr(exe.size() - 10) != " (deleted)") {
+            size_t slash = exe.find_last_of('/');
+            if (slash != std::string::npos) return exe.substr(0, slash);
+        }
+    }
+
+    FILE* maps = fopen("/proc/self/maps", "r");
+    if (!maps) return "";
+    char line[1024];
+    std::string found;
+    while (fgets(line, sizeof(line), maps)) {
+        char* slashPos = strchr(line, '/');
+        if (!slashPos) continue;
+        char* nl = strchr(slashPos, '\n');
+        if (nl) *nl = '\0';
+        if (strstr(slashPos, "(deleted)")) continue;
+        found = slashPos;
+        break; // first mapped absolute path is this executable's own load segment
+    }
+    fclose(maps);
+    if (found.empty()) return "";
+    size_t slash = found.find_last_of('/');
     if (slash == std::string::npos) return "";
-    return exe.substr(0, slash);
+    return found.substr(0, slash);
 }
 
 static inline const std::string& kd_writable_dir() {
