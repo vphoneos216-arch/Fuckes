@@ -524,6 +524,60 @@ void ix_retry_collider_injection() {
     fflush(stdout);
     if (!injected) {
         g_ColliderIpc = nullptr; // nothing will ever poll this region
+        return;
+    }
+
+    // [NEW — "same issue, game crashed" after the FP-register fix did
+    // NOT stop it] That ruled out register corruption as the cause.
+    // The remaining realistic explanation, now that dlopen/dlsym/entry
+    // all reported a clean return with no abnormal signal during the
+    // call itself, is the game's own anti-cheat reacting to being
+    // ptrace-attached / having a foreign library mapped in — which
+    // looks identical to "it just crashed" from this side unless we
+    // actually check. Since this process is already root (the driver
+    // is attached), /data/tombstones/ is readable here — give the game
+    // a moment, then check if it's still alive, and if not, dump the
+    // newest tombstone so the real signal/backtrace is visible instead
+    // of guessing between "our bug" and "anti-cheat kill" again.
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    if (kill((pid_t)game_pid, 0) != 0 && errno == ESRCH) {
+        printf("[INX] game process (pid %d) is gone after injection — checking /data/tombstones ...\n", game_pid);
+        fflush(stdout);
+        DIR* d = opendir("/data/tombstones");
+        std::string newestPath;
+        time_t newestMtime = 0;
+        if (d) {
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                if (ent->d_name[0] == '.') continue;
+                std::string full = std::string("/data/tombstones/") + ent->d_name;
+                struct stat st{};
+                if (stat(full.c_str(), &st) == 0 && st.st_mtime > newestMtime) {
+                    newestMtime = st.st_mtime;
+                    newestPath = full;
+                }
+            }
+            closedir(d);
+        } else {
+            printf("[INX] could not open /data/tombstones, errno=%d (%s)\n", errno, strerror(errno));
+        }
+        if (!newestPath.empty()) {
+            printf("[INX] --- %s ---\n", newestPath.c_str());
+            FILE* tf = fopen(newestPath.c_str(), "r");
+            if (tf) {
+                char tbuf[512];
+                while (fgets(tbuf, sizeof(tbuf), tf)) printf("%s", tbuf);
+                fclose(tf);
+            } else {
+                printf("[INX] could not open %s, errno=%d (%s)\n", newestPath.c_str(), errno, strerror(errno));
+            }
+            printf("[INX] --- end tombstone ---\n");
+        } else {
+            printf("[INX] no tombstone found — a bare SIGKILL (e.g. the OS or an anti-cheat "
+                   "watchdog killing the process outright) produces no tombstone at all, which "
+                   "would look exactly like this\n");
+        }
+        fflush(stdout);
     }
 }
 
