@@ -2061,7 +2061,7 @@ void UpdateAndSaveSettings(){
     showDistance      = g_Cfg.showDistance;
     showSkeleton      = g_Cfg.showSkeleton;
     is3600            = g_Cfg.is3600;
-    Aimbot            = false; // Aimbot feature removed — never loaded from saved config
+    Aimbot            = g_Cfg.Aimbot; // [RE-ADDED] Aimbot checkbox now exists in SourceMenu.h
     aimBotBoneIndex   = g_Cfg.aimbotBone;
     AimSilent         = g_Cfg.aimSilent;
     HardwareBT        = g_Cfg.hardwareBT;
@@ -2768,6 +2768,8 @@ static void ix_apply_control_sync() {
     // directly rather than from a checkbox.
     AimLock           = g_Cfg.aimCollider;
     AimLockNew        = g_Cfg.aimCollider;
+    // [RE-ADDED] Aimbot — same reasoning as Collider Lock above.
+    Aimbot            = g_Cfg.Aimbot;
     BrutalBT          = g_Cfg.brutalBT;
     aimBotBoneIndex   = 0;
     showAimLine       = g_Cfg.showAimLine;
@@ -2780,6 +2782,11 @@ static void ix_apply_control_sync() {
     // run (or false on a fresh process), ignoring the checkbox entirely.
     HardwareBT        = g_Cfg.hardwareBT;
     StartSilentAimThread();
+    // [RE-ADDED] Neither was ever started from here either — same
+    // "thread was defined but nothing ever started it" gap as the
+    // menu-driven path above.
+    StartAimLockNewThread();
+    StartAimbotThread();
     StartHardwareBTThread();
     // Body Kill globals synced from config — no separate thread: the
     // threshold check (BodyKillThresholdReached) runs inline inside the
@@ -3001,7 +3008,13 @@ int main(int argc,char* argv[]){
     // Body Kill has no separate thread — its threshold check runs inline
     // inside StartSilentAimThread's loop (UpdateSilentAimFast) and the FOV
     // targeting loop.
-    // Aimbot feature removed — thread never started.
+    // [RE-ADDED] Both threads exist in hook.h and are idempotent
+    // (guarded by their own running flags) but were never started from
+    // the main startup sequence at all — the actual reason Collider
+    // Lock did nothing even once wired to a real checkbox, and the
+    // reason Aimbot has never run since being "removed".
+    StartAimLockNewThread();
+    StartAimbotThread();
     StartEspThread();
 
     game_pid=getProcessID(packageName);

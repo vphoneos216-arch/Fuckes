@@ -1379,15 +1379,27 @@ void EspThreadFunc(){
                     float dx = sc.X-sw2, dy = sc.Y-sh2;
                     float sd = sqrtf(dx*dx+dy*dy);
                     if(sd <= fovRadius){
-                        if((AimSilent || BrutalBT || HardwareBT || BodyKill) && sd < bestSADist){
+                        // [RE-ADDED] AimLock back in this filter — without
+                        // it, Collider Lock had no target-selection path
+                        // of its own at all: g_CurrentBestTarget (which
+                        // UpdateAimLockNewThread reads) only ever came
+                        // from this bucket, so with AimSilent/BrutalBT/
+                        // HardwareBT/BodyKill all off, bestE_SA was never
+                        // set and the collider loop always saw "no target
+                        // selected" no matter what its own checkbox/
+                        // thread fixes did.
+                        if((AimSilent || BrutalBT || HardwareBT || BodyKill || AimLock) && sd < bestSADist){
                             bestSADist = sd;
                             bestE_SA   = e;
                             bestSAPos  = bonePos;
                             bestIdx    = eidx;
                             hasSA      = true;
                         }
-                        // [REMOVED] AimLock / Aimbot from this filter — both features removed.
-                        if((AimMagnet || DownPlayer) && sd < bestABDist){
+                        // [RE-ADDED] Aimbot back in this filter for the
+                        // same reason — its own target bucket (bestE_AB /
+                        // bestABPos, feeding g_AB_tgt/g_AB_lp below) never
+                        // got populated for it otherwise.
+                        if((AimMagnet || DownPlayer || Aimbot) && sd < bestABDist){
                             bestABDist = sd;
                             bestE_AB   = e;
                             bestABPos  = bonePos;
@@ -1421,16 +1433,25 @@ void EspThreadFunc(){
         }
         {
             std::lock_guard<std::mutex>lk(g_AB_mtx);
-            /* [REMOVED] Aim Lock / Aimbot — this was the LIVE raw-write path
-             * (Write<uintptr_t>(bestE_AB + AimCollider(), HC)) that actually
-             * fired every scan tick regardless of the HWBP/RT-Hook/Paradise
-             * protection added to UpdateAimLockNewThread/UpdateAimbotFast —
-             * those threads' protected paths were never the real trigger.
-             * AimLock and Aimbot are force-cleared to false everywhere else
-             * (main.cpp, SourceMenu.h) so this branch is dead, but the write
-             * itself is removed here too for defense-in-depth. */
-            g_AB_tgt = {0,0,0};
-            g_AB_lp  = 0;
+            /* The unprotected raw write that used to live here
+             * (Write<uintptr_t>(bestE_AB + AimCollider(), HC), firing every
+             * scan tick with no HWBP/RT-Hook/Paradise protection at all)
+             * stays removed — that was the actual unsafe path, not
+             * UpdateAimbotFast() itself, which only ever did hook/HWBP-
+             * based rotation injection (see its own comment above). What's
+             * re-added here is just feeding that already-safe thread its
+             * target again: g_AB_tgt/g_AB_lp have exactly one reader in
+             * the whole file (UpdateAimbotFast(), a few hundred lines
+             * below), so this can't affect AimMagnet/DownPlayer — neither
+             * of them ever reads these two variables.
+             */
+            if(Aimbot && hasAB){
+                g_AB_tgt = bestABPos;
+                g_AB_lp  = lp;
+            } else {
+                g_AB_tgt = {0,0,0};
+                g_AB_lp  = 0;
+            }
         }
 
         /* ── AIM MAGNET + DOWNPLAYER + EXPLOITS ── */

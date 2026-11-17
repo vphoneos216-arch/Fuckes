@@ -791,12 +791,20 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
                     ImGui::Checkbox1("Collider Lock", &g_Cfg.aimCollider);
 
-                    // Row 1 — Body Kill
-                    // [REMOVED] Aimbot checkbox — Aimbot feature removed.
-                    // Aimbot force-cleared below so a stale config.json
-                    // value can't bring it back silently.
+                    // Row 1 — Body Kill | Aimbot
+                    // [RE-ADDED] Aimbot checkbox. UpdateAimbotFast() in
+                    // hook.h is already hook/HWBP-based (RT Hook PTE hook
+                    // on the rotation setter, or a hardware write-
+                    // breakpoint on the Rotation field when RT Hook isn't
+                    // available) with a fire-gate, human-speed Nlerp, and
+                    // a similarity skip already built in — same "safe"
+                    // design as the collider lock, it just had no
+                    // checkbox and its thread was never started. Synced
+                    // for real now, same pattern as everything else here.
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
                     ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
+                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
+                    ImGui::Checkbox1("Aimbot", &g_Cfg.Aimbot);
 
                     // Row 2 — FOV Circle
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
@@ -879,10 +887,9 @@ inline void RenderSingleMenuWindow() {
                     // checkbox above instead of being forced off.
                     AimLock           = g_Cfg.aimCollider;
                     AimLockNew        = g_Cfg.aimCollider;
-                    // [REMOVED] Aimbot — force-cleared every frame for the
-                    // same reason (stale config.json can't bring it back).
-                    Aimbot            = false;
-                    g_Cfg.Aimbot      = false;
+                    // [RE-ADDED] Aimbot — now synced from its own
+                    // checkbox above instead of being forced off.
+                    Aimbot            = g_Cfg.Aimbot;
                     // [REMOVED] Pull / Float-Pull — both force-cleared every
                     // frame so stale config.json (exp_floatpull) can't bring
                     // either back silently now their checkboxes are gone.
@@ -904,7 +911,14 @@ inline void RenderSingleMenuWindow() {
                      * Body Kill has no thread of its own — its threshold
                      * check runs inline inside StartSilentAimThread's loop. */
                     StartSilentAimThread();
-                    // [REMOVED] StartAimbotThread() — Aimbot feature removed.
+                    // [RE-ADDED] Both were defined (hook.h) but never
+                    // started from anywhere in the program — the actual
+                    // reason Collider Lock did nothing even with its
+                    // checkbox wired up, and the reason Aimbot has never
+                    // run at all. Idempotent like every other Start*
+                    // call here (guarded by their own running flags).
+                    StartAimLockNewThread();
+                    StartAimbotThread();
                     StartHardwareBTThread();
                 }
 
