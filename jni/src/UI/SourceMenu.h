@@ -779,9 +779,17 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
-                    // [REMOVED] Aim Lock checkbox — AimLock feature removed.
-                    // AimLock / AimLockNew / aimCollider force-cleared below
-                    // so a stale config.json value can't bring it back silently.
+                    // [RE-ADDED] Collider Lock checkbox. This is the
+                    // kernel-HWBP collider aim-lock (AimCollider field
+                    // write intercept — see UpdateAimLockNewThread() in
+                    // hook.h), now gated by its own humanized engagement
+                    // logic (reaction delay / skip chance / streak
+                    // cooldown) rather than engaging every target
+                    // instantly and always. Was previously force-cleared
+                    // every frame with no checkbox at all; synced for
+                    // real now, same as every other toggle on this page.
+                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
+                    ImGui::Checkbox1("Collider Lock", &g_Cfg.aimCollider);
 
                     // Row 1 — Body Kill
                     // [REMOVED] Aimbot checkbox — Aimbot feature removed.
@@ -867,12 +875,10 @@ inline void RenderSingleMenuWindow() {
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
                     g_Cfg.aimSilent   = AimSilent;    // Aim Silent sync — unchanged, untouched by this fix
-                    // [REMOVED] AimLock — force-cleared every frame so a
-                    // stale config.json value (aim_collider) can never
-                    // silently re-enable it now that its checkbox is gone.
-                    AimLock           = false;
-                    AimLockNew        = false;
-                    g_Cfg.aimCollider = false;
+                    // [RE-ADDED] Collider Lock — now synced from its own
+                    // checkbox above instead of being forced off.
+                    AimLock           = g_Cfg.aimCollider;
+                    AimLockNew        = g_Cfg.aimCollider;
                     // [REMOVED] Aimbot — force-cleared every frame for the
                     // same reason (stale config.json can't bring it back).
                     Aimbot            = false;

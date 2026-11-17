@@ -2066,7 +2066,7 @@ void UpdateAndSaveSettings(){
     AimSilent         = g_Cfg.aimSilent;
     HardwareBT        = g_Cfg.hardwareBT;
     BrutalBT          = g_Cfg.brutalBT;
-    AimLock           = false; // AimLock feature removed — never loaded from saved config
+    AimLock           = g_Cfg.aimCollider; // [RE-ADDED] Collider Lock checkbox now exists in SourceMenu.h
     showAimLine       = false;   // aim line removed
     selectedBoneIndex = g_Cfg.selectedBone;
     AimFov            = g_Cfg.aimFovUI;
@@ -2547,7 +2547,7 @@ static void aimbot_tab(float /*a*/){
     AimSilent          = g_Cfg.aimSilent;
     HardwareBT         = g_Cfg.hardwareBT;
     BrutalBT           = g_Cfg.brutalBT;
-    AimLock            = false; // AimLock feature removed — never loaded from saved config
+    AimLock            = g_Cfg.aimCollider; // [RE-ADDED] Collider Lock checkbox now exists in SourceMenu.h
     AimFov             = g_Cfg.aimFovUI;
     showAimLine        = g_Cfg.showAimLine;
     BodyKill           = g_Cfg.bodyKill;
@@ -2761,9 +2761,13 @@ static void ix_apply_control_sync() {
     g_ShowFovOverlay  = g_Cfg.showFovCircle;
     AimFov            = g_Cfg.aimFovUI;
     g_Cfg.aimSilent   = AimSilent;
-    AimLock           = false;
-    g_Cfg.aimCollider = false;
-    AimLockNew        = false;
+    // [RE-ADDED] Collider Lock — synced from the saved config value
+    // (set by its checkbox in SourceMenu.h) instead of forced off;
+    // this path only runs in remote-control mode, where the on-screen
+    // menu isn't drawn at all, so it has to read the saved value
+    // directly rather than from a checkbox.
+    AimLock           = g_Cfg.aimCollider;
+    AimLockNew        = g_Cfg.aimCollider;
     BrutalBT          = g_Cfg.brutalBT;
     aimBotBoneIndex   = 0;
     showAimLine       = g_Cfg.showAimLine;
