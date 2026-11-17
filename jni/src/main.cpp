@@ -394,7 +394,45 @@ static std::string ix_extract_embedded_collider_stub() {
         unlink(outPath.c_str());
         return "";
     }
-    chmod(outPath.c_str(), 0644);
+    // [FIX — root cause of "couldn't map ... segment 1: Permission
+    // denied" from dlerror()] This was chmod'ing the extracted .so to
+    // 0644 — no execute bit for anyone. dlopen() maps a shared
+    // library's code segments with PROT_EXEC, and the Linux dynamic
+    // linker refuses that mapping outright on a file with no execute
+    // permission bit set, independent of SELinux — this alone is
+    // enough to produce exactly the dlerror() text just reported.
+    // 0755 is what every other .so on the system ships with.
+    if (chmod(outPath.c_str(), 0755) != 0) {
+        printf("[INX] collider-stub: chmod 0755 on %s failed, errno=%d (%s)\n",
+               outPath.c_str(), errno, strerror(errno));
+    }
+
+    // Best-effort second layer: some OEM SELinux policies additionally
+    // deny mapping PROT_EXEC from a file labeled shell_data_file (the
+    // label files written under /data/local/tmp normally get) inside
+    // an app's own domain. Since this process is already running as
+    // root to have attached the driver, relabelling to system_file —
+    // the context every app domain is already allowed to execute code
+    // from, since every process loads system libraries — costs nothing
+    // if it's not needed and fixes it if it is. Logged either way so
+    // a repeat failure after this still shows the real reason instead
+    // of guessing further blind.
+    {
+        std::string chconCmd = "chcon u:object_r:system_file:s0 '" + outPath + "' 2>&1";
+        FILE* p = popen(chconCmd.c_str(), "r");
+        if (p) {
+            char out[256] = {0};
+            size_t got = fread(out, 1, sizeof(out) - 1, p);
+            int rc = pclose(p);
+            if (rc != 0) {
+                printf("[INX] collider-stub: chcon to system_file failed (rc=%d)%s%s\n",
+                       rc, got ? ": " : "", got ? out : "");
+            }
+        } else {
+            printf("[INX] collider-stub: could not run chcon, errno=%d (%s)\n", errno, strerror(errno));
+        }
+    }
+
     return outPath;
 }
 #endif
