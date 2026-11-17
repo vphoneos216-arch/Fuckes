@@ -2690,6 +2690,7 @@ static void settings_tab(float a){
 
 // ── Source project NEW UI ────────────────────────────────────
 #include "UI/SourceMenu.h"
+#include "UI/NewThemeMenu.h" // [NEW] second red/black window — old menu above untouched
 #include "ix_controls.h"
 
 // ── Remote control ──────────────────────────────────────────
@@ -3137,6 +3138,7 @@ int main(int argc,char* argv[]){
 
             if(g_FloatingSystemReady){
                 RenderMenu();
+                RenderNewThemeUI(); // [NEW] additive second window, old menu above unchanged
                 if((g_GameIsRunning||g_EspAlive.load())&&lib_base!=0&&g_MasterEnabled&&ix_rt_ready()){
                     g_ShowFovOverlay=g_Cfg.showFovCircle && ix_feat_aim();
                     DrawAll(abs_ScreenX,abs_ScreenY,lib_base);
