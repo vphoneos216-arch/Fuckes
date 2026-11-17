@@ -259,10 +259,75 @@ static void ix_install_crash_handler() {
 // on disk to remote-dlopen, but nothing the user has to keep paired
 // with inx_standalone; the temp file is deleted right after the
 // injection attempt, successful or not.
+// [NEW — root cause of "could not open /proc/self/exe" on lobby test]
+// Two independent ways the PREVIOUS fopen("/proc/self/exe") could fail
+// without any further diagnostic: (a) some hardened SELinux policies
+// specifically deny traversing the /proc/<pid>/exe magic symlink even
+// when the real file underneath is perfectly readable to that process
+// (this is a known anti-introspection hardening some OEM security
+// layers add — it denies the symlink *class*, not the file), or
+// (b) the symlink's target has gone stale for some other reason. The
+// previous code also never printed errno, so there was no way to
+// tell which. This resolves the real absolute path two ways and
+// opens THAT directly instead of going through the symlink, with
+// errno printed at every step so a repeat failure is diagnosable
+// instead of another dead end.
+static std::string ix_resolve_own_exe_path() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        // A path ending in " (deleted)" means the backing file was
+        // unlinked after exec — the inode is still valid and openable
+        // via the symlink in that case, but not via this resolved
+        // string, so don't return it.
+        std::string resolved(buf);
+        if (resolved.size() < 10 || resolved.substr(resolved.size() - 10) != " (deleted)") {
+            return resolved;
+        }
+        printf("[INX] collider-stub: /proc/self/exe resolved to a deleted backing file: %s\n", resolved.c_str());
+    } else {
+        printf("[INX] collider-stub: readlink(/proc/self/exe) failed, errno=%d (%s)\n", errno, strerror(errno));
+    }
+
+    // Fallback: the executable's own mapping is always present in
+    // /proc/self/maps (the crash handler already reads this file
+    // successfully elsewhere, so this path is known to work even when
+    // the /proc/self/exe symlink itself is blocked) — its first
+    // r-xp-class entry with an absolute path is this binary itself.
+    FILE* maps = fopen("/proc/self/maps", "r");
+    if (!maps) {
+        printf("[INX] collider-stub: fallback fopen(/proc/self/maps) also failed, errno=%d (%s)\n", errno, strerror(errno));
+        return "";
+    }
+    char line[1024];
+    std::string found;
+    while (fgets(line, sizeof(line), maps)) {
+        char* slash = strchr(line, '/');
+        if (!slash) continue;
+        char* nl = strchr(slash, '\n');
+        if (nl) *nl = '\0';
+        if (strstr(slash, "(deleted)")) continue;
+        found = slash;
+        break; // first mapped absolute path is the executable's own load segment
+    }
+    fclose(maps);
+    if (found.empty()) {
+        printf("[INX] collider-stub: no usable path found in /proc/self/maps either\n");
+    }
+    return found;
+}
+
 static std::string ix_extract_embedded_collider_stub() {
-    FILE* f = fopen("/proc/self/exe", "rb");
+    std::string exePath = ix_resolve_own_exe_path();
+    if (exePath.empty()) {
+        printf("[INX] collider-stub: could not determine this binary's own path by any method\n");
+        return "";
+    }
+
+    FILE* f = fopen(exePath.c_str(), "rb");
     if (!f) {
-        printf("[INX] collider-stub: could not open /proc/self/exe\n");
+        printf("[INX] collider-stub: could not open %s, errno=%d (%s)\n", exePath.c_str(), errno, strerror(errno));
         return "";
     }
 
