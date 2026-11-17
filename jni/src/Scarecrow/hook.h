@@ -1607,6 +1607,102 @@ namespace AimHookState {
         return 3 + (int)(alRng % 5u);   // 3–7 ms
     }
 
+    // [NEW — humanized collider-lock engagement] A fixed, zero-delay,
+    // always-100%-of-the-time lock is the most visible statistical
+    // tell server-side replay/behavior analysis looks for — not what
+    // process issued the HWBP ioctl (that's invisible to the server
+    // either way; the gameplay effect is identical regardless of
+    // external vs internal injection, which is why that path was
+    // dropped instead of chased further). This changes WHEN the lock
+    // engages, never WHAT it writes — the override value is always the
+    // real head-collider pointer already read from the game itself,
+    // nothing invented here. Three independent, purely timing/
+    // probability-based gates:
+    //   - a short randomized reaction delay before a newly acquired
+    //     target gets locked at all (a real player doesn't snap onto
+    //     a target the instant it's acquired)
+    //   - a per-target chance the lock skips engaging entirely
+    //   - a streak cooldown after several engagements close together,
+    //     so a long play session doesn't show a perfectly uniform
+    //     100% engagement rate either
+    static uint32_t colliderHumanRng = 0xA17B92C3u;
+    inline uint32_t ColliderHumanRand() {
+        colliderHumanRng ^= colliderHumanRng << 13;
+        colliderHumanRng ^= colliderHumanRng >> 17;
+        colliderHumanRng ^= colliderHumanRng << 5;
+        return colliderHumanRng;
+    }
+
+    struct ColliderHumanizer {
+        uintptr_t pendingEnemy = 0;
+        std::chrono::steady_clock::time_point pendingSince{};
+        bool rolledThisTarget = false;
+        bool engageThisTarget = false;
+
+        int streakCount = 0;
+        std::chrono::steady_clock::time_point streakWindowStart{};
+        std::chrono::steady_clock::time_point cooldownUntil{};
+
+        // Tunables — plain timing/probability constants on our own
+        // side, not derived from or dependent on anything game-
+        // specific, so there is nothing here that can be "wrong"
+        // about the game itself; adjust freely if a different feel
+        // is wanted.
+        static constexpr int kReactionDelayMinMs = 90;
+        static constexpr int kReactionDelayMaxMs = 230;
+        static constexpr int kEngageChancePercent = 85; // skip ~1 in ~7 targets entirely
+        static constexpr int kStreakWindowMs = 9000;
+        static constexpr int kStreakLimit = 5;
+        static constexpr int kCooldownMinMs = 1200;
+        static constexpr int kCooldownMaxMs = 2600;
+
+        void RegisterEngagement(std::chrono::steady_clock::time_point now) {
+            auto sinceWindow = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - streakWindowStart).count();
+            if (streakCount == 0 || sinceWindow > kStreakWindowMs) {
+                streakWindowStart = now;
+                streakCount = 0;
+            }
+            streakCount++;
+            if (streakCount >= kStreakLimit) {
+                uint32_t cd = (uint32_t)kCooldownMinMs +
+                    (ColliderHumanRand() % (uint32_t)(kCooldownMaxMs - kCooldownMinMs + 1));
+                cooldownUntil = now + std::chrono::milliseconds(cd);
+                streakCount = 0;
+            }
+        }
+
+        // Returns true if the collider lock should actually engage
+        // `enemy` right now. False means: treat this exactly like "no
+        // valid target" for this poll — don't arm, don't update, don't
+        // write anything.
+        bool ShouldEngage(uintptr_t enemy) {
+            auto now = std::chrono::steady_clock::now();
+            if (now < cooldownUntil) return false;
+
+            if (enemy != pendingEnemy) {
+                pendingEnemy = enemy;
+                pendingSince = now;
+                rolledThisTarget = false;
+                engageThisTarget = false;
+            }
+
+            if (!rolledThisTarget) {
+                uint32_t delayMs = (uint32_t)kReactionDelayMinMs +
+                    (ColliderHumanRand() % (uint32_t)(kReactionDelayMaxMs - kReactionDelayMinMs + 1));
+                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - pendingSince).count();
+                if ((uint32_t)elapsedMs < delayMs) return false; // still "reacting"
+
+                rolledThisTarget = true;
+                engageThisTarget = (ColliderHumanRand() % 100u) < (uint32_t)kEngageChancePercent;
+                if (engageThisTarget) RegisterEngagement(now);
+            }
+
+            return engageThisTarget;
+        }
+    };
+
     // ── RT Hook helpers ────────────────────────────────────────
     // Push a Quaternion into the hooked rotation slot via kernel PTE.
     // Packs X/Y/Z/W as the four fp-reg doubles the hook monitors
@@ -1917,6 +2013,7 @@ void UpdateAimLockNewThread(){
     static uintptr_t s_lastCollider  = 0;
     static uintptr_t s_lastEnemy     = 0;
     static uintptr_t s_lastHwbpAddr  = 0;
+    static AimHookState::ColliderHumanizer s_humanizer;
 
     // Helper lambda to disarm both RT Hook and Paradise HWBPs
     auto disarm_all = [&](){
@@ -1958,6 +2055,18 @@ void UpdateAimLockNewThread(){
 
         uintptr_t HedColider = Read<uintptr_t>(enemy + PlayerOffsets::ColliderNode());
         if(!HedColider){
+            std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
+            continue;
+        }
+
+        // [NEW — humanized engagement gate] Decides WHEN to engage this
+        // target (reaction delay / per-target skip chance / streak
+        // cooldown) — never touches HedColider itself, which stays the
+        // real value just read from the game above. While this says
+        // "not yet" / "skip", treat it exactly like no valid target:
+        // disarm whatever was armed and wait for the next poll.
+        if(!s_humanizer.ShouldEngage(enemy)){
+            disarm_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(AimHookState::alJitter()));
             continue;
         }
