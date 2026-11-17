@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <linux/elf.h>
 #include <sys/user.h>
+#include <asm/ptrace.h> // struct user_fpsimd_struct (NT_FPREGSET) on arm64
 #include <cerrno>
 
 #ifndef SYS_process_vm_writev
@@ -45,6 +46,9 @@
 #endif
 #ifndef NT_PRSTATUS
 #define NT_PRSTATUS 1
+#endif
+#ifndef NT_FPREGSET
+#define NT_FPREGSET 2
 #endif
 
 namespace ix_inject_detail {
@@ -110,6 +114,29 @@ inline bool SetRegs(pid_t pid, struct user_pt_regs* regs) {
     return ptrace(PTRACE_SETREGSET, pid, (void*)NT_PRSTATUS, &iov) == 0;
 }
 
+// [FIX — real root cause of "injection succeeded, game crashed"]
+// RemoteCall only ever saved/restored NT_PRSTATUS (the general-purpose
+// registers). On arm64, dlopen()/dlsym() and anything the linker calls
+// into (memcpy, string ops, soinfo bookkeeping) freely uses the NEON/
+// FP register file (q0-q31, fpsr, fpcr) like any normal function —
+// nothing preserves it for us. Previously, once the hijacked thread
+// was resumed with its GPRs restored, its FP/SIMD state was whatever
+// dlopen's own code left behind, NOT what the thread actually had
+// before being hijacked. For a game's main or render thread — which
+// does per-frame matrix/vector math in NEON registers almost
+// continuously — resuming with corrupted FP state is exactly the kind
+// of thing that produces a crash or garbage output right after an
+// otherwise "successful" injection. NT_FPREGSET must be saved and
+// restored the same way NT_PRSTATUS already was.
+inline bool GetFpRegs(pid_t pid, struct user_fpsimd_struct* regs) {
+    struct iovec iov{ regs, sizeof(*regs) };
+    return ptrace(PTRACE_GETREGSET, pid, (void*)NT_FPREGSET, &iov) == 0;
+}
+inline bool SetFpRegs(pid_t pid, struct user_fpsimd_struct* regs) {
+    struct iovec iov{ regs, sizeof(*regs) };
+    return ptrace(PTRACE_SETREGSET, pid, (void*)NT_FPREGSET, &iov) == 0;
+}
+
 // Makes the target call `funcAddr(args...)`, stopping it with LR
 // forced to 0 so the function's own `ret` faults immediately and
 // waitpid() gives us a deterministic "the call returned" signal. Up
@@ -135,6 +162,17 @@ inline bool RemoteCall(pid_t pid, uintptr_t funcAddr, uint64_t a0, uint64_t a1,
     struct user_pt_regs regs{};
     if (!GetRegs(pid, &regs)) return false;
     struct user_pt_regs saved = regs;
+
+    // Saved alongside the GPRs, before anything is changed — see the
+    // comment on GetFpRegs() above for why this has to happen too.
+    // Not fatal if unavailable on some kernel build (still better than
+    // never trying), but every real arm64 kernel supports NT_FPREGSET.
+    struct user_fpsimd_struct savedFp{};
+    bool haveFp = GetFpRegs(pid, &savedFp);
+    if (!haveFp) {
+        printf("[INX] inject: PTRACE_GETREGSET(NT_FPREGSET) failed, errno=%d — "
+               "proceeding without FP-register preservation\n", errno);
+    }
 
     regs.regs[0] = a0;
     regs.regs[1] = a1;
@@ -177,6 +215,9 @@ inline bool RemoteCall(pid_t pid, uintptr_t funcAddr, uint64_t a0, uint64_t a1,
     // function did to the rest of its own stack frame below sp — we
     // never touched below sp ourselves.
     if (!SetRegs(pid, &saved)) return false;
+    if (haveFp && !SetFpRegs(pid, &savedFp)) {
+        printf("[INX] inject: PTRACE_SETREGSET(NT_FPREGSET) restore failed, errno=%d\n", errno);
+    }
     return cleanReturn;
 }
 #endif // __aarch64__
