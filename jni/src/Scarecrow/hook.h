@@ -1860,6 +1860,41 @@ namespace AimHookState {
         if(pd) pd->hwbp_remove();
     }
 
+    // ── TwT HWBP helpers ───────────────────────────────────────────────
+    // Same convention as RT Hook/Paradise above: a write breakpoint on
+    // the pointer field, with the hit-time register override replacing
+    // x0 (the value the game itself is writing) with head_collider_val.
+    // TwT's bp_inst() hands back an opaque handle (0 on failure) that
+    // bp_modify()/bp_uninst() consume for update/disarm — tracked in a
+    // static alongside the existing s_lastHwbpAddr/s_lastEnemy/
+    // s_lastCollider trio the collider-lock loop already keeps.
+    static bool TwtHwbpArmCollider(TwtDriver* twt, pid_t target_pid,
+                                    uintptr_t collider_addr,
+                                    uintptr_t head_collider_val,
+                                    uint64_t& out_handle) {
+        twt_bp_user_pt_regs regs{};
+        regs.regs[0] = (uint64_t)head_collider_val;
+        uint64_t handle = twt->bp_inst(target_pid, (uint64_t)collider_addr,
+                                        TWT_HW_BREAKPOINT_LEN_8, TWT_HW_BREAKPOINT_W,
+                                        TWT_REG_MODIFY_X(0), 0, &regs, 0);
+        if(!handle) return false;
+        out_handle = handle;
+        return true;
+    }
+
+    static bool TwtHwbpUpdateCollider(TwtDriver* twt, uint64_t handle,
+                                       uintptr_t head_collider_val) {
+        if(!handle) return false;
+        twt_bp_user_pt_regs regs{};
+        regs.regs[0] = (uint64_t)head_collider_val;
+        return twt->bp_modify(handle, TWT_REG_MODIFY_X(0), 0, &regs);
+    }
+
+    static void TwtHwbpDisarm(TwtDriver* twt, uint64_t& handle) {
+        if(twt && handle) twt->bp_uninst(handle);
+        handle = 0;
+    }
+
 } // namespace AimHookState
 
 void UpdateAimbotFast(){
@@ -2034,12 +2069,14 @@ void UpdateAimLockNewThread(){
     static uintptr_t s_lastCollider  = 0;
     static uintptr_t s_lastEnemy     = 0;
     static uintptr_t s_lastHwbpAddr  = 0;
+    static uint64_t  s_lastTwtHandle = 0; // [NEW] TwT driver breakpoint handle (Option 14)
     static AimHookState::ColliderHumanizer s_humanizer;
 
-    // Helper lambda to disarm both RT Hook and Paradise HWBPs
+    // Helper lambda to disarm RT Hook, Paradise and TwT HWBPs
     auto disarm_all = [&](){
         RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
         paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+        TwtDriver*      twt = g_driver ? g_driver->GetTwT()      : nullptr;
         if(rth && s_lastHwbpAddr)
             rth->DisableHwBp(g_driver->GetPid(), s_lastHwbpAddr);
         // [NEW — internal collider aim-lock] If the injected stub is
@@ -2055,9 +2092,12 @@ void UpdateAimLockNewThread(){
                 AimHookState::PdHwbpDisarm(pd);
             }
         }
-        s_lastHwbpAddr = 0;
-        s_lastCollider = 0;
-        s_lastEnemy    = 0;
+        if(twt && s_lastTwtHandle)
+            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+        s_lastHwbpAddr  = 0;
+        s_lastCollider  = 0;
+        s_lastEnemy     = 0;
+        s_lastTwtHandle = 0;
     };
 
     // [NEW — "collider not working" diagnostics] Edge-triggered prints
@@ -2141,11 +2181,14 @@ void UpdateAimLockNewThread(){
         // on — printed once (edge-triggered), not every poll, since
         // this only changes if the driver connection itself changes.
         {
-            static int s_dbgLastTier = -1; // 0=rth 1=pd 2=fallback
-            int tier = rth ? 0 : ((g_driver && g_driver->GetParadise()) ? 1 : 2);
+            static int s_dbgLastTier = -1; // 0=rth 1=pd 2=twt 3=fallback
+            int tier = rth ? 0 : ((g_driver && g_driver->GetParadise()) ? 1 :
+                       ((g_driver && g_driver->GetTwT()) ? 2 : 3));
             if(tier != s_dbgLastTier){
-                printf("[INX] collider-lock: driver tier = %s\n",
-                       tier == 0 ? "RT Hook HWBP" : (tier == 1 ? "Paradise HWBP" : "fallback write-on-change"));
+                static const char* kTierNames[] = {
+                    "RT Hook HWBP", "Paradise HWBP", "TwT HWBP", "fallback write-on-change"
+                };
+                printf("[INX] collider-lock: driver tier = %s\n", kTierNames[tier]);
                 fflush(stdout);
                 s_dbgLastTier = tier;
             }
@@ -2245,6 +2288,37 @@ void UpdateAimLockNewThread(){
                         }
                         s_lastCollider = HedColider;
                     }
+                }
+            } else if(TwtDriver* twt = (g_driver ? g_driver->GetTwT() : nullptr)) {
+                // ── TwT HWBP tier: kernel intercepts AimCollider write ──
+                // Same override convention as RT Hook/Paradise above
+                // (write breakpoint on the pointer field, hit-time x0
+                // override replaced with the head-collider pointer) —
+                // see AimHookState::TwtHwbpArmCollider/TwtHwbpDisarm.
+                bool need_rearm = (enemy     != s_lastEnemy)    ||
+                                  (HedColider != s_lastCollider)  ||
+                                  (s_lastTwtHandle == 0);
+
+                if(need_rearm){
+                    if(s_lastTwtHandle)
+                        AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+
+                    uint64_t handle = 0;
+                    if(AimHookState::TwtHwbpArmCollider(twt, g_driver->GetPid(),
+                                                         colliderField, HedColider, handle)){
+                        s_lastTwtHandle = handle;
+                        s_lastEnemy     = enemy;
+                        s_lastCollider  = HedColider;
+                    } else {
+                        printf("[INX] collider-lock: TwT TwtHwbpArmCollider() failed — falling back to direct write\n");
+                        fflush(stdout);
+                        Write<uintptr_t>(colliderField, HedColider);
+                        s_lastTwtHandle = 0;
+                    }
+                } else if(HedColider != s_lastCollider) {
+                    if(!AimHookState::TwtHwbpUpdateCollider(twt, s_lastTwtHandle, HedColider))
+                        Write<uintptr_t>(colliderField, HedColider); // handle went stale — direct write this frame
+                    s_lastCollider = HedColider;
                 }
             } else {
                 // ── Fallback: write-on-change + jitter (all other drivers) ──

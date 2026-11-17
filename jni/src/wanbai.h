@@ -51,6 +51,8 @@ extern char packageName[];
 #include "Paradise/paradise_api.h"
 #include "Dit_KPM/dit_driver.h"   // Option 12: Dit-KPM/Dits-KO (separate ABI from proKpm below)
 #include "RT_Hook/kernel.h"      // Option 13: RT Hook (ioctl-based, see file header for the c_driver name-collision note)
+#include "TwT/kernel.h"          // Option 14: TwT (ioctl-based, same c_driver name-collision note, renamed TwtDriver)
+#include "Wind/wind_driver.h"    // Option 15: Wind (netlink/ioctl dual transport, class c_wind, no rename needed)
 
 // ── Native memory-access syscall numbers (kept for reference, but fallback disabled) ──
 #ifdef __NR_process_vm_readv
@@ -325,12 +327,16 @@ private:
     bool   use_bing             = false;   // Option 11: Bing (/proc/pid/mem)
     bool   use_dit_kpm          = false;   // Option 12: Dit-KPM/Dits-KO (new uapi.h ABI)
     bool   use_rt_hook           = false;   // Option 13: RT Hook (ioctl-based)
+    bool   use_twt               = false;   // Option 14: TwT (ioctl-based)
+    bool   use_wind              = false;   // Option 15: Wind (netlink/ioctl)
     Driver        *kma_driver   = nullptr;
     LdgKpmDriver  *ldk_driver   = nullptr;
     paradise_driver *paradise   = nullptr;
     bingKpm        bing_backend;
     DitKpmDriver   dit_kpm_backend;
     RtHookDriver  *rt_hook       = nullptr;
+    TwtDriver     *twt_drv       = nullptr;
+    c_wind        *wind_drv      = nullptr;
 
     int    fd  = -1;
     pid_t  pid = 0;
@@ -1004,6 +1010,32 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root access recommended for RT Hook!\033[0m\n");
         }
+        // ── Option 14: TwT (ioctl-based, own BP_* HWBP family) ─────
+        else if (choice == 14) {
+            use_twt = true;
+            twt_drv = new (std::nothrow) TwtDriver(false); // skip interactive gyro/touch prompts — see TwT/kernel.h header
+            if (!twt_drv || !twt_drv->is_ready()) {
+                printf("[-] TwT driver attach failed\n");
+                use_twt = false;
+                return;
+            }
+            printf("\033[41m\033[37m[+] TwT Mode Active\033[0m\n");
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access recommended for TwT!\033[0m\n");
+        }
+        // ── Option 15: Wind (netlink/ioctl dual transport) ─────────
+        else if (choice == 15) {
+            use_wind = true;
+            wind_drv = new (std::nothrow) c_wind(); // netlink auto-probe units 29..35
+            if (!wind_drv || !wind_drv->ok()) {
+                printf("[-] Wind driver attach failed (netlink probe found nothing)\n");
+                use_wind = false;
+                return;
+            }
+            printf("\033[41m\033[37m[+] Wind Mode Active\033[0m\n");
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access recommended for Wind!\033[0m\n");
+        }
         else {
             printf("[-] Invalid option. Exiting.\n");
             exit(0);
@@ -1016,16 +1048,20 @@ public:
     bool any_backend_ready() const {
         // Real members only (no use_gt / use_kpm — those never existed)
         return use_tb_kpm || use_ditpro_kpm || use_kma_kpm || use_ldk_kpm
-            || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || use_rt_hook || (fd > 0);
+            || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || use_rt_hook
+            || use_twt || use_wind || (fd > 0);
     }
 
     void _reset_backend_flags() {
         use_tb_kpm = use_ditpro_kpm = use_kma_kpm = use_ldk_kpm = false;
         use_paradise = use_syscall_fallback = use_bing = use_dit_kpm = use_rt_hook = false;
+        use_twt = use_wind = false;
         if (kma_driver) { delete kma_driver; kma_driver = nullptr; }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise)   { delete paradise;   paradise   = nullptr; }
         if (rt_hook)    { delete rt_hook;    rt_hook    = nullptr; }
+        if (twt_drv)    { delete twt_drv;    twt_drv    = nullptr; }
+        if (wind_drv)   { delete wind_drv;   wind_drv   = nullptr; }
         if (bing_backend.handle > 0) { close(bing_backend.handle); bing_backend.handle = -1; }
         if (fd > 0) { close(fd); fd = -1; }
     }
@@ -1035,7 +1071,7 @@ public:
         // (config.json "driver", read into g_driver_choice by main).
         // No automatic scan of other backends.
         const int choice = g_driver_choice;
-        if (choice < 1 || choice > 13) {
+        if (choice < 1 || choice > 15) {
             printf("[-] No driver selected. Choose one in the WebUI and launch again.\n");
             fflush(stdout);
             exit(0);
@@ -1060,6 +1096,8 @@ public:
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise) { delete paradise; paradise = nullptr; }
         if (rt_hook) { delete rt_hook; rt_hook = nullptr; }
+        if (twt_drv) { delete twt_drv; twt_drv = nullptr; }
+        if (wind_drv) { delete wind_drv; wind_drv = nullptr; }
         if (bing_backend.handle > 0) close(bing_backend.handle);
     }
 
@@ -1093,6 +1131,13 @@ public:
         if (use_rt_hook && rt_hook) {
             rt_hook->initialize(target_pid);
         }
+        if (use_twt && twt_drv) {
+            twt_drv->initialize(target_pid);
+        }
+        if (use_wind && wind_drv) {
+            if (!wind_drv->initialize(target_pid))
+                printf("[-] Wind: bind pid %d failed\n", (int)target_pid);
+        }
     }
 
     bool initKey(const char *key) {
@@ -1105,6 +1150,8 @@ public:
         if (use_bing)        return true;
         if (use_dit_kpm)     return true;
         if (use_rt_hook)     return true;
+        if (use_twt)         return true;
+        if (use_wind)        return true;
         return (ioctl(fd, OP_INIT_KEY, key) == 0);
     }
 
@@ -1141,6 +1188,10 @@ public:
             return dit_kpm_backend.Read(addr, buffer, size) == 0;
         if (use_rt_hook && rt_hook)
             return rt_hook->read(addr, buffer, size);
+        if (use_twt && twt_drv)
+            return twt_drv->read(addr, buffer, size);
+        if (use_wind && wind_drv)
+            return wind_drv->read(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1173,6 +1224,10 @@ public:
             return dit_kpm_backend.WriteRaw(addr, buffer, size) == 0;
         if (use_rt_hook && rt_hook)
             return rt_hook->write(addr, buffer, size);
+        if (use_twt && twt_drv)
+            return twt_drv->write(addr, buffer, size);
+        if (use_wind && wind_drv)
+            return wind_drv->write(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1251,6 +1306,10 @@ public:
         }
         if (use_rt_hook && rt_hook)
             return rt_hook->get_module_base(name);
+        if (use_twt && twt_drv)
+            return twt_drv->get_module_base(name);
+        if (use_wind && wind_drv)
+            return wind_drv->get_module_base(name);
         MODULE_BASE mb;
         mb.pid  = this->pid;
         mb.name = strdup(name);
@@ -1264,6 +1323,8 @@ public:
     /* ── RT Hook kernel access (hook.h aimbot/aimlock threads use this) ── */
     RtHookDriver*   GetRtHook()    { return (use_rt_hook && rt_hook) ? rt_hook : nullptr; }
     paradise_driver* GetParadise() { return (use_paradise && paradise) ? paradise : nullptr; }
+    TwtDriver*      GetTwT()       { return (use_twt && twt_drv) ? twt_drv : nullptr; }
+    c_wind*         GetWind()      { return (use_wind && wind_drv) ? wind_drv : nullptr; }
     pid_t           GetPid()       const { return this->pid; }
 };
 
@@ -1288,6 +1349,8 @@ static const char* g_DriverModeName(int choice) {
         case 11: return "Bing";
         case 12: return "Dit-KPM/Dits-KO";
         case 13: return "RT Hook";
+        case 14: return "TwT";
+        case 15: return "Wind";
         case 0: return "AUTO";
         default: return "Unknown";
     }
