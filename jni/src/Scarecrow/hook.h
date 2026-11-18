@@ -1549,9 +1549,35 @@ void UpdateSilentAimFast(){
      * enemy's real HP (read-only, never written) drops to/below the slider
      * value — see BodyKillThresholdReached() below. Before that point the
      * bullet lands on the head, same as plain Aim Silent.
-     * Do not touch for Hardware BT (separate thread/logic). */
+     * Do not touch for Hardware BT (separate thread/logic).
+     *
+     * [NEW] Driver-tier HWBP dispatch — same chain and convention as
+     * UpdateAimLockNewThread/UpdateAimbotFast: RT Hook (kernel GP-reg
+     * override on the game's own write) → Paradise HWBP → TwT HWBP →
+     * plain write-on-change fallback. See AimHookState::HwbpArmSilentDir
+     * / PdHwbpArmSilentDir / TwtHwbpArmSilentDir+TwtHwbpUpdateSilentDir
+     * above — each overrides SilentAimDir's X/Y/Z the moment the game
+     * itself writes it, instead of this thread writing it directly. */
+    static uintptr_t s_lastDirAddr   = 0;
+    static uint64_t  s_lastTwtHandle = 0;
+
+    auto disarm_silent = [&](){
+        RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+        TwtDriver*      twt = g_driver ? g_driver->GetTwT()      : nullptr;
+        if(rth && s_lastDirAddr)
+            rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
+        else if(pd && s_lastDirAddr)
+            AimHookState::PdHwbpDisarm(pd);
+        if(twt && s_lastTwtHandle)
+            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+        s_lastDirAddr   = 0;
+        s_lastTwtHandle = 0;
+    };
+
     while(silentThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
+            disarm_silent();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -1592,7 +1618,48 @@ void UpdateSilentAimFast(){
                 dir.X = targetPos.X - startPos.X;
                 dir.Y = targetPos.Y - startPos.Y;
                 dir.Z = targetPos.Z - startPos.Z;
-                Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+
+                uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+                RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+                paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
+                TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
+
+                if(rth){
+                    if(AimHookState::HwbpArmSilentDir(rth, dirAddr, dir)){
+                        s_lastDirAddr = dirAddr;
+                    } else {
+                        Write<Vector3>(dirAddr, dir); // kernel arm failed — plain write this frame
+                    }
+                } else if(pd){
+                    bool need_rearm = (s_lastDirAddr != dirAddr);
+                    if(need_rearm && s_lastDirAddr)
+                        AimHookState::PdHwbpDisarm(pd);
+                    if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
+                        s_lastDirAddr = dirAddr;
+                    } else {
+                        Write<Vector3>(dirAddr, dir);
+                        s_lastDirAddr = 0;
+                    }
+                } else if(twt){
+                    bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastTwtHandle == 0);
+                    if(need_rearm){
+                        if(s_lastTwtHandle)
+                            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+                        uint64_t handle = 0;
+                        if(AimHookState::TwtHwbpArmSilentDir(twt, g_driver->GetPid(), dirAddr, dir, handle)){
+                            s_lastTwtHandle = handle;
+                            s_lastDirAddr   = dirAddr;
+                        } else {
+                            Write<Vector3>(dirAddr, dir);
+                            s_lastTwtHandle = 0;
+                        }
+                    } else if(!AimHookState::TwtHwbpUpdateSilentDir(twt, s_lastTwtHandle, dir)) {
+                        Write<Vector3>(dirAddr, dir); // handle went stale — direct write this frame
+                    }
+                } else {
+                    // ── Fallback: no HWBP-capable driver — plain write ──
+                    Write<Vector3>(dirAddr, dir);
+                }
             }
         }
         std::this_thread::yield();
@@ -1809,6 +1876,27 @@ namespace AimHookState {
 
         return rth->UpdateAndEnableHwBp(&info);
     }
+
+    // Arm HWBP on SilentAimDir (Vector3 — X,Y,Z) to override the bullet
+    // direction the game writes with our computed aim vector. Same
+    // AAPCS-style convention as HwbpArmRotation above (x0=X x1=Y x2=Z),
+    // just one fewer register since Vector3 has no W component.
+    static bool HwbpArmSilentDir(RtHookDriver* rth, uintptr_t dir_addr,
+                                  const Vector3& dir) {
+        HW_BP_INFO info{};
+        info.pid  = g_driver ? g_driver->GetPid() : 0;
+        info.addr = dir_addr;
+        info.type = HW_BP_TYPE_W;
+        info.len  = 4;   // 4-byte granule (Vector3 X — first field), same as rotation
+
+        info.is_write_gp_regs = true;
+        info.gp_reg_count     = 3;
+        info.gp_reg_indices[0] = 0;  info.gp_reg_values[0] = RtHookDriver::float_bits(dir.X);
+        info.gp_reg_indices[1] = 1;  info.gp_reg_values[1] = RtHookDriver::float_bits(dir.Y);
+        info.gp_reg_indices[2] = 2;  info.gp_reg_values[2] = RtHookDriver::float_bits(dir.Z);
+
+        return rth->UpdateAndEnableHwBp(&info);
+    }
     // ── Paradise HWBP helpers ──────────────────────────────────────────
     // Arms a Paradise hardware write-breakpoint on a rotation field.
     // paradise_bp_record.x0–x3 carry the new float values as GP register
@@ -1835,6 +1923,31 @@ namespace AimHookState {
         rec.x1 = (uint64_t)by;
         rec.x2 = (uint64_t)bz;
         rec.x3 = (uint64_t)bw;
+        pd->hwbp_set_record(0, 0, &rec);
+        return true;
+    }
+
+    // Arms a Paradise hardware write-breakpoint on SilentAimDir. Same
+    // x0-x2 GP-register override convention as PdHwbpArmRotation above,
+    // one register fewer (Vector3 has no W).
+    static bool PdHwbpArmSilentDir(paradise_driver* pd, uintptr_t dir_addr,
+                                    const Vector3& dir) {
+        paradise_bp_point_config pt{};
+        pt.address  = (uint64_t)dir_addr;
+        pt.type     = PARADISE_HWBP_WRITE;
+        pt.length   = 12;  // Vector3 = 3 floats = 12 bytes
+        pt.scope    = PARADISE_HWBP_ALL_THREADS;
+        pt.reserved = 0;
+        if(!pd->hwbp_set(&pt, 1)) return false;
+
+        paradise_bp_record rec{};
+        uint32_t bx, by, bz;
+        __builtin_memcpy(&bx, &dir.X, 4);
+        __builtin_memcpy(&by, &dir.Y, 4);
+        __builtin_memcpy(&bz, &dir.Z, 4);
+        rec.x0 = (uint64_t)bx;
+        rec.x1 = (uint64_t)by;
+        rec.x2 = (uint64_t)bz;
         pd->hwbp_set_record(0, 0, &rec);
         return true;
     }
@@ -1888,6 +2001,36 @@ namespace AimHookState {
         twt_bp_user_pt_regs regs{};
         regs.regs[0] = (uint64_t)head_collider_val;
         return twt->bp_modify(handle, TWT_REG_MODIFY_X(0), 0, &regs);
+    }
+
+    // Arm/update TwT HWBP on SilentAimDir (Vector3) — same AAPCS-style
+    // x0-x2 GP-register override convention as the RT Hook/Paradise
+    // SilentDir helpers above, one register fewer than rotation (no W).
+    static bool TwtHwbpArmSilentDir(TwtDriver* twt, pid_t target_pid,
+                                     uintptr_t dir_addr, const Vector3& dir,
+                                     uint64_t& out_handle) {
+        twt_bp_user_pt_regs regs{};
+        regs.regs[0] = (uint64_t)RtHookDriver::float_bits(dir.X);
+        regs.regs[1] = (uint64_t)RtHookDriver::float_bits(dir.Y);
+        regs.regs[2] = (uint64_t)RtHookDriver::float_bits(dir.Z);
+        uint64_t handle = twt->bp_inst(target_pid, (uint64_t)dir_addr,
+                                        TWT_HW_BREAKPOINT_LEN_4, TWT_HW_BREAKPOINT_W,
+                                        TWT_REG_MODIFY_X(0) | TWT_REG_MODIFY_X(1) | TWT_REG_MODIFY_X(2),
+                                        0, &regs, 0);
+        if(!handle) return false;
+        out_handle = handle;
+        return true;
+    }
+
+    static bool TwtHwbpUpdateSilentDir(TwtDriver* twt, uint64_t handle,
+                                        const Vector3& dir) {
+        if(!handle) return false;
+        twt_bp_user_pt_regs regs{};
+        regs.regs[0] = (uint64_t)RtHookDriver::float_bits(dir.X);
+        regs.regs[1] = (uint64_t)RtHookDriver::float_bits(dir.Y);
+        regs.regs[2] = (uint64_t)RtHookDriver::float_bits(dir.Z);
+        return twt->bp_modify(handle, TWT_REG_MODIFY_X(0) | TWT_REG_MODIFY_X(1) | TWT_REG_MODIFY_X(2),
+                               0, &regs);
     }
 
     static void TwtHwbpDisarm(TwtDriver* twt, uint64_t& handle) {
