@@ -1,0 +1,449 @@
+#include <imports.h>
+#include "BatteryInfo.h"
+#include <imguiconfig.h>
+
+#include "ItSRohitOp.h"
+#include "exptime.h"
+#include "Icon.h"
+void (*OpenURL)(String *url);
+static int language = 0;
+float SIZE_REDUCE = 0.f;
+bool itsmk;
+ImTextureID iconAim; // ícone do olho
+ImTextureID iconEsp; // ícone da caveira
+//ImFont* Itsmk = nullptr;
+
+
+
+#include <algorithm>
+#include <string>
+#include <sys/system_properties.h>
+
+#ifndef PROP_VALUE_MAX
+#define PROP_VALUE_MAX 92
+#endif
+
+std::string getDeviceFullName() {
+    char brandC[PROP_VALUE_MAX], modelC[PROP_VALUE_MAX];
+    __system_property_get("ro.product.brand", brandC);
+    __system_property_get("ro.product.model", modelC);
+    std::string brand(brandC);
+    std::string model(modelC);
+    return brand + " " + model;
+}
+
+
+
+
+
+struct TabAnimationState {
+float lerped_alpha = 0.0f;
+float lerped_bar_width = 0.0f;
+};
+std::map<ImGuiID, TabAnimationState> g_tab_animations;
+
+bool CustomAnimatedTabButton(const char* id_label, ImTextureID image_id, bool is_active, float button_width, float button_height) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    // ... (unchanged animation and background drawing logic) ...
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(id_label);
+    const ImVec2 pos = window->DC.CursorPos;
+    const float rounding = 2.0f;
+    const ImRect bb(ImVec2(pos.x, pos.y), ImVec2(pos.x + button_width, pos.y + button_height));
+    ImGui::ItemSize(bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(bb, id))
+        return false;
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    // Find or create the animation state for this button.
+    auto it_anim = g_tab_animations.find(id);
+    if (it_anim == g_tab_animations.end()) {
+        g_tab_animations.insert({ id, TabAnimationState() });
+        it_anim = g_tab_animations.find(id);
+    }
+    float target_lerp_value = is_active ? 1.0f : 0.0f;
+    float lerp_speed = 8.0f * ImGui::GetIO().DeltaTime;
+    it_anim->second.lerped_alpha = ImLerp(it_anim->second.lerped_alpha, target_lerp_value, lerp_speed);
+    ImU32 bg_color_inactive = IM_COL32(58, 58, 60, 255);
+    ImU32 bg_color_hovered = IM_COL32(70, 70, 75, 255);
+    ImU32 bg_color_active = IM_COL32(44, 44, 46, 255);
+    ImVec4 final_bg_color_v4;
+    if (is_active) {
+        final_bg_color_v4 = ImColor(bg_color_active).Value;
+    }
+    else if (hovered) {
+        final_bg_color_v4 = ImColor(bg_color_hovered).Value;
+    }
+    else {
+        final_bg_color_v4 = ImColor(bg_color_inactive).Value;
+    }
+    ImU32 current_bg_color = ImGui::ColorConvertFloat4ToU32(ImLerp(ImColor(bg_color_inactive).Value, final_bg_color_v4, it_anim->second.lerped_alpha));
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, current_bg_color, rounding);
+
+    // --- Draw the image here with white color tint ---
+    ImVec2 image_size = ImVec2(50.0f, 50.0f); // Adjust as needed
+    ImVec2 image_pos = ImVec2(bb.Min.x + (button_width - image_size.x) * 0.5f, bb.Min.y + (button_height - image_size.y) * 0.5f);
+
+    // The key change is adding IM_COL32_WHITE as the tint_color parameter
+    window->DrawList->AddImage(image_id, image_pos, ImVec2(image_pos.x + image_size.x, image_pos.y + image_size.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+    // You could also use ImColor(255, 255, 255, 255) for the same effect.
+
+
+    if (is_active) {
+        window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(10, 132, 255, 205), rounding, ImDrawFlags_None, 0.2f);
+    }
+
+    return pressed;
+}
+
+static std::map<ImGuiID, float> s_anim_pos;
+
+
+bool MyCustomCheckbox(const char* label, bool* state) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+
+    ImVec2 label_size = ImGui::CalcTextSize(label);
+    
+    const float toggle_height = label_size.y * 1.2f;
+    const float toggle_width = toggle_height * 2.0f;
+    const float radius = toggle_height * 0.5f;
+
+    float total_width = ImGui::GetContentRegionAvail().x;
+    ImRect bb(window->DC.CursorPos, ImVec2(window->DC.CursorPos.x + total_width, window->DC.CursorPos.y + toggle_height));
+
+    ImGui::ItemSize(bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(bb, id)) {
+        return false;
+    }
+
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+
+    if (pressed) {
+        *state = !*state;
+    }
+
+    float t_state = *state ? 1.0f : 0.0f;
+    
+    if (s_anim_pos.find(id) == s_anim_pos.end()) {
+        s_anim_pos[id] = t_state;
+    }
+    s_anim_pos[id] = ImLerp(s_anim_pos[id], t_state, g.IO.DeltaTime * 8.0f);
+    float current_pos = s_anim_pos[id];
+
+    // --- Drawing Logic ---
+    
+    // Define colors for ON and OFF states
+    ImU32 frame_color_off = IM_COL32(225, 225, 225, 255); // Light gray frame for off state
+    ImU32 frame_color_on = IM_COL32(0, 185, 255, 255);
+    
+    // Updated grab color for the 'off' state to be a dark gray
+    ImU32 grab_color_off = IM_COL32(250, 250, 250, 255); 
+    ImU32 grab_color_on = IM_COL32(255, 255, 255, 255);
+    
+    ImU32 bg_color = ImGui::ColorConvertFloat4ToU32(ImLerp(ImColor(frame_color_off).Value, ImColor(frame_color_on).Value, current_pos));
+    ImU32 knob_color = ImGui::ColorConvertFloat4ToU32(ImLerp(ImColor(grab_color_off).Value, ImColor(grab_color_on).Value, current_pos));
+
+    ImVec2 text_pos(bb.Min.x, bb.Min.y + (toggle_height - label_size.y) * 0.5f);
+    window->DrawList->AddText(text_pos, IM_COL32(255, 255, 255, 255), label);
+    
+    ImVec2 toggle_min(bb.Max.x - toggle_width, bb.Min.y);
+    ImVec2 toggle_max(bb.Max.x, bb.Min.y + toggle_height);
+    window->DrawList->AddRectFilled(toggle_min, toggle_max, bg_color, toggle_height * 0.5f);
+    
+    float knob_size = radius - 2.5f;
+    ImVec2 circle_pos(toggle_min.x + radius + current_pos * (toggle_width - 2.0f * radius), toggle_min.y + radius);
+    
+    window->DrawList->AddCircleFilled(circle_pos, knob_size + 1.5f, IM_COL32(0, 0, 0, 50));
+    
+    window->DrawList->AddCircleFilled(circle_pos, knob_size, knob_color);
+
+    return pressed;
+}
+
+
+void menu() {
+
+static bool itsmk = true;
+static bool clickInProgress = false;
+static float clickStartTime = 0;
+if (itsmk == false) {
+if (ImGui::Begin((" MKOP" ), 0,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground)) {
+const auto& pWindowDrawList = ImGui::GetWindowDrawList();
+const auto& p = ImGui::GetWindowPos();
+ImGui::SetCursorPos(ImVec2(5, 5));
+ImVec2 imageSize(120,120);
+ImGui::Image(logo.textureId, imageSize);
+if (ImGui::IsItemHovered()) {
+if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {clickInProgress = true;
+clickStartTime = ImGui::GetTime();}}
+if (clickInProgress && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {clickInProgress = false;
+float currentTime = ImGui::GetTime();
+float clickDuration = currentTime - clickStartTime;
+if (clickDuration < 0.2f) {itsmk = true;
+}}}}
+
+ImGui::End();
+
+if (itsmk){
+ImGui::SetNextWindowSize(ImVec2(520,560), ImGuiCond_Once);
+//ImGui::Begin("// tG::@ItsMKOP //",&itsmk,ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar); {
+
+if (ImGui::Begin(("Mkop "), &itsmk ,ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)){
+     
+
+ImVec2 winPos= ImGui::GetWindowPos();
+ImVec2 winSize = ImGui::GetWindowSize();
+auto bg= ImGui::GetBackgroundDrawList();
+
+
+
+
+static int active_tab_index = 0;
+ImTextureID tab_images[] = { user.textureId, lnd.textureId, cogwheel.textureId };
+const char* tab_labels[] = { "A", "N", "K" };
+int num_tabs = IM_ARRAYSIZE(tab_labels);
+
+float spacing = 10.0f;
+float tab_button_height = 70.0f;
+float bottom_padding = 10.0f;
+
+// --- Main Content Area ---
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImColor(58, 58, 60, 255).Value);
+    ImVec2 available_space = ImGui::GetContentRegionAvail();
+    float desired_width = available_space.x;
+    float inner_width = desired_width;
+    float inner_height = 60.0f;
+
+    ImGui::BeginChild(ImGui::GetID(""), ImVec2(inner_width, inner_height));
+
+    ImVec2 VR;
+    ImDrawList* draw;
+    VR = ImGui::GetWindowPos();
+    draw = ImGui::GetWindowDrawList();
+    ImVec2 child_max_content = ImGui::GetContentRegionMax();
+    float child_width = child_max_content.x;
+    float child_height = child_max_content.y;
+
+    float btnSize = 40.0f;
+    float button_x = 20.0f;
+    float button_y = (child_height - btnSize) / 2.0f;
+    ImGui::SetCursorPos(ImVec2(button_x, button_y));
+
+    // Change InvisibleButton to ImageButton with the exit texture
+if (ImGui::InvisibleButton("MinimizeBtn", ImVec2(btnSize, btnSize))) {
+    // Button logic here
+    itsmk = false;
+}
+    ImGui::SetCursorPos(ImVec2(15, 5));
+    ImVec2 imageSize(50,50);
+ImGui::Image(ic_error.textureId, imageSize);
+
+    float t = ImGui::GetTime();
+
+    float r = (sin(t) + 1.0f) * 0.5f;
+    float g = (sin(t + 2.0f) + 1.0f) * 0.5f;
+    float b = (sin(t + 4.0f) + 1.0f) * 0.5f;
+
+    ImU32 dynamic_color = IM_COL32(static_cast<int>(r * 255), static_cast<int>(g * 255), static_cast<int>(b * 255), 200);
+
+ 
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+ImVec2 window_pos = ImGui::GetWindowPos();
+
+float circle_radius = 12.0f;
+float circle_y_pos = window_pos.y + (child_height / 2.0f);
+float initial_x_offset = child_width - 20.0f;
+float circle_spacing = 26.0f;
+
+// Get mouse position and check if the window is being hovered.
+ImVec2 mouse_pos = ImGui::GetMousePos();
+bool is_hovering = ImGui::IsWindowHovered();
+bool is_left_clicked = ImGui::IsMouseClicked(0);
+
+// Generate time-based colors for each circle with a phase offset
+float t_green = ImGui::GetTime();
+ImU32 dynamic_color_green = IM_COL32(
+    static_cast<int>((sin(t_green) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_green + 2.0f) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_green + 4.0f) + 1.0f) * 0.5f * 255),
+    255);
+
+float t_yellow = ImGui::GetTime() + 1.5f; // Add a time offset
+ImU32 dynamic_color_yellow = IM_COL32(
+    static_cast<int>((sin(t_yellow) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_yellow + 2.0f) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_yellow + 4.0f) + 1.0f) * 0.5f * 255),
+    255);
+
+float t_red = ImGui::GetTime() + 3.0f; // Add another time offset
+ImU32 dynamic_color_red = IM_COL32(
+    static_cast<int>((sin(t_red) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_red + 2.0f) + 1.0f) * 0.5f * 255),
+    static_cast<int>((sin(t_red + 4.0f) + 1.0f) * 0.5f * 255),
+    255);
+
+// Green circle
+ImVec2 green_circle_center = ImVec2(window_pos.x + initial_x_offset, circle_y_pos);
+draw_list->AddCircleFilled(green_circle_center, circle_radius, dynamic_color_green);
+
+// Yellow circle
+ImVec2 yellow_circle_center = ImVec2(window_pos.x + initial_x_offset - circle_spacing, circle_y_pos);
+draw_list->AddCircleFilled(yellow_circle_center, circle_radius, dynamic_color_yellow);
+
+// Red circle
+ImVec2 red_circle_center = ImVec2(window_pos.x + initial_x_offset - circle_spacing * 2, circle_y_pos);
+draw_list->AddCircleFilled(red_circle_center, circle_radius, dynamic_color_red);
+
+const char* text_label = "MANIx999 JAAT OF HACKER PREMIUM 3.0";
+ImVec2 text_size = Itsmk->CalcTextSizeA(30.0f, FLT_MAX, 0.0f, text_label);
+float text_x = window_pos.x + (child_width - text_size.x) / 2.0f;
+float text_y = window_pos.y + (child_height - text_size.y) / 2.0f;
+
+draw->AddText(Itsmk, 30.f, ImVec2(text_x, text_y), ImColor(250, 250, 250), text_label);
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+
+ImGui::Separator();
+
+float total_available_width = ImGui::GetContentRegionAvail().x;
+float total_spacing = spacing * (num_tabs - 1);
+float tab_button_width = (total_available_width - total_spacing) / num_tabs;
+
+
+for (int i = 0; i < num_tabs; ++i) {
+    char id_label_buffer[64];
+    sprintf(id_label_buffer, "TAB_%d", i);
+
+    // Pass the image ID from the array to the function
+    if (CustomAnimatedTabButton(id_label_buffer, tab_images[i], active_tab_index == i, tab_button_width, tab_button_height)) {
+        active_tab_index = i;
+    }
+
+    if (i < num_tabs - 1) {
+        ImGui::SameLine(0, spacing);
+    }
+}
+
+ImGui::PushStyleColor(ImGuiCol_Border, ImColor(255, 255, 255, 0).Value);
+
+ImGui::BeginChild("MOD MAIN#1", ImVec2(0, 0), true);
+
+
+switch (active_tab_index) {
+case 2: {
+ImGui::Dummy(ImVec2(0, 2));
+DrawTextCentered(ICON_FA_EXCLAMATION_TRIANGLE "  INFORMATION ");
+ImGui::Spacing();
+ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+ImVec2 image_size = ImVec2(78.0f, 78.0f); // Increased size
+ImVec2 image_pos = ImVec2(cursor_pos.x + 15.0f, cursor_pos.y + 2.0f); // Adjusted vertical position
+
+ImGui::GetWindowDrawList()->AddImageRounded(user.textureId, image_pos, ImVec2(image_pos.x + image_size.x, image_pos.y + image_size.y), ImVec2(0, 0), ImVec2(1, 1), ImColor(1.0f,1.0f,1.0f), 5.0f, ImDrawFlags_RoundCornersAll);
+
+// Move cursor and add text next to the image
+ImGui::SetCursorScreenPos(ImVec2(image_pos.x + image_size.x + 10.0f, image_pos.y + 20.0f)); // Adjusted text position
+        ImGui::Text("FREE FIRE (2019118399)");
+        
+        ImGui::Dummy(ImVec2(0.0f, 20.0f));
+        ImGui::Separator();
+        ImGui::BulletText("Username : ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImColor(4, 199, 10)," @ItSMKOP");
+        ImGui::BulletText("License Validity : ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImColor(235, 152, 52), RohitEXP.c_str());
+        ImGui::BulletText("Game Version : ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImColor(52, 143, 235),"2.115.1");
+        ImGui::BulletText("Device Info : ");
+        ImGui::SameLine();
+        
+        ImGui::TextColored(ImColor(199, 4, 108), getDeviceFullName().c_str());
+        
+        ImGui::Spacing();
+break;
+}
+
+case 0: {
+ImGui::Dummy(ImVec2(0, 2));
+if (ImGui::Button(AimbotEsp ? ICON_FA_CHECK_SQUARE "  Functions  |  Activated....." : ICON_FA_EXCLAMATION_TRIANGLE "  Functions  |  Deactivated.....", ImVec2(ImGui::GetContentRegionAvailWidth(), 60))) {
+AimbotEsp = !AimbotEsp; // Toggle the master variable
+}
+DrawTextCentered(" ESP Main Menu");
+//MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Line"), &EspLine); 
+//MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Box"), &Inimigos);
+MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Health"), &Vida);
+MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Name"), &NewInfoPlayer);
+MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Cross New"), &Crosshair);
+MyCustomCheckbox(OBFUSCATE(ICON_FA_GG_CIRCLE" ESP Crosshair"), &Hexagono);
+const char* boxTypeNames[] = {
+"Corners",
+"Simple Rect",
+"Gradient",
+"Changing Color"
+};
+ImGui::Combo("Box Types", &currentBoxType, boxTypeNames, IM_ARRAYSIZE(boxTypeNames));
+break;
+}
+
+case 1: {
+ImGui::Dummy(ImVec2(0, 2));
+DrawTextCentered(ICON_FA_COGS "   Aim Menu   " ICON_FA_COGS);
+MyCustomCheckbox(OBFUSCATE("Enable Aimbot"), &aimbotAim);
+MyCustomCheckbox(OBFUSCATE("Firing"), &aimbotTrigger);
+ImGui::SliderFloat(OBFUSCATE("Aim Circle##AimFov"), &Fov_Aim, 0.0f, 1660.0f, "FOV Size %.0f°");
+ImGui::SliderFloat(OBFUSCATE("Config Dis##AimFov"), &Aimdis, 0.0f, 1660.0f, "FOV Dis %.1f M°");
+//const char* boxTypeNames[] = {"ANY(Scope/Fire)", "Shooting", "Scoping"};
+//ImGui::Combo("Aim - Triggered", &AimWhen, boxTypeNames, IM_ARRAYSIZE(boxTypeNames));
+        static const char* aimOptions[] = {  
+        OBFUSCATE("HEAD"),  
+        OBFUSCATE("NECK"),  
+        OBFUSCATE("CHEST"),  
+        OBFUSCATE("HIP")  
+        };  
+            // Variável para armazenar a posição selecionada  
+        static int aimPosition = 0; // 0 = HEAD, 1 = NECK, 2 = CHEST, 3 = HIPS  
+           // Combo para selecionar a posição do AIM  
+        if (ImGui::Combo(OBFUSCATE("AIM LOCAL"), &aimPosition, aimOptions, IM_ARRAYSIZE(aimOptions))) {  
+            // Aqui você pode chamar uma função se quiser, ou apenas usar aimPosition nas suas lógicas  
+           // Exemplo direto sem switch/case:  
+        if (aimPosition == 0) {  
+           // HEAD  
+          // ex: setAimBone(HEAD_BONE_ID);  
+        } else if (aimPosition == 1) {  
+          // NECK  
+        } else if (aimPosition == 2) {  
+          // CHEST  
+        } else if (aimPosition == 3) {  
+          // HIPS  
+        }  
+        }
+
+
+break;
+}
+}
+
+ImGui::EndChild();
+ImGui::PopStyleColor(1);
+
+}
+
+
+ImGui::End();
+}
+}
+

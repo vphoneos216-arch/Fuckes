@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.idragoncheats.studiopro">
+
+    <!-- Needed for the debug log file (others/DebugLog.h) on Android
+         versions that still enforce legacy external-storage permissions.
+         On Android 10+ with scoped storage this may still be restricted
+         depending on the target app's own permissions — see the note in
+         DebugLog.h. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="GSModz"
+        android:hasCode="false"
+        android:allowBackup="false">
+    </application>
+</manifest>
