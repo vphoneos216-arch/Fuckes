@@ -17,11 +17,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # GitHub's ubuntu-latest runner already ships a full Android SDK
+      # (cmdline-tools included) under ANDROID_HOME/ANDROID_SDK_ROOT — no
+      # need for a separate setup-android action, which was trying to
+      # install the no-longer-published legacy "tools" package and
+      # failing outright.
       - name: Install NDK 21.4.7075529
-        run: sdkmanager --install "ndk;21.4.7075529"
+        run: yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;21.4.7075529"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
