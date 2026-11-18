@@ -1,4 +1,12 @@
 #pragma once
+// [UPDATED] added — this is the standard Android NDK JNI header (JavaVM,
+// JNIEnv, jclass, jstring, etc.), nothing to do with the Zygisk framework.
+// It used to reach ItSRohitOp.h only as a side effect of <zygisk.hpp>
+// itself including <jni.h>; removing the unused Zygisk header (previous
+// commit) took this real, needed include down with it. Confirmed from the
+// actual CI log: "unknown type name 'JavaVM'/'JNIEnv'", "undeclared
+// identifier 'jclass'/'jbyteArray'/'jmethodID'/'jstring'" in ItSRohitOp.h.
+#include <jni.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
