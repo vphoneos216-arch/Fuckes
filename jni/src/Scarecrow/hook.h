@@ -1543,128 +1543,6 @@ void EspThreadFunc(){
 // ============================================================
 //  SILENT AIM THREAD  (also serves BrutalBT)
 // ============================================================
-void UpdateSilentAimFast(){
-    /* Aim Silent / Body Kill — redirects the actual bullet via SilentAimDir.
-     * Body Kill drives this thread too, but only switches to body once the
-     * enemy's real HP (read-only, never written) drops to/below the slider
-     * value — see BodyKillThresholdReached() below. Before that point the
-     * bullet lands on the head, same as plain Aim Silent.
-     * Do not touch for Hardware BT (separate thread/logic).
-     *
-     * [NEW] Driver-tier HWBP dispatch — same chain and convention as
-     * UpdateAimLockNewThread/UpdateAimbotFast: RT Hook (kernel GP-reg
-     * override on the game's own write) → Paradise HWBP → TwT HWBP →
-     * plain write-on-change fallback. See AimHookState::HwbpArmSilentDir
-     * / PdHwbpArmSilentDir / TwtHwbpArmSilentDir+TwtHwbpUpdateSilentDir
-     * above — each overrides SilentAimDir's X/Y/Z the moment the game
-     * itself writes it, instead of this thread writing it directly. */
-    static uintptr_t s_lastDirAddr   = 0;
-    static uint64_t  s_lastTwtHandle = 0;
-
-    auto disarm_silent = [&](){
-        RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
-        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-        TwtDriver*      twt = g_driver ? g_driver->GetTwT()      : nullptr;
-        if(rth && s_lastDirAddr)
-            rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
-        else if(pd && s_lastDirAddr)
-            AimHookState::PdHwbpDisarm(pd);
-        if(twt && s_lastTwtHandle)
-            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
-        s_lastDirAddr   = 0;
-        s_lastTwtHandle = 0;
-    };
-
-    while(silentThreadRunning){
-        if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
-            disarm_silent();
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
-        uintptr_t lp = 0;
-        {
-            std::lock_guard<std::mutex> lk(g_SA_mtx);
-            lp = g_SA_lp;
-        }
-        uintptr_t currentTarget = g_CurrentBestTarget;
-        if(!lp || !currentTarget){
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
-        if(!aimingInfo){
-            std::this_thread::yield();
-            continue;
-        }
-
-        /* Body Kill threshold: only redirect to body AFTER enemy HP drops to/below slider.
-         * Before threshold → aim at HEAD (same as Aim Silent).
-         * BodyKillThresholdReached() only reads HP, never writes. */
-        bool bodyPhase = BodyKill && BodyKillThresholdReached(currentTarget);
-        uintptr_t targetNode = bodyPhase
-            ? Read<uintptr_t>(currentTarget + BoneOffsets::Chest())
-            : Read<uintptr_t>(currentTarget + BoneOffsets::Head());
-        if(bodyPhase && !targetNode)
-            targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());   // chest missing → hip fallback
-
-        if(targetNode){
-            Vector3 targetPos = NodePos(targetNode);
-            if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
-                if(!bodyPhase) targetPos.Y += 0.04f;   // small skull lift — head shots only (pre-threshold)
-                Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
-                Vector3 dir;
-                dir.X = targetPos.X - startPos.X;
-                dir.Y = targetPos.Y - startPos.Y;
-                dir.Z = targetPos.Z - startPos.Z;
-
-                uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
-                RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
-                paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
-                TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
-
-                if(rth){
-                    if(AimHookState::HwbpArmSilentDir(rth, dirAddr, dir)){
-                        s_lastDirAddr = dirAddr;
-                    } else {
-                        Write<Vector3>(dirAddr, dir); // kernel arm failed — plain write this frame
-                    }
-                } else if(pd){
-                    bool need_rearm = (s_lastDirAddr != dirAddr);
-                    if(need_rearm && s_lastDirAddr)
-                        AimHookState::PdHwbpDisarm(pd);
-                    if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
-                        s_lastDirAddr = dirAddr;
-                    } else {
-                        Write<Vector3>(dirAddr, dir);
-                        s_lastDirAddr = 0;
-                    }
-                } else if(twt){
-                    bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastTwtHandle == 0);
-                    if(need_rearm){
-                        if(s_lastTwtHandle)
-                            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
-                        uint64_t handle = 0;
-                        if(AimHookState::TwtHwbpArmSilentDir(twt, g_driver->GetPid(), dirAddr, dir, handle)){
-                            s_lastTwtHandle = handle;
-                            s_lastDirAddr   = dirAddr;
-                        } else {
-                            Write<Vector3>(dirAddr, dir);
-                            s_lastTwtHandle = 0;
-                        }
-                    } else if(!AimHookState::TwtHwbpUpdateSilentDir(twt, s_lastTwtHandle, dir)) {
-                        Write<Vector3>(dirAddr, dir); // handle went stale — direct write this frame
-                    }
-                } else {
-                    // ── Fallback: no HWBP-capable driver — plain write ──
-                    Write<Vector3>(dirAddr, dir);
-                }
-            }
-        }
-        std::this_thread::yield();
-    }
-}
 
 /* GetRotationToTheLocation — provided by bool.h */
 
@@ -2039,6 +1917,129 @@ namespace AimHookState {
     }
 
 } // namespace AimHookState
+
+void UpdateSilentAimFast(){
+    /* Aim Silent / Body Kill — redirects the actual bullet via SilentAimDir.
+     * Body Kill drives this thread too, but only switches to body once the
+     * enemy's real HP (read-only, never written) drops to/below the slider
+     * value — see BodyKillThresholdReached() below. Before that point the
+     * bullet lands on the head, same as plain Aim Silent.
+     * Do not touch for Hardware BT (separate thread/logic).
+     *
+     * [NEW] Driver-tier HWBP dispatch — same chain and convention as
+     * UpdateAimLockNewThread/UpdateAimbotFast: RT Hook (kernel GP-reg
+     * override on the game's own write) → Paradise HWBP → TwT HWBP →
+     * plain write-on-change fallback. See AimHookState::HwbpArmSilentDir
+     * / PdHwbpArmSilentDir / TwtHwbpArmSilentDir+TwtHwbpUpdateSilentDir
+     * above — each overrides SilentAimDir's X/Y/Z the moment the game
+     * itself writes it, instead of this thread writing it directly. */
+    static uintptr_t s_lastDirAddr   = 0;
+    static uint64_t  s_lastTwtHandle = 0;
+
+    auto disarm_silent = [&](){
+        RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+        TwtDriver*      twt = g_driver ? g_driver->GetTwT()      : nullptr;
+        if(rth && s_lastDirAddr)
+            rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
+        else if(pd && s_lastDirAddr)
+            AimHookState::PdHwbpDisarm(pd);
+        if(twt && s_lastTwtHandle)
+            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+        s_lastDirAddr   = 0;
+        s_lastTwtHandle = 0;
+    };
+
+    while(silentThreadRunning){
+        if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
+            disarm_silent();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        uintptr_t lp = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_SA_mtx);
+            lp = g_SA_lp;
+        }
+        uintptr_t currentTarget = g_CurrentBestTarget;
+        if(!lp || !currentTarget){
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
+        if(!aimingInfo){
+            std::this_thread::yield();
+            continue;
+        }
+
+        /* Body Kill threshold: only redirect to body AFTER enemy HP drops to/below slider.
+         * Before threshold → aim at HEAD (same as Aim Silent).
+         * BodyKillThresholdReached() only reads HP, never writes. */
+        bool bodyPhase = BodyKill && BodyKillThresholdReached(currentTarget);
+        uintptr_t targetNode = bodyPhase
+            ? Read<uintptr_t>(currentTarget + BoneOffsets::Chest())
+            : Read<uintptr_t>(currentTarget + BoneOffsets::Head());
+        if(bodyPhase && !targetNode)
+            targetNode = Read<uintptr_t>(currentTarget + BoneOffsets::Hip());   // chest missing → hip fallback
+
+        if(targetNode){
+            Vector3 targetPos = NodePos(targetNode);
+            if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
+                if(!bodyPhase) targetPos.Y += 0.04f;   // small skull lift — head shots only (pre-threshold)
+                Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
+                Vector3 dir;
+                dir.X = targetPos.X - startPos.X;
+                dir.Y = targetPos.Y - startPos.Y;
+                dir.Z = targetPos.Z - startPos.Z;
+
+                uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+                RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+                paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
+                TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
+
+                if(rth){
+                    if(AimHookState::HwbpArmSilentDir(rth, dirAddr, dir)){
+                        s_lastDirAddr = dirAddr;
+                    } else {
+                        Write<Vector3>(dirAddr, dir); // kernel arm failed — plain write this frame
+                    }
+                } else if(pd){
+                    bool need_rearm = (s_lastDirAddr != dirAddr);
+                    if(need_rearm && s_lastDirAddr)
+                        AimHookState::PdHwbpDisarm(pd);
+                    if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
+                        s_lastDirAddr = dirAddr;
+                    } else {
+                        Write<Vector3>(dirAddr, dir);
+                        s_lastDirAddr = 0;
+                    }
+                } else if(twt){
+                    bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastTwtHandle == 0);
+                    if(need_rearm){
+                        if(s_lastTwtHandle)
+                            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+                        uint64_t handle = 0;
+                        if(AimHookState::TwtHwbpArmSilentDir(twt, g_driver->GetPid(), dirAddr, dir, handle)){
+                            s_lastTwtHandle = handle;
+                            s_lastDirAddr   = dirAddr;
+                        } else {
+                            Write<Vector3>(dirAddr, dir);
+                            s_lastTwtHandle = 0;
+                        }
+                    } else if(!AimHookState::TwtHwbpUpdateSilentDir(twt, s_lastTwtHandle, dir)) {
+                        Write<Vector3>(dirAddr, dir); // handle went stale — direct write this frame
+                    }
+                } else {
+                    // ── Fallback: no HWBP-capable driver — plain write ──
+                    Write<Vector3>(dirAddr, dir);
+                }
+            }
+        }
+        std::this_thread::yield();
+    }
+}
 
 void UpdateAimbotFast(){
     /* Aimbot — hook-based rotation injection.
