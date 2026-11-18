@@ -24,7 +24,20 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
 eglQuerySurface(dpy, surface, EGL_WIDTH, &egl.width);
 eglQuerySurface(dpy, surface, EGL_HEIGHT, &egl.height);
 if (!egl.setup) {
-ImGui::CreateContext();
+// [FIXED] SetupImgui() (others/imguiconfig.h) already calls
+// ImGui::CreateContext() itself before building style/fonts/the
+// OpenGL3 backend. Calling CreateContext() a second time here, BEFORE
+// SetupImgui(), created a real ImGui context (A, becomes current since
+// none existed yet), then SetupImgui()'s own CreateContext() created a
+// second context (B) and did all its real init (fonts, style,
+// ImGui_ImplOpenGL3_Init backend data) on B — but ImGui::CreateContext()
+// restores the previously-current context when one already existed, so
+// it switched back to the empty context A right after. Every later
+// NewFrame()/Render() call then ran against A: no fonts, no renderer
+// backend attached, so it drew nothing — no crash, no assert in a
+// release build, just a silently empty menu. Removing this redundant
+// outer CreateContext() leaves SetupImgui()'s own call as the only one;
+// on first run GImGui is still null, so it stays current correctly.
 SetupImgui();InitTexture();
 egl.setup = true;
 }
