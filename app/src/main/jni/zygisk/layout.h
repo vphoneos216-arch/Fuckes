@@ -1,6 +1,9 @@
 #include <imports.h>
 #include "BatteryInfo.h"
 #include <imguiconfig.h>
+// [UPDATED] layout.h uses std::map (below) but never included <map> itself —
+// confirmed from the actual CI log: "no template named 'map' in namespace 'std'".
+#include <map>
 
 #include "ItSRohitOp.h"
 #include "exptime.h"

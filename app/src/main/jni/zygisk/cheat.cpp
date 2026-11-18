@@ -1,4 +1,10 @@
-#include <esp.h>
+// [UPDATED] was <esp.h> (lowercase) — on a case-sensitive filesystem that
+// resolves to others/imagens/esp.h (a PNG byte array, unrelated), not the
+// real ESP feature header gsmodz/ESP.h. Confirmed from the actual CI log:
+// "redefinition of 'esp_data'" (the PNG array got pulled in twice) plus a
+// cascade of missing ImGui-internal/String/std::map symbols in layout.h
+// that gsmodz/ESP.h's own include chain was supposed to provide.
+#include <ESP.h>
 #include <layout.h>
 #include <imports.h>
 #include <jni.h>
