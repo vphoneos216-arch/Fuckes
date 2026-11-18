@@ -35,6 +35,20 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/21.4.7075529
 
+      # Debug: find where ndk-build's "injector" executable actually landed
+      # and whether copyInjectorAsSo's output directory has anything in it
+      # at all, instead of guessing why the previous run's glob found
+      # nothing.
+      - name: Locate injector build output
+        if: always()
+        run: |
+          echo "--- searching whole build/ tree for a file named exactly 'injector' ---"
+          find app/build -type f -name "injector" 2>/dev/null
+          echo "--- contents of the copy task's target dir ---"
+          find app/build/injectorLibs 2>/dev/null || echo "(injectorLibs dir does not exist)"
+          echo "--- contents of intermediates/cxx, two levels deep ---"
+          find app/build/intermediates/cxx -maxdepth 4 2>/dev/null
+
       # Verifies for real (not assumed) whether the new "injector" executable
       # module actually ends up packaged inside the built APK, since AGP's
       # handling of a non-.so ndk-build output isn't something to assume.
