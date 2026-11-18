@@ -23,6 +23,12 @@
     <string name="guide_03_title">Play normally.</string>
     <string name="guide_03_body">The module attaches on its own when the game starts.</string>
     <string name="toast_module_missing">Module library not found in this build — nothing to attach.</string>
-    <string name="toast_game_not_found">Game isn\'t installed — install it, then try again.</string>
-    <string name="toast_launching">Opening the game…</string>
+    <string name="toast_game_not_found">Free Fire MAX isn\'t installed — install it, then try again.</string>
+    <string name="toast_launching">Opening Free Fire MAX…</string>
+    <string name="toast_no_root">No root access — this build injects via root, grant it in the su prompt and try again.</string>
+    <string name="toast_waiting_process">Waiting for the game process to start…</string>
+    <string name="toast_injecting">Injecting…</string>
+    <string name="toast_injected_ok">Injected — check the game.</string>
+    <string name="toast_injected_fail">Injection failed — see /sdcard/gsmodz_debug.log for the exact step.</string>
+    <string name="cta_injecting">Injecting…</string>
 </resources>

@@ -13,13 +13,12 @@
 
     <!-- [UPDATED] targetSdkVersion is 29, so package-visibility filtering
          (API 30+) doesn't apply to this build anyway, but declaring the
-         real target packages here (confirmed from zygisk/zygisk.h, not
-         guessed) costs nothing and keeps MainActivity's launch-intent
-         lookup correct if targetSdk is ever raised later. -->
+         real target package costs nothing and keeps MainActivity's
+         launch-intent lookup correct if targetSdk is ever raised later.
+         Free Fire MAX only now, per instruction — confirmed real package
+         id, not guessed. -->
     <queries>
         <package android:name="com.dts.freefiremax" />
-        <package android:name="com.dts.freefireth" />
-        <package android:name="com.dts.freefireadv" />
     </queries>
 
     <application

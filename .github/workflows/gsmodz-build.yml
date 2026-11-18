@@ -35,6 +35,15 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/21.4.7075529
 
+      # Verifies for real (not assumed) whether the new "injector" executable
+      # module actually ends up packaged inside the built APK, since AGP's
+      # handling of a non-.so ndk-build output isn't something to assume.
+      - name: List native libs packaged in the APK
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          echo "Inspecting: $APK"
+          unzip -l "$APK" | grep -E "lib/" || echo "NO lib/ ENTRIES FOUND AT ALL"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

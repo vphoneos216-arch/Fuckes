@@ -52,3 +52,15 @@ LOCAL_CPP_FEATURES     := exceptions
 
 include $(BUILD_SHARED_LIBRARY)
 
+# [NEW] root-run ptrace injector, built as its own executable module.
+# Deliberately in its own jni/injector/ subdirectory and named explicitly
+# (not globbed) so it never gets swept into the "main" module above, which
+# wildcards $(LOCAL_PATH)/*.c* — a standalone executable with its own
+# main() can't share a module with libmain.so.
+include $(CLEAR_VARS)
+LOCAL_MODULE            := injector
+LOCAL_SRC_FILES         := injector/injector.cpp
+LOCAL_CPPFLAGS          := -std=c++17 -Wall
+LOCAL_LDLIBS            := -llog -ldl
+include $(BUILD_EXECUTABLE)
+
