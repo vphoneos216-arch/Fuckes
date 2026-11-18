@@ -172,7 +172,10 @@ public class MainActivity extends Activity {
         RootShell.Result mkdirR = RootShell.run("mkdir -p " + REMOTE_DIR);
         appendLog(mkdirR.ok() ? "INFO" : "ERROR", "mkdir " + REMOTE_DIR + " exit=" + mkdirR.exitCode);
 
-        File injectorBin = new File(nativeLibDir, "injector");
+        // Packaged as libinjector.so (see Android.mk's LOCAL_MODULE_FILENAME
+        // comment) so AGP's native-lib merge actually includes it — it's
+        // still a real executable underneath, not a shared library.
+        File injectorBin = new File(nativeLibDir, "libinjector.so");
         boolean injectorPresent = injectorBin.exists() && injectorBin.length() > 0;
         appendLog(injectorPresent ? "INFO" : "ERROR", "injector binary present in APK=" + injectorPresent + " (" + injectorBin + ")");
         if (!injectorPresent) {

@@ -59,6 +59,15 @@ include $(BUILD_SHARED_LIBRARY)
 # main() can't share a module with libmain.so.
 include $(CLEAR_VARS)
 LOCAL_MODULE            := injector
+# [UPDATED] confirmed via an actual CI step that unzips the built APK and
+# lists its lib/ entries: a plain executable module (no "lib"/".so") never
+# made it into the APK at all — AGP's native-lib merge only picks up files
+# ending in .so from ndk-build's output, so "injector" was silently
+# dropped. Giving it a .so-shaped output filename gets it packaged; the
+# extension doesn't change what it is (still a real ELF executable, run
+# via `su -c`) or how it's executed — only how it's picked up by Gradle's
+# packaging step.
+LOCAL_MODULE_FILENAME   := libinjector.so
 LOCAL_SRC_FILES         := injector/injector.cpp
 LOCAL_CPPFLAGS          := -std=c++17 -Wall
 LOCAL_LDLIBS            := -llog -ldl
