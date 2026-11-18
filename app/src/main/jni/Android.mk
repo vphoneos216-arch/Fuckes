@@ -58,16 +58,21 @@ include $(BUILD_SHARED_LIBRARY)
 # wildcards $(LOCAL_PATH)/*.c* — a standalone executable with its own
 # main() can't share a module with libmain.so.
 include $(CLEAR_VARS)
-LOCAL_MODULE            := injector
-# [UPDATED] confirmed via an actual CI step that unzips the built APK and
-# lists its lib/ entries: a plain executable module (no "lib"/".so") never
-# made it into the APK at all — AGP's native-lib merge only picks up files
-# ending in .so from ndk-build's output, so "injector" was silently
-# dropped. Giving it a .so-shaped output filename gets it packaged; the
-# extension doesn't change what it is (still a real ELF executable, run
-# via `su -c`) or how it's executed — only how it's picked up by Gradle's
-# packaging step.
-LOCAL_MODULE_FILENAME   := libinjector.so
+# [UPDATED] confirmed via two real CI round-trips, not guessed:
+#   1. With LOCAL_MODULE := injector, the APK's unzipped lib/ listing
+#      showed the binary never got packaged at all — AGP's native-lib
+#      merge only picks up ndk-build output files ending in .so.
+#   2. Tried LOCAL_MODULE_FILENAME := libinjector.so to rename just the
+#      installed file — NDK rejected that outright: "LOCAL_MODULE_FILENAME
+#      should not include file extensions" (BUILD_EXECUTABLE explicitly
+#      forbids it), confirmed from that build's own CXX1429 error.
+# BUILD_EXECUTABLE's default output name is LOCAL_MODULE verbatim, with no
+# extension manipulation of its own — so naming the module itself
+# "libinjector.so" (the dot is just a character to it) gets exactly that
+# filename with no LOCAL_MODULE_FILENAME override needed. It's still the
+# same real ELF executable, run via `su -c`, not a shared library — this
+# only affects what Gradle's packaging step sees.
+LOCAL_MODULE            := libinjector.so
 LOCAL_SRC_FILES         := injector/injector.cpp
 LOCAL_CPPFLAGS          := -std=c++17 -Wall
 LOCAL_LDLIBS            := -llog -ldl
