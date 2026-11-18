@@ -2,7 +2,7 @@ name: GSModz Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, gsmodz-ff ]
   workflow_dispatch: {}
 
 jobs:
