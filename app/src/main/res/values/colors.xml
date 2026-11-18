@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_root">#0A0F1E</color>
+    <color name="bg_root_2">#0D1426</color>
+    <color name="card_bg">#0F1830</color>
+    <color name="card_border">#1E2A47</color>
+    <color name="accent_blue">#3B6EF5</color>
+    <color name="accent_blue_dark">#2451DB</color>
+    <color name="accent_cyan">#49C9F0</color>
+    <color name="text_primary">#F5F7FF</color>
+    <color name="text_secondary">#8C9BBE</color>
+    <color name="text_faint">#5A6889</color>
+    <color name="ring_line">#223156</color>
+    <color name="step_badge_bg">#16213B</color>
+    <color name="step_badge_border">#2A3B5F</color>
+    <color name="step_badge_text">#5EA1FF</color>
+    <color name="status_dot">#49C9F0</color>
+    <color name="pill_bg">#10192E</color>
+    <color name="pill_border">#223156</color>
+</resources>

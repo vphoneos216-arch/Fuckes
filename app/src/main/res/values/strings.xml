@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GSModz Loader</string>
+    <string name="brand_name">GSMODZ LOADER</string>
+    <string name="hide_guide">Hide guide</string>
+    <string name="show_guide">Show guide</string>
+    <string name="dial_label">LAUNCH CONTROL</string>
+    <string name="headline">Play starts here.</string>
+    <string name="subheadline">A smooth start to your next session.</string>
+    <string name="session_label">YOUR SESSION</string>
+    <string name="session_title">Ready when you are</string>
+    <string name="session_desc">Tap below. We\'ll check the module and open the game.</string>
+    <string name="step_access">ACCESS</string>
+    <string name="step_prepare">PREPARE</string>
+    <string name="step_launch">LAUNCH</string>
+    <string name="cta_play">Let\'s play</string>
+    <string name="cta_checking">Checking…</string>
+    <string name="guide_header">A good start, in three steps</string>
+    <string name="guide_01_title">Start fresh.</string>
+    <string name="guide_01_body">Close the game before launching.</string>
+    <string name="guide_02_title">Allow access.</string>
+    <string name="guide_02_body">Approve the root prompt if it appears.</string>
+    <string name="guide_03_title">Play normally.</string>
+    <string name="guide_03_body">The module attaches on its own when the game starts.</string>
+    <string name="toast_module_missing">Module library not found in this build — nothing to attach.</string>
+    <string name="toast_game_not_found">Game isn\'t installed — install it, then try again.</string>
+    <string name="toast_launching">Opening the game…</string>
+</resources>

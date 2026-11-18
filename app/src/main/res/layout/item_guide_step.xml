@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="18dp"
+    android:orientation="horizontal"
+    android:gravity="top">
+
+    <TextView
+        android:id="@+id/txtStepNum"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/bg_step_badge"
+        android:gravity="center"
+        android:text="01"
+        android:textColor="@color/step_badge_text"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/txtStepText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="14dp"
+        android:layout_gravity="center_vertical"
+        android:textColor="@color/text_secondary"
+        android:textSize="15sp"
+        android:lineSpacingExtra="2dp" />
+</LinearLayout>

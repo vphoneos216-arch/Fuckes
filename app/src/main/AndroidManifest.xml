@@ -11,9 +11,37 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- [UPDATED] targetSdkVersion is 29, so package-visibility filtering
+         (API 30+) doesn't apply to this build anyway, but declaring the
+         real target packages here (confirmed from zygisk/zygisk.h, not
+         guessed) costs nothing and keeps MainActivity's launch-intent
+         lookup correct if targetSdk is ever raised later. -->
+    <queries>
+        <package android:name="com.dts.freefiremax" />
+        <package android:name="com.dts.freefireth" />
+        <package android:name="com.dts.freefireadv" />
+    </queries>
+
     <application
-        android:label="GSModz"
-        android:hasCode="false"
+        android:label="@string/app_name"
+        android:icon="@drawable/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:hasCode="true"
         android:allowBackup="false">
+
+        <!-- [UPDATED] was hasCode="false" with no <activity> at all — this
+             APK had no UI. Added the launcher Activity (UI-only; it does not
+             perform the hook itself, see MainActivity's class comment) and
+             the library's own native module stays exactly as it was. -->
+        <activity
+            android:name="com.idragoncheats.studiopro.MainActivity"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
