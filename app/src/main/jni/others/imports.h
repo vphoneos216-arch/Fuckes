@@ -26,7 +26,12 @@
 #include <obfuscate.h>
 #include <unity/Vector3.hpp>
 #include <tools.hpp>
-#include <zygisk.hpp>
+// [UPDATED] dropped <zygisk.hpp> — confirmed via grep that nothing in the
+// actually-compiled code uses any zygisk:: symbol (zygisk::Api,
+// zygisk::ModuleBase, REGISTER_ZYGISK_MODULE). The real entry point this
+// build uses is the __attribute__((constructor)) in zygisk/cheat.cpp,
+// which runs on dlopen regardless of whether Zygisk is installed — this
+// module never needed the Zygisk framework at runtime.
 #include <cmath>
 #include <ctime>
 #include <chrono>
