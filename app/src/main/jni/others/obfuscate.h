@@ -1,3 +1,9 @@
+// [UPDATED] added a header guard. This file had none, which was harmless
+// only as long as every translation unit happened to pull it in exactly
+// once. Making imports.h self-sufficient (previous fix) means some TUs now
+// reach it via two different chains, which without this guard redefines
+// the ay:: namespace and the OBFUSCATE/OBFUSCATE_KEY macros.
+#pragma once
 #include <cstddef>
 #include <string>
 

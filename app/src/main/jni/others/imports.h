@@ -15,6 +15,16 @@
 #include <math.h>
 #include <thread>
 #include <sys/mman.h>
+// [UPDATED] tools.hpp (line below) and, further down, Chams.h and Unity.h
+// all use symbols (OBFUSCATE, Vector3) that they themselves don't define —
+// they expect whatever includes them to have brought those in first. That
+// held when this header was only ever reached after importz.h had already
+// run, but imports.h is also included directly (layout.h, cheat.cpp), so it
+// must be self-sufficient. Confirmed via the actual CI log: "use of
+// undeclared identifier 'OBFUSCATE'" in tools.hpp/Chams.h, and "unknown type
+// name 'Vector3'" in Quaternion.h (pulled in by Unity.h).
+#include <obfuscate.h>
+#include <unity/Vector3.hpp>
 #include <tools.hpp>
 #include <zygisk.hpp>
 #include <cmath>
