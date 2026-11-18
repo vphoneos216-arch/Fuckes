@@ -68,21 +68,29 @@ android {
 // per-build hashed intermediates directory put it — that hash changes
 // between builds, hence the glob instead of a fixed path) and copies it
 // into the extra jniLibs source dir above, renamed to libinjector.so.
-// Wired to run after the native build and before native libs get merged,
-// for every build-type/ABI variant task AGP generates.
+// This project only has one build type (release), so the task names are
+// fixed rather than pattern-matched — confirmed these exact task names
+// ("externalNativeBuildRelease", "mergeReleaseJniLibFolders",
+// "mergeReleaseNativeLibs") from an earlier successful build's own task
+// list in the real CI log, not guessed.
+//
+// [UPDATED] the first version of this registered the copy task from
+// inside tasks.matching{}.configureEach{} — Gradle rejected that outright
+// ("DefaultTaskContainer#register ... cannot be executed in the current
+// context": you can't mutate the task container while Gradle is lazily
+// configuring tasks). Registering it directly at the script level, and
+// only using afterEvaluate to wire the dependency onto the already-known,
+// fixed task names, avoids that.
+tasks.register("copyInjectorAsSo", Copy) {
+    dependsOn "externalNativeBuildRelease"
+    from(fileTree(dir: "$buildDir/intermediates/cxx") {
+        include "**/lib/arm64-v8a/injector"
+    })
+    into "$buildDir/injectorLibs/arm64-v8a"
+    rename { "libinjector.so" }
+}
+
 afterEvaluate {
-    tasks.matching { it.name.startsWith("externalNativeBuild") && !it.name.contains("Clean") }.configureEach { nativeTask ->
-        def variant = nativeTask.name - "externalNativeBuild"
-        def copyTask = tasks.register("copyInjectorAsSo${variant}", Copy) {
-            dependsOn nativeTask
-            from(fileTree(dir: "$buildDir/intermediates/cxx") {
-                include "**/lib/arm64-v8a/injector"
-            })
-            into "$buildDir/injectorLibs/arm64-v8a"
-            rename { "libinjector.so" }
-        }
-        tasks.matching { it.name == "merge${variant}JniLibFolders" || it.name == "merge${variant}NativeLibs" }.configureEach {
-            dependsOn copyTask
-        }
-    }
+    tasks.named("mergeReleaseJniLibFolders").configure { dependsOn("copyInjectorAsSo") }
+    tasks.named("mergeReleaseNativeLibs").configure { dependsOn("copyInjectorAsSo") }
 }
