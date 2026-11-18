@@ -2,7 +2,11 @@
 #include <map>
 #include <jni.h>
 #include <unistd.h>
-#include "Il2cpp.h"
+// [UPDATED] was #include "Il2cpp.h" (lowercase 'cpp') — the real file is
+// Il2Cpp.h (capital C, capital P). Harmless on a case-insensitive
+// filesystem (Windows/macOS/the device this project was authored on) but
+// a hard compile error on Linux CI, confirmed via the actual CI log.
+#include "Il2Cpp.h"
 #include "xdl.h"
 
 #define g_LogTag "isbackBaby"

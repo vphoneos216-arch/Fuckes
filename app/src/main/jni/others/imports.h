@@ -24,10 +24,14 @@
 #include <cstdlib>
 #include <mutex>
 #include <And64InlineHook.hpp>
-#include <chams.h>
+// [UPDATED] was <chams.h>/<unity.h> (lowercase) — the real files are
+// gsmodz/Chams.h and others/unity/Unity.h (capital C/U). Both resolve
+// fine on a case-insensitive filesystem but fail on Linux CI, same class
+// of bug as the Il2Cpp.h/Il2cpp.h fix elsewhere.
+#include <Chams.h>
 
 
-#include <unity.h>
+#include <Unity.h>
 #include <imagem.h>
 
 

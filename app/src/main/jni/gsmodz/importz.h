@@ -13,8 +13,8 @@
 #include <unity/Vector3.hpp>
 #include <Color.h>
 #include "obfuscate.h"
-#include "unity.h"
-#include "Updates.h"
+#include "Unity.h" // [UPDATED] was "unity.h" — real file is others/unity/Unity.h (capital U)
+#include "updates.h" // [UPDATED] was "Updates.h" — real file is lowercase
 #include "Rect.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
