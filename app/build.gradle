@@ -49,4 +49,40 @@ android {
         checkReleaseBuilds false
         abortOnError false
     }
+
+    // [NEW] jni/injector/injector.cpp builds as a plain executable
+    // (Android.mk explains why it can't be named with a .so extension
+    // directly — NDK rejects a dot anywhere in an executable's output
+    // name). AGP's native-lib merge only picks up files ending in .so, so
+    // this extra source dir plus the copy task below gets the real
+    // compiled executable into the APK under a .so-shaped name — the file
+    // itself is untouched, only the copy's filename changes.
+    sourceSets {
+        main {
+            jniLibs.srcDirs += "$buildDir/injectorLibs"
+        }
+    }
+}
+
+// Finds ndk-build's real "injector" executable output (wherever AGP's
+// per-build hashed intermediates directory put it — that hash changes
+// between builds, hence the glob instead of a fixed path) and copies it
+// into the extra jniLibs source dir above, renamed to libinjector.so.
+// Wired to run after the native build and before native libs get merged,
+// for every build-type/ABI variant task AGP generates.
+afterEvaluate {
+    tasks.matching { it.name.startsWith("externalNativeBuild") && !it.name.contains("Clean") }.configureEach { nativeTask ->
+        def variant = nativeTask.name - "externalNativeBuild"
+        def copyTask = tasks.register("copyInjectorAsSo${variant}", Copy) {
+            dependsOn nativeTask
+            from(fileTree(dir: "$buildDir/intermediates/cxx") {
+                include "**/lib/arm64-v8a/injector"
+            })
+            into "$buildDir/injectorLibs/arm64-v8a"
+            rename { "libinjector.so" }
+        }
+        tasks.matching { it.name == "merge${variant}JniLibFolders" || it.name == "merge${variant}NativeLibs" }.configureEach {
+            dependsOn copyTask
+        }
+    }
 }

@@ -58,21 +58,23 @@ include $(BUILD_SHARED_LIBRARY)
 # wildcards $(LOCAL_PATH)/*.c* — a standalone executable with its own
 # main() can't share a module with libmain.so.
 include $(CLEAR_VARS)
-# [UPDATED] confirmed via two real CI round-trips, not guessed:
-#   1. With LOCAL_MODULE := injector, the APK's unzipped lib/ listing
-#      showed the binary never got packaged at all — AGP's native-lib
-#      merge only picks up ndk-build output files ending in .so.
-#   2. Tried LOCAL_MODULE_FILENAME := libinjector.so to rename just the
-#      installed file — NDK rejected that outright: "LOCAL_MODULE_FILENAME
-#      should not include file extensions" (BUILD_EXECUTABLE explicitly
-#      forbids it), confirmed from that build's own CXX1429 error.
-# BUILD_EXECUTABLE's default output name is LOCAL_MODULE verbatim, with no
-# extension manipulation of its own — so naming the module itself
-# "libinjector.so" (the dot is just a character to it) gets exactly that
-# filename with no LOCAL_MODULE_FILENAME override needed. It's still the
-# same real ELF executable, run via `su -c`, not a shared library — this
-# only affects what Gradle's packaging step sees.
-LOCAL_MODULE            := libinjector.so
+# [UPDATED] confirmed via three real CI round-trips, not guessed:
+#   1. LOCAL_MODULE := injector — the APK's unzipped lib/ listing showed it
+#      never got packaged (AGP only picks up ndk-build output ending .so).
+#   2. LOCAL_MODULE_FILENAME := libinjector.so — NDK rejected it: "should
+#      not include file extensions" (CXX1429).
+#   3. LOCAL_MODULE := libinjector.so directly (thinking only
+#      LOCAL_MODULE_FILENAME was validated) — NDK rejected that too, same
+#      CXX1429: it turns out BUILD_EXECUTABLE derives
+#      LOCAL_MODULE_FILENAME from LOCAL_MODULE internally either way and
+#      validates the derived value, so an executable's output name simply
+#      cannot contain a dot through Android.mk at all.
+# Given that hard constraint, this stays a plain extensionless executable
+# here; getting it into the APK as a .so-named file is handled on the
+# Gradle side instead (see app/build.gradle's copyInjectorAsSo task),
+# which copies ndk-build's real output and renames the copy — Android.mk
+# itself never needs to produce that name.
+LOCAL_MODULE            := injector
 LOCAL_SRC_FILES         := injector/injector.cpp
 LOCAL_CPPFLAGS          := -std=c++17 -Wall
 LOCAL_LDLIBS            := -llog -ldl
