@@ -1,4 +1,4 @@
-name: Build APK
+name: GSModz Build APK
 
 on:
   push:
