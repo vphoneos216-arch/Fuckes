@@ -81,16 +81,22 @@ android {
 // configuring tasks). Registering it directly at the script level, and
 // only using afterEvaluate to wire the dependency onto the already-known,
 // fixed task names, avoids that.
-// [UPDATED] the fileTree(dir: ...){ include ... } map+closure form threw
-// "Cannot convert the provided notation to a File or URI: {dir=...}" at
-// task-execution time — confirmed from the actual CI error, not a syntax
-// guess. Switched to the fileTree(baseDir).matching{} form instead, which
-// is unambiguous about which call the closure attaches to.
+// [UPDATED] twice now, both confirmed from real CI output, not guessed:
+//   1. fileTree(dir: ...){ include ... } threw "Cannot convert the
+//      provided notation to a File or URI: {dir=...}" at execution time.
+//   2. Switched to fileTree(baseDir).matching{ include "**/lib/arm64-v8a/
+//      injector" } — that ran without error but matched NOTHING (the APK
+//      still had no libinjector.so), and a debug step that just finds the
+//      real file showed why: BUILD_EXECUTABLE's output never gets copied
+//      into a lib/<ABI>/ install dir at all the way BUILD_SHARED_LIBRARY's
+//      does — it only ever lands in the obj/ tree. The debug step's find
+//      output gave the real, stable path (no per-build hash in it, unlike
+//      intermediates/cxx/Release/<hash>/...):
+//      app/build/intermediates/ndkBuild/release/obj/local/arm64-v8a/injector
+// Using that exact path directly instead of a glob.
 tasks.register("copyInjectorAsSo", Copy) {
     dependsOn "externalNativeBuildRelease"
-    from(fileTree("$buildDir/intermediates/cxx").matching {
-        include "**/lib/arm64-v8a/injector"
-    })
+    from("$buildDir/intermediates/ndkBuild/release/obj/local/arm64-v8a/injector")
     into "$buildDir/injectorLibs/arm64-v8a"
     rename { "libinjector.so" }
 }
