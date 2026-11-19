@@ -13,12 +13,14 @@ LOCAL_PATH := $(call my-dir)
 #
 #  Get this with (regenerate whenever the server's cert/key is renewed,
 #  or every login on every device starts failing TLS):
-#    openssl s_client -connect adminshop.myvipsite.fun:443 \
-#        -servername adminshop.myvipsite.fun </dev/null 2>/dev/null \
+#    openssl s_client -connect adminshop.vipsite.in:443 \
+#        -servername adminshop.vipsite.in </dev/null 2>/dev/null \
 #      | openssl x509 -pubkey -noout \
 #      | openssl pkey -pubin -outform der \
 #      | openssl dgst -sha256 -binary | openssl base64
-KD_PIN_SHA256 := h3h88SnqhmWykOnvUYeYgGsLbvv2foSwS4XFVFIiFKA=
+#  Regenerated 2026-11-19 for the domain move to adminshop.vipsite.in
+#  (live value, pulled from the server itself, not invented).
+KD_PIN_SHA256 := e4Ze2eVM30u6F8f2UpJIkqZEeDRYoVi4bneXyRB2DHs=
 KD_PINNED_PUBKEY_DEF := -DKD_PINNED_PUBKEY='"sha256//$(KD_PIN_SHA256)"'
 
 # =====================================================================
