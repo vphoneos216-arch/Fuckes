@@ -53,6 +53,7 @@ extern char packageName[];
 #include "RT_Hook/kernel.h"      // Option 13: RT Hook (ioctl-based, see file header for the c_driver name-collision note)
 #include "TwT/kernel.h"          // Option 14: TwT (ioctl-based, same c_driver name-collision note, renamed TwtDriver)
 #include "Wind/wind_driver.h"    // Option 15: Wind (netlink/ioctl dual transport, class c_wind, no rename needed)
+#include "KPM/kpm_driver.h"      // Option 16: standalone inx-mem KPM (memory read/write only, supercall "su"/config-key auth)
 
 // ── Native memory-access syscall numbers (kept for reference, but fallback disabled) ──
 #ifdef __NR_process_vm_readv
@@ -329,6 +330,7 @@ private:
     bool   use_rt_hook           = false;   // Option 13: RT Hook (ioctl-based)
     bool   use_twt               = false;   // Option 14: TwT (ioctl-based)
     bool   use_wind              = false;   // Option 15: Wind (netlink/ioctl)
+    bool   use_kpm               = false;   // Option 16: standalone inx-mem KPM
     Driver        *kma_driver   = nullptr;
     LdgKpmDriver  *ldk_driver   = nullptr;
     paradise_driver *paradise   = nullptr;
@@ -337,6 +339,7 @@ private:
     RtHookDriver  *rt_hook       = nullptr;
     TwtDriver     *twt_drv       = nullptr;
     c_wind        *wind_drv      = nullptr;
+    KpmDriver     *kpm_drv       = nullptr;
 
     int    fd  = -1;
     pid_t  pid = 0;
@@ -1036,6 +1039,23 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root access recommended for Wind!\033[0m\n");
         }
+        // ── Option 16: standalone inx-mem KPM (memory read/write only) ──
+        // Real initialize() (which does the supercall "su"/config-key auth
+        // and loads inx_mem.kpm if it isn't already loaded) happens later,
+        // in the pid-init block below, same as TwT/Wind — construction here
+        // is trivial and can't fail on its own.
+        else if (choice == 16) {
+            use_kpm = true;
+            kpm_drv = new (std::nothrow) KpmDriver();
+            if (!kpm_drv) {
+                printf("[-] KPM driver allocation failed\n");
+                use_kpm = false;
+                return;
+            }
+            printf("\033[41m\033[37m[+] KPM Mode selected (will attach once target pid is known)\033[0m\n");
+            if (getuid() != 0)
+                printf("\033[33m[WARNING] Root access recommended for KPM!\033[0m\n");
+        }
         else {
             printf("[-] Invalid option. Exiting.\n");
             exit(0);
@@ -1049,19 +1069,20 @@ public:
         // Real members only (no use_gt / use_kpm — those never existed)
         return use_tb_kpm || use_ditpro_kpm || use_kma_kpm || use_ldk_kpm
             || use_paradise || use_syscall_fallback || use_bing || use_dit_kpm || use_rt_hook
-            || use_twt || use_wind || (fd > 0);
+            || use_twt || use_wind || use_kpm || (fd > 0);
     }
 
     void _reset_backend_flags() {
         use_tb_kpm = use_ditpro_kpm = use_kma_kpm = use_ldk_kpm = false;
         use_paradise = use_syscall_fallback = use_bing = use_dit_kpm = use_rt_hook = false;
-        use_twt = use_wind = false;
+        use_twt = use_wind = use_kpm = false;
         if (kma_driver) { delete kma_driver; kma_driver = nullptr; }
         if (ldk_driver) { delete ldk_driver; ldk_driver = nullptr; }
         if (paradise)   { delete paradise;   paradise   = nullptr; }
         if (rt_hook)    { delete rt_hook;    rt_hook    = nullptr; }
         if (twt_drv)    { delete twt_drv;    twt_drv    = nullptr; }
         if (wind_drv)   { delete wind_drv;   wind_drv   = nullptr; }
+        if (kpm_drv)    { delete kpm_drv;    kpm_drv    = nullptr; }
         if (bing_backend.handle > 0) { close(bing_backend.handle); bing_backend.handle = -1; }
         if (fd > 0) { close(fd); fd = -1; }
     }
@@ -1071,7 +1092,7 @@ public:
         // (config.json "driver", read into g_driver_choice by main).
         // No automatic scan of other backends.
         const int choice = g_driver_choice;
-        if (choice < 1 || choice > 15) {
+        if (choice < 1 || choice > 16) {
             printf("[-] No driver selected. Choose one in the WebUI and launch again.\n");
             fflush(stdout);
             exit(0);
@@ -1138,6 +1159,13 @@ public:
             if (!wind_drv->initialize(target_pid))
                 printf("[-] Wind: bind pid %d failed\n", (int)target_pid);
         }
+        if (use_kpm && kpm_drv) {
+            if (!kpm_drv->initialize(target_pid)) {
+                printf("[-] KPM: attach failed for pid %d (see messages above / dmesg "
+                       "for the exact reason — auth, load, or a kernel symbol inx_mem.c "
+                       "couldn't resolve)\n", (int)target_pid);
+            }
+        }
     }
 
     bool initKey(const char *key) {
@@ -1152,6 +1180,7 @@ public:
         if (use_rt_hook)     return true;
         if (use_twt)         return true;
         if (use_wind)        return true;
+        if (use_kpm)         return true;
         return (ioctl(fd, OP_INIT_KEY, key) == 0);
     }
 
@@ -1192,6 +1221,8 @@ public:
             return twt_drv->read(addr, buffer, size);
         if (use_wind && wind_drv)
             return wind_drv->read(addr, buffer, size);
+        if (use_kpm && kpm_drv)
+            return kpm_drv->read(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1228,6 +1259,8 @@ public:
             return twt_drv->write(addr, buffer, size);
         if (use_wind && wind_drv)
             return wind_drv->write(addr, buffer, size);
+        if (use_kpm && kpm_drv)
+            return kpm_drv->write(addr, buffer, size);
         COPY_MEMORY cm;
         cm.pid    = this->pid;
         cm.addr   = addr;
@@ -1310,6 +1343,8 @@ public:
             return twt_drv->get_module_base(name);
         if (use_wind && wind_drv)
             return wind_drv->get_module_base(name);
+        if (use_kpm && kpm_drv)
+            return kpm_drv->get_module_base(name);
         MODULE_BASE mb;
         mb.pid  = this->pid;
         mb.name = strdup(name);
@@ -1325,6 +1360,7 @@ public:
     paradise_driver* GetParadise() { return (use_paradise && paradise) ? paradise : nullptr; }
     TwtDriver*      GetTwT()       { return (use_twt && twt_drv) ? twt_drv : nullptr; }
     c_wind*         GetWind()      { return (use_wind && wind_drv) ? wind_drv : nullptr; }
+    KpmDriver*      GetKpm()       { return (use_kpm && kpm_drv) ? kpm_drv : nullptr; }
     pid_t           GetPid()       const { return this->pid; }
 };
 
@@ -1351,6 +1387,7 @@ static const char* g_DriverModeName(int choice) {
         case 13: return "RT Hook";
         case 14: return "TwT";
         case 15: return "Wind";
+        case 16: return "Standalone-KPM";
         case 0: return "AUTO";
         default: return "Unknown";
     }

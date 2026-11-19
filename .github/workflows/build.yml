@@ -179,6 +179,68 @@ jobs:
           if-no-files-found: error
 
   # ===================================================================
+  # Builds kpm/inx_mem/inx_mem.c (standalone memory read/write KernelPatch
+  # module, Option 16) into inx_mem.kpm.
+  #
+  # A KPM is a relocatable ELF object, NOT a normal Android NDK build —
+  # KernelPatch's own Makefile convention (kpms/*/Makefile) needs a real
+  # TARGET_COMPILE gcc/ld pair, which NDK clang does not provide. This
+  # uses the exact same ARM GNU bare-metal toolchain KernelPatch's own CI
+  # (github.com/bmax121/KernelPatch/.github/workflows/build.yml) uses to
+  # build its own demo KPMs — confirmed by directly reading that workflow,
+  # not guessed.
+  #
+  # The KernelPatch SDK itself is fetched at a PINNED commit (not "main")
+  # via GitHub's codeload tarball, so this build can't silently break or
+  # change behavior under us when upstream changes — pinned commit
+  # d4c88d6672687456b299e4b5153c24dc979d789b, the SDK's own "version" file
+  # at that commit reads 0.13.9. The vendored userspace headers in
+  # jni/include/external/kernelpatch/ (used by jni/src/KPM/kpm_driver.h)
+  # are copied unmodified from this exact same commit, so both sides of
+  # the supercall ABI stay in sync.
+  # ===================================================================
+  build-inx-kpm:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (for kpm/inx_mem/ sources)
+        uses: actions/checkout@v4
+
+      - name: Download ARM GNU toolchain (same one KernelPatch's own CI uses)
+        run: |
+          set -e
+          curl -fL -o /tmp/arm-gnu-toolchain.tar.xz \
+            https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
+          mkdir -p /tmp/arm-gnu-toolchain
+          tar -Jxf /tmp/arm-gnu-toolchain.tar.xz -C /tmp/arm-gnu-toolchain --strip-components=1
+          /tmp/arm-gnu-toolchain/bin/aarch64-none-elf-gcc --version
+
+      - name: Fetch KernelPatch SDK (pinned commit)
+        run: |
+          set -e
+          curl -fL -o /tmp/kernelpatch.tar.gz \
+            https://codeload.github.com/bmax121/KernelPatch/tar.gz/d4c88d6672687456b299e4b5153c24dc979d789b
+          mkdir -p /tmp/kernelpatch-sdk
+          tar -xzf /tmp/kernelpatch.tar.gz -C /tmp/kernelpatch-sdk --strip-components=1
+          test -f /tmp/kernelpatch-sdk/kernel/Makefile
+
+      - name: Drop our inx_mem KPM into the SDK's kpms/ tree and build it
+        run: |
+          set -e
+          cp -r kpm/inx_mem /tmp/kernelpatch-sdk/kpms/inx_mem
+          export TARGET_COMPILE=/tmp/arm-gnu-toolchain/bin/aarch64-none-elf-
+          cd /tmp/kernelpatch-sdk/kpms/inx_mem
+          make
+          ls -la inx_mem.kpm
+          file inx_mem.kpm
+
+      - name: Upload (consumed by the main build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: inx-mem-kpm
+          path: /tmp/kernelpatch-sdk/kpms/inx_mem/inx_mem.kpm
+          if-no-files-found: error
+
+  # ===================================================================
   # Server-side ML-DSA-65 CLI tool — a fully static x86_64-linux binary
   # (tools/kd_mldsa_tool.c) that the cPanel server calls via shell_exec
   # (same pattern keydock_connect.php already uses for the Ed448 CLI
@@ -256,7 +318,7 @@ jobs:
           git -C /tmp/dist-tool-checkout push -q -f origin dist-tools
 
   build:
-    needs: [build-ed448-lib, build-mldsa-android-lib]
+    needs: [build-ed448-lib, build-mldsa-android-lib, build-inx-kpm]
     # NOT 22.04: this O-MVLL build needs GLIBC_2.38, which 22.04 doesn't
     # have (confirmed via a real failed run: "GLIBC_2.38' not found").
     # 24.04 ships glibc 2.39.
@@ -290,6 +352,12 @@ jobs:
           mkdir -p jni/include/external/liboqs-android
           tar xzf /tmp/liboqs-android-download/liboqs-android.tar.gz -C jni/include/external/liboqs-android
           ls -la jni/include/external/liboqs-android
+
+      - name: Download inx_mem.kpm (from build-inx-kpm job)
+        uses: actions/download-artifact@v4
+        with:
+          name: inx-mem-kpm
+          path: /tmp/inx-kpm-download
 
       - name: Set up Android NDK ${{ env.NDK_VERSION }}
         id: ndk
@@ -551,6 +619,10 @@ jobs:
           # INX_MODULE_DIR/libcollider_stub.so (module root, next to
           # webroot/), not under bin/arm64-v8a/.
           cp libs/arm64-v8a/libcollider_stub.so  /tmp/inxmods-pkg/libcollider_stub.so
+          # [NEW] Option 16 (standalone inx-mem KPM) — kpm_driver.h looks
+          # for this at INX_MODULE_DIR/inx_mem.kpm (module root, next to
+          # webroot/ and libcollider_stub.so above), same placement logic.
+          cp /tmp/inx-kpm-download/inx_mem.kpm /tmp/inxmods-pkg/inx_mem.kpm
           chmod 755 \
             /tmp/inxmods-pkg/customize.sh /tmp/inxmods-pkg/post-fs-data.sh \
             /tmp/inxmods-pkg/service.sh /tmp/inxmods-pkg/svc.sh \
@@ -625,6 +697,7 @@ jobs:
           mkdir -p /tmp/inxstandalone-pkg
           cp -r module-inxmods/drivers /tmp/inxstandalone-pkg/drivers
           cp libs/arm64-v8a/inx_standalone /tmp/inxstandalone-pkg/inx_standalone
+          cp /tmp/inx-kpm-download/inx_mem.kpm /tmp/inxstandalone-pkg/inx_mem.kpm
           chmod 755 /tmp/inxstandalone-pkg/inx_standalone
           find /tmp/inxstandalone-pkg/drivers -name '*.ko.sh' -exec chmod 755 {} \;
           cat > /tmp/inxstandalone-pkg/README.txt << 'EOF'
@@ -637,6 +710,14 @@ jobs:
           Prompts for your key, then the driver, then bar/vol, then runs.
           Keep the drivers/ folder next to it if you plan to pick Paradise
           -- every other driver option needs no extra files at all.
+
+          Driver option "kpm" (Standalone KPM, APatch only):
+          Keep inx_mem.kpm next to this binary. No superkey setup needed
+          in the normal case -- it authenticates as "su" automatically if
+          this binary already has root granted via the APatch app's
+          Superuser list (the same grant every other driver option here
+          already needs). Only if that fails does it look for a
+          "kpm_superkey" field in config.json.
           EOF
           cd /tmp/inxstandalone-pkg && zip -r -q /tmp/inx_standalone.zip . && cd -
           ls -la /tmp/inx_standalone.zip

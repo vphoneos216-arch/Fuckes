@@ -608,9 +608,10 @@ static void ix_interactive_driver_and_menu_prompt() {
     // below, neither has an auto-load branch — the user is expected to
     // already have the matching kernel module loaded.
     printf("\nStep - Driver\n");
-    static const char* names[]  = { "paradise", "ditpro", "twt", "wind" };
-    static const char* labels[] = { "Paradise (recommended)", "DitPro KPM", "TwT", "Wind" };
-    const int kDriverCount = 4;
+    static const char* names[]  = { "paradise", "ditpro", "twt", "wind", "kpm" };
+    static const char* labels[] = { "Paradise (recommended)", "DitPro KPM", "TwT", "Wind",
+                                     "Standalone KPM (APatch, memory R/W only)" };
+    const int kDriverCount = 5;
     for (int i = 0; i < kDriverCount; ++i) printf("  %d) %s\n", i + 1, labels[i]);
     printf("\nSelect [1-%d, default=1]: ", kDriverCount);
     fflush(stdout);

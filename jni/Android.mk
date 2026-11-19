@@ -226,6 +226,12 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/ImGui/backends
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/include
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/include
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/libsodium-android-arm64-v8a/include
+# KPM 16 (standalone inx-mem driver, KPM/kpm_driver.h): vendored, unmodified
+# userspace supercall headers from the pinned KernelPatch SDK commit
+# d4c88d6672687456b299e4b5153c24dc979d789b (version 0.13.9) — supercall.h's
+# own `#include "version"` and `#include <ktypes.h>`/`<compiler.h>` resolve
+# against this root, same as the SDK's own tools/ build does.
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/kernelpatch
 # json.hpp resolves via $(LOCAL_PATH)/include (already added above)
 # KPM 7: DitPro — no extra headers (uses proKpm already in wanbai.h)
 # KPM 8: KMA KPM
@@ -454,6 +460,12 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/ImGui/backends
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/curl-android-$(TARGET_ARCH_ABI)/include
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/openssl-android-$(TARGET_ARCH_ABI)/include
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/libsodium-android-arm64-v8a/include
+# KPM 16 (standalone inx-mem driver, KPM/kpm_driver.h): vendored, unmodified
+# userspace supercall headers from the pinned KernelPatch SDK commit
+# d4c88d6672687456b299e4b5153c24dc979d789b (version 0.13.9) — supercall.h's
+# own `#include "version"` and `#include <ktypes.h>`/`<compiler.h>` resolve
+# against this root, same as the SDK's own tools/ build does.
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include/external/kernelpatch
 # json.hpp resolves via $(LOCAL_PATH)/include (already added above)
 # KPM 7: DitPro — no extra headers (uses proKpm already in wanbai.h)
 # KPM 8: KMA KPM

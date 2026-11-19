@@ -10,5 +10,6 @@
     "remote_control": false,
     "remote_url": "",
     "driver_load_on_boot": false,
-    "driver_keep_alive": false
+    "driver_keep_alive": false,
+    "kpm_superkey": ""
 }
