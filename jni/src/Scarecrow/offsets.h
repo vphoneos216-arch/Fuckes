@@ -74,6 +74,7 @@ inline uintptr_t Head()          { return ix_rt().B.Head; }
 inline uintptr_t Hip()           { return ix_rt().B.Hip; }
 inline uintptr_t Chest()         { return ix_rt().B.Chest; }
 inline uintptr_t Root()          { return ix_rt().B.Root; }
+inline uintptr_t Neck()          { return ix_rt().B.Neck; } // [NEW] Drag Headshot target
 inline uintptr_t LeftShoulder()  { return ix_rt().B.LeftShoulder; }
 inline uintptr_t RightShoulder() { return ix_rt().B.RightShoulder; }
 inline uintptr_t LeftAnkle()     { return ix_rt().B.LeftAnkle; }

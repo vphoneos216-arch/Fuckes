@@ -768,6 +768,7 @@ struct SavedSettings {
     bool  Aimbot=false; int aimbotBone=0; bool aimSilent=false; bool hardwareBT=false;
     bool  brutalBT=false;   // BRUTAL BT — OG silent aim
     bool  aimCollider=false; // Aimbot Collider — OG aim lock
+    bool  dragHeadshot=false; // [NEW] Drag Headshot — own silent redirect to Neck bone, only while actively dragging. Independent of aimCollider/aimSilent/Aimbot above.
     bool  showFovCircle=false; float aimFovUI=10.f; int chestRateSave=1;
     bool  showAimLine=false; int selectedBone=0;
     float AimFovGlobal=150.f; int textSz=15; bool is3600=false;
@@ -2074,7 +2075,7 @@ void UpdateAndSaveSettings(){
     AimSilent         = g_Cfg.aimSilent;
     HardwareBT        = g_Cfg.hardwareBT;
     BrutalBT          = g_Cfg.brutalBT;
-    AimLock           = g_Cfg.aimCollider; // [RE-ADDED] Collider Lock checkbox now exists in SourceMenu.h
+    DragHeadshot      = g_Cfg.dragHeadshot; // [RENAMED] was Collider Lock's slot
     showAimLine       = false;   // aim line removed
     selectedBoneIndex = g_Cfg.selectedBone;
     AimFov            = g_Cfg.aimFovUI;
@@ -2698,7 +2699,7 @@ static void settings_tab(float a){
 
 // ── Source project NEW UI ────────────────────────────────────
 #include "UI/SourceMenu.h"
-#include "UI/NewThemeMenu.h" // [NEW] second red/black window — old menu above untouched
+// NewThemeMenu.h removed -- was a second, duplicate window; the menu above is the only one now
 #include "ix_controls.h"
 
 // ── Remote control ──────────────────────────────────────────
@@ -2770,14 +2771,12 @@ static void ix_apply_control_sync() {
     g_ShowFovOverlay  = g_Cfg.showFovCircle;
     AimFov            = g_Cfg.aimFovUI;
     g_Cfg.aimSilent   = AimSilent;
-    // [RE-ADDED] Collider Lock — synced from the saved config value
-    // (set by its checkbox in SourceMenu.h) instead of forced off;
-    // this path only runs in remote-control mode, where the on-screen
-    // menu isn't drawn at all, so it has to read the saved value
-    // directly rather than from a checkbox.
-    AimLock           = g_Cfg.aimCollider;
-    AimLockNew        = g_Cfg.aimCollider;
-    // [RE-ADDED] Aimbot — same reasoning as Collider Lock above.
+    // [RENAMED] Drag Headshot — was Collider Lock's slot here too;
+    // same reasoning as SourceMenu.h's sync block (remote-control mode
+    // has no on-screen checkbox, so it reads the saved config value
+    // directly).
+    DragHeadshot      = g_Cfg.dragHeadshot;
+    // [RE-ADDED] Aimbot — same reasoning as Drag Headshot above.
     Aimbot            = g_Cfg.Aimbot;
     BrutalBT          = g_Cfg.brutalBT;
     aimBotBoneIndex   = 0;
@@ -2791,10 +2790,9 @@ static void ix_apply_control_sync() {
     // run (or false on a fresh process), ignoring the checkbox entirely.
     HardwareBT        = g_Cfg.hardwareBT;
     StartSilentAimThread();
-    // [RE-ADDED] Neither was ever started from here either — same
-    // "thread was defined but nothing ever started it" gap as the
-    // menu-driven path above.
-    StartAimLockNewThread();
+    // StartAimLockNewThread() no longer called from here — that slot
+    // now drives Drag Headshot (see StartDragHeadshotThread() below).
+    StartDragHeadshotThread();
     StartAimbotThread();
     StartHardwareBTThread();
     // Body Kill globals synced from config — no separate thread: the
@@ -3146,7 +3144,6 @@ int main(int argc,char* argv[]){
 
             if(g_FloatingSystemReady){
                 RenderMenu();
-                RenderNewThemeUI(); // [NEW] additive second window, old menu above unchanged
                 if((g_GameIsRunning||g_EspAlive.load())&&lib_base!=0&&g_MasterEnabled&&ix_rt_ready()){
                     g_ShowFovOverlay=g_Cfg.showFovCircle && ix_feat_aim();
                     DrawAll(abs_ScreenX,abs_ScreenY,lib_base);

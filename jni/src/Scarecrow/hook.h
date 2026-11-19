@@ -263,6 +263,7 @@ bool  AimLock      = false;
 bool  AimLockNew   = false;
 bool  Aimbot       = false;
 bool  AimSilent    = false;
+bool  DragHeadshot = false;  /* [NEW] own feature -- not AimLock/AimSilent/Aimbot. See UpdateDragHeadshotThread(). */
 bool  HardwareBT   = false;  /* Hardware BT — Body / Legit modes */
 bool  GhostHack     = false;
 bool  NoRecoil      = false;
@@ -457,6 +458,7 @@ static std::atomic<bool> silentThreadRunning{false};
 static std::atomic<bool> aimbotThreadRunning{false};
 static std::atomic<bool> bodyKillThreadRunning{false};
 static std::atomic<bool> aimlockNewThreadRunning{false};
+static std::atomic<bool> dragHeadshotThreadRunning{false}; /* [NEW] */
 
 static uintptr_t  g_SA_lp  = 0;
 static Vector3    g_SA_tgt = {0,0,0};
@@ -2123,6 +2125,170 @@ void UpdateSilentAimFast(){
     }
 }
 
+/* ===== Drag Headshot — own feature, independent of Collider Lock / =====
+ * ===== Aim Silent / Aimbot. Requested explicitly: must not reuse  =====
+ * ===== any of those three functions or their gating.              =====
+ *
+ * What it does: while the player is actively dragging their own view
+ * (detected below — NOT a fixed timer, NOT "player is firing", purely
+ * "is the view rotation actually changing right now") and a valid
+ * target is selected, it silently redirects the shot toward the
+ * target's NECK bone (BoneOffsets::Neck(), server-driven offset --
+ * requested by name, separate from Head/Chest/Hip already used by
+ * every other feature). The moment the drag stops (rotation holds
+ * steady again) this disarms immediately -- it never holds a lock on
+ * an idle crosshair, so it cannot behave like Aimbot/Collider Lock.
+ *
+ * Reuses the same low-level HWBP-arm / plain-write helpers as the
+ * other SilentAimDir-based features (AimHookState::*SilentDir) --
+ * those are generic driver plumbing, not the Aim Silent *feature* --
+ * but keeps its own armed-breakpoint state (s_lastDirAddr/s_lastTwtHandle
+ * below are local statics of THIS function) so it never fights over
+ * the same hardware breakpoint slot as UpdateSilentAimFast() if both
+ * somehow ran at once. */
+void UpdateDragHeadshotThread(){
+    static uintptr_t s_lastDirAddr   = 0;
+    static uint64_t  s_lastTwtHandle = 0;
+    static Quaternion s_prevRot = {0,0,0,1};
+    static bool       s_havePrevRot = false;
+
+    auto disarm_dh = [&](){
+        RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+        paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
+        TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
+        if(rth && s_lastDirAddr)
+            rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
+        else if(pd && s_lastDirAddr)
+            AimHookState::PdHwbpDisarm(pd);
+        if(twt && s_lastTwtHandle)
+            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+        s_lastDirAddr   = 0;
+        s_lastTwtHandle = 0;
+    };
+
+    // How different two polls of the view quaternion must be to count
+    // as "actively dragging right now". 1.0 = identical. Empirically
+    // a tiny real drag moves this well below 0.99995 between 5ms
+    // polls; idle/held-still stays above 0.999995. Exposed here as one
+    // named constant so it's the one place to retune if it ever feels
+    // too sticky or too dead in testing -- not a guess at a game value,
+    // just this function's own sensitivity knob.
+    constexpr float kDragRotDotThreshold = 0.99998f;
+
+    while(dragHeadshotThreadRunning){
+        if(!ix_feat_aim() || !ix_rt_ready() || !DragHeadshot){
+            disarm_dh();
+            s_havePrevRot = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
+        uintptr_t lp = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_SA_mtx);
+            lp = g_SA_lp;
+        }
+        uintptr_t currentTarget = g_CurrentBestTarget;
+        if(!lp || !currentTarget){
+            disarm_dh();
+            s_havePrevRot = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
+        // ── drag detection: is the player's own view actually moving? ──
+        Quaternion curRot = Read<Quaternion>(lp + PlayerOffsets::Rotation());
+        bool dragging = false;
+        if(s_havePrevRot){
+            float dot = s_prevRot.X*curRot.X + s_prevRot.Y*curRot.Y +
+                        s_prevRot.Z*curRot.Z + s_prevRot.W*curRot.W;
+            if(dot < 0.f) dot = -dot; // quaternion double-cover
+            dragging = dot < kDragRotDotThreshold;
+        }
+        s_prevRot     = curRot;
+        s_havePrevRot = true;
+
+        if(!dragging){
+            disarm_dh();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
+        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
+        if(!aimingInfo){
+            std::this_thread::yield();
+            continue;
+        }
+
+        uintptr_t neckNode = Read<uintptr_t>(currentTarget + BoneOffsets::Neck());
+        if(!neckNode){
+            // Neck offset not resolved (server JSON missing "Neck", or
+            // zero on this build) -- fail closed, do NOT fall back to
+            // Head/Chest: this feature was asked for specifically as
+            // its own neck-targeting behavior, not "whatever bone is
+            // available".
+            disarm_dh();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
+        Vector3 targetPos = NodePos(neckNode);
+        if(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f){
+            std::this_thread::yield();
+            continue;
+        }
+
+        Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
+        Vector3 dir;
+        dir.X = targetPos.X - startPos.X;
+        dir.Y = targetPos.Y - startPos.Y;
+        dir.Z = targetPos.Z - startPos.Z;
+
+        uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+        RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
+        paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
+        TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
+
+        if(rth){
+            if(AimHookState::HwbpArmSilentDir(rth, dirAddr, dir)){
+                s_lastDirAddr = dirAddr;
+            } else {
+                Write<Vector3>(dirAddr, dir);
+            }
+        } else if(pd){
+            bool need_rearm = (s_lastDirAddr != dirAddr);
+            if(need_rearm && s_lastDirAddr)
+                AimHookState::PdHwbpDisarm(pd);
+            if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
+                s_lastDirAddr = dirAddr;
+            } else {
+                Write<Vector3>(dirAddr, dir);
+                s_lastDirAddr = 0;
+            }
+        } else if(twt){
+            bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastTwtHandle == 0);
+            if(need_rearm){
+                if(s_lastTwtHandle)
+                    AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
+                uint64_t handle = 0;
+                if(AimHookState::TwtHwbpArmSilentDir(twt, g_driver->GetPid(), dirAddr, dir, handle)){
+                    s_lastTwtHandle = handle;
+                    s_lastDirAddr   = dirAddr;
+                } else {
+                    Write<Vector3>(dirAddr, dir);
+                    s_lastTwtHandle = 0;
+                }
+            } else if(!AimHookState::TwtHwbpUpdateSilentDir(twt, s_lastTwtHandle, dir)) {
+                Write<Vector3>(dirAddr, dir);
+            }
+        } else {
+            Write<Vector3>(dirAddr, dir);
+        }
+
+        std::this_thread::yield();
+    }
+}
+
 void UpdateAimbotFast(){
     /* Aimbot — hook-based rotation injection.
      *
@@ -2677,6 +2843,14 @@ void StartAimLockNewThread(){
     }
 }
 void StopAimLockNewThread(){ aimlockNewThreadRunning = false; }
+
+void StartDragHeadshotThread(){ /* [NEW] */
+    if(!dragHeadshotThreadRunning){
+        dragHeadshotThreadRunning = true;
+        std::thread(UpdateDragHeadshotThread).detach();
+    }
+}
+void StopDragHeadshotThread(){ dragHeadshotThreadRunning = false; }
 
 void DrawESP(float,float,uintptr_t){}
 void AimbotMenu(float,float,uintptr_t){}

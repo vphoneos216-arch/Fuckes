@@ -779,17 +779,17 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
-                    // [RE-ADDED] Collider Lock checkbox. This is the
-                    // kernel-HWBP collider aim-lock (AimCollider field
-                    // write intercept — see UpdateAimLockNewThread() in
-                    // hook.h), now gated by its own humanized engagement
-                    // logic (reaction delay / skip chance / streak
-                    // cooldown) rather than engaging every target
-                    // instantly and always. Was previously force-cleared
-                    // every frame with no checkbox at all; synced for
-                    // real now, same as every other toggle on this page.
+                    // [RENAMED — was "Collider Lock"] Now "Drag
+                    // Headshot": its own independent feature (see
+                    // UpdateDragHeadshotThread() in hook.h) — silently
+                    // redirects to the target's NECK bone, but only
+                    // while the player's own view is actively moving
+                    // (dragging). Does not reuse Collider Lock's old
+                    // AimLock/AimLockNew globals or its
+                    // UpdateAimLockNewThread() code at all — this slot
+                    // just now drives g_Cfg.dragHeadshot instead.
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
-                    ImGui::Checkbox1("Collider Lock", &g_Cfg.aimCollider);
+                    ImGui::Checkbox1("Drag Headshot", &g_Cfg.dragHeadshot);
 
                     // Row 1 — Body Kill | Aimbot
                     // [RE-ADDED] Aimbot checkbox. UpdateAimbotFast() in
@@ -883,10 +883,12 @@ inline void RenderSingleMenuWindow() {
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
                     g_Cfg.aimSilent   = AimSilent;    // Aim Silent sync — unchanged, untouched by this fix
-                    // [RE-ADDED] Collider Lock — now synced from its own
-                    // checkbox above instead of being forced off.
-                    AimLock           = g_Cfg.aimCollider;
-                    AimLockNew        = g_Cfg.aimCollider;
+                    // [RENAMED] Drag Headshot — was Collider Lock's slot.
+                    // AimLock/AimLockNew intentionally left alone here
+                    // (always whatever they were last, effectively
+                    // unused now that nothing sets them from the menu);
+                    // this feature is entirely its own global.
+                    DragHeadshot      = g_Cfg.dragHeadshot;
                     // [RE-ADDED] Aimbot — now synced from its own
                     // checkbox above instead of being forced off.
                     Aimbot            = g_Cfg.Aimbot;
@@ -911,13 +913,12 @@ inline void RenderSingleMenuWindow() {
                      * Body Kill has no thread of its own — its threshold
                      * check runs inline inside StartSilentAimThread's loop. */
                     StartSilentAimThread();
-                    // [RE-ADDED] Both were defined (hook.h) but never
-                    // started from anywhere in the program — the actual
-                    // reason Collider Lock did nothing even with its
-                    // checkbox wired up, and the reason Aimbot has never
-                    // run at all. Idempotent like every other Start*
-                    // call here (guarded by their own running flags).
-                    StartAimLockNewThread();
+                    // Aimbot's thread start kept (idempotent, guarded by
+                    // its own running flag). StartAimLockNewThread() is
+                    // no longer called from here — that checkbox slot
+                    // now drives Drag Headshot instead (see
+                    // StartDragHeadshotThread() below).
+                    StartDragHeadshotThread();
                     StartAimbotThread();
                     StartHardwareBTThread();
                 }

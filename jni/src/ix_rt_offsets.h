@@ -40,6 +40,7 @@ struct IxPlayerOff {
 
 struct IxBoneOff {
     uintptr_t Head = 0, Hip = 0, Chest = 0, Root = 0;
+    uintptr_t Neck = 0; // [NEW] Drag Headshot target bone -- server JSON key "Neck"
     uintptr_t LeftShoulder = 0, RightShoulder = 0;
     uintptr_t LeftAnkle = 0, RightAnkle = 0;
     uintptr_t LeftToe = 0, RightToe = 0;
@@ -148,6 +149,7 @@ inline bool ix_rt_apply_json(const nlohmann::json& root) {
     B.Hip           = ix_parse_off(bj, "Hip");
     B.Chest         = ix_parse_off(bj, "Chest");
     B.Root          = ix_parse_off(bj, "Root");
+    B.Neck          = ix_parse_off(bj, "Neck"); // [NEW] Drag Headshot
     B.LeftShoulder  = ix_parse_off(bj, "LeftShoulder");
     B.RightShoulder = ix_parse_off(bj, "RightShoulder");
     B.LeftAnkle     = ix_parse_off(bj, "LeftAnkle");
