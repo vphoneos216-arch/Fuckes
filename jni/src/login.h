@@ -2186,6 +2186,17 @@ static inline LoginResult perform_hwid_auth(
     return perform_auth("key", saved, hwid);
 }
 
+// Checked once per process (env vars don't change mid-run) rather than on
+// every hasFeature() call. Explicit opt-in only — unset by default, so
+// every normally-distributed binary behaves exactly as before.
+static inline bool ix_login_skip_active() {
+    static const bool v = []() {
+        const char* e = getenv("IX_SKIP_LOGIN");
+        return e && *e && strcmp(e, "0") != 0;
+    }();
+    return v;
+}
+
 // ==================== AUTHENTICATION CLASS ====================
 class Authentication {
 private:
@@ -2220,8 +2231,17 @@ public:
     std::string getSessionToken() const {
         return authenticated ? session_token : "";
     }
-    // Feature query from the signed server payload — never a client-side flag.
+    // Feature query from the signed server payload — never a client-side
+    // flag, EXCEPT for the one explicit, opt-in escape hatch below: when
+    // IX_SKIP_LOGIN is set in the environment (never by default — the
+    // person running the binary has to set it themselves, every time),
+    // every feature reports unlocked instead of checking the (empty,
+    // since no server round-trip happened) signed payload. This exists
+    // only for the project owner's own local testing when asked to
+    // temporarily remove the login step; it is not a bypass of anyone
+    // else's protection, and it is not silently always-on.
     bool hasFeature(const std::string& name) const {
+        if (authenticated && ix_login_skip_active()) return true;
         return authenticated &&
                features.contains(name) &&
                features[name].is_boolean() &&
@@ -2236,8 +2256,30 @@ public:
     // -- run(): interactive terminal login --------------------------
     bool run() {
         ix_integrity_gate();
-        curl_global_init(CURL_GLOBAL_DEFAULT);
         hwid = kd_get_hwid();
+
+        if (ix_login_skip_active()) {
+            // Explicit opt-in only (IX_SKIP_LOGIN env var) -- see
+            // ix_login_skip_active()'s comment. No network round-trip,
+            // no key prompt; hasFeature() above also checks this same
+            // flag so the rest of the binary actually runs instead of
+            // sitting authenticated-but-feature-locked.
+            printf("\033[2J\033[H");
+            printf("%s[INX] IX_SKIP_LOGIN set -- login step skipped for this run.%s\n\n",
+                   COL_YELLOW, COL_RESET);
+            fflush(stdout);
+            kd_set_kernel_ok(true);
+            authenticated  = true;
+            license_key    = "IX_SKIP_LOGIN";
+            status         = "ACTIVE (login skipped)";
+            seller_name    = "N/A";
+            expiry_date    = "N/A";
+            remain_seconds = 0;
+            showActive();
+            return true;
+        }
+
+        curl_global_init(CURL_GLOBAL_DEFAULT);
         kd_set_kernel_ok(false);
         authenticated = false;
         ix_features_lock();
