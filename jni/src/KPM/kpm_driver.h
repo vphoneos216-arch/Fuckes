@@ -39,7 +39,13 @@
 #include <sys/stat.h>
 
 #include "../ix_controls.h" // ix_controls_base_dir()
-#include "../../include/external/kernelpatch/user/supercall.h"
+// NOT the full vendored user/supercall.h here -- it pulls in KernelPatch's
+// own kernel-build type system (ktypes.h), which collides with the NDK's
+// real libc headers (confirmed via a real CI failure, not guessed -- see
+// supercall_min.h's own header comment for the exact errors). This project
+// uses only sc_hello/sc_ready/sc_kpm_load/sc_kpm_control, transcribed
+// byte-identical in body from that same vendored, pinned-commit file.
+#include "../../include/external/kernelpatch/user/supercall_min.h"
 
 // GetModuleBase() lives in Scarecrow/MemoryTools.h, already included by
 // wanbai.h before this header — declared here only so this file can be
