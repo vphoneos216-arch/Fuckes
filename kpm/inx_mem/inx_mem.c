@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * inx_mem — standalone KernelPatch KPM: cross-process memory read/write.
+ * inx_mem -- standalone KernelPatch KPM: cross-process memory read/write.
  *
  * SCOPE (deliberate, see repo notes): this KPM does ONLY memory read/write
  * for a pid the caller already resolved. PID lookup and module-base lookup
@@ -10,7 +10,7 @@
  *
  * Every kernel symbol used here is resolved at runtime via
  * kallsyms_lookup_name() and explicitly checked before use. Nothing is
- * assumed present — if a symbol this module needs isn't found on the
+ * assumed present -- if a symbol this module needs isn't found on the
  * running kernel, this module reports itself NOT READY instead of silently
  * doing something unsafe.
  */
@@ -25,7 +25,7 @@
 #include <linux/kallsyms.h>
 #include <linux/errno.h>
 
-/* Only ever used as an opaque pointer below — never dereferenced, so no
+/* Only ever used as an opaque pointer below -- never dereferenced, so no
  * field layout of task_struct is assumed anywhere in this file. That is
  * also exactly why this stays a forward declaration instead of
  * #include <linux/sched.h>: pulling in the full definition would invite
@@ -43,7 +43,7 @@ typedef struct task_struct *(*fn_find_get_task_by_vpid_t)(int nr);
 static fn_find_get_task_by_vpid_t fn_find_get_task_by_vpid = 0;
 
 /* void put_task_struct(struct task_struct *t);
- * NOT guaranteed to exist as a standalone symbol — in many kernel builds
+ * NOT guaranteed to exist as a standalone symbol -- in many kernel builds
  * this is a header-only static inline (refcount_dec_and_test on a field we
  * don't know the offset of), which means it may be fully inlined away with
  * no kallsyms entry at all. We only use it if kallsyms actually finds it;
@@ -55,24 +55,25 @@ static fn_put_task_struct_t fn_put_task_struct = 0;
 /* int access_process_vm(struct task_struct *tsk, unsigned long addr,
  *                        void *buf, int len, unsigned int gup_flags);
  * Long-stable exported mm/process_vm_access.c (or mm/memory.c, version-
- * dependent file but stable symbol name/signature) helper — this is the
+ * dependent file but stable symbol name/signature) helper -- this is the
  * real kernel path used by /proc/<pid>/mem, ptrace, etc. Does its own
  * page-fault/COW handling correctly regardless of internal VMA structure. */
 typedef int (*fn_access_process_vm_t)(struct task_struct *tsk, unsigned long addr,
                                        void *buf, int len, unsigned int gup_flags);
 static fn_access_process_vm_t fn_access_process_vm = 0;
 
-/* FOLL_WRITE / FOLL_FORCE — real values from include/linux/mm_types.h
+/* FOLL_WRITE / FOLL_FORCE -- real values from include/linux/mm_types.h
  * (confirmed against actual upstream kernel source, not guessed):
  *   FOLL_WRITE = 0x01   "check pte is writable"
  *   FOLL_FORCE = 0x10   "get_user_pages read/write w/o permission"
  * FOLL_FORCE is NOT optional here: every real in-tree caller of
- * access_process_vm() against a task that isn't `current` (ptrace's
- * PTRACE_PEEKTEXT/POKETEXT handlers in every arch/*/ptrace.c) passes it
- * for BOTH reads and writes, not just writes — without it, GUP enforces
- * the normal page-permission rules as if the CURRENT process were the
- * one touching the page, which is not what a cross-process reader wants
- * and would make most reads fail as often as writes. */
+ * access_process_vm() against a task that is not "current" (ptrace's
+ * PEEKTEXT/POKETEXT handlers, one per architecture under arch dot dot
+ * dot ptrace.c) passes it for BOTH reads and writes, not just writes --
+ * without it, GUP enforces the normal page-permission rules as if the
+ * CURRENT process were the one touching the page, which is not what a
+ * cross-process reader wants and would make most reads fail as often
+ * as writes. */
 #define INX_FOLL_WRITE 0x01
 #define INX_FOLL_FORCE 0x10
 
@@ -81,10 +82,10 @@ static int g_has_put = 0;     /* put_task_struct specifically resolved (see abov
 
 /* ---- bounded, gated memory copy ---- */
 
-/* Hard bound — never trust caller-supplied length blindly. Kept small
+/* Hard bound -- never trust caller-supplied length blindly. Kept small
  * (not KB-scale) on purpose: this and its hex-encoded output buffer both
  * live on the KERNEL STACK in control0 below, and kernel thread stacks are
- * commonly only 16KB total on arm64 — a 4KB buffer plus its 8KB+1 hex
+ * commonly only 16KB total on arm64 -- a 4KB buffer plus its 8KB+1 hex
  * encoding would have been a real stack-overflow risk. 512 bytes is far
  * more than any single game-memory read/write in this project needs
  * (floats, vectors, pointers are all a few bytes to a few dozen). */
@@ -110,8 +111,8 @@ static long inx_vm_copy(pid_t pid, unsigned long addr, void *kbuf, int len, int 
                                 INX_FOLL_FORCE | (do_write ? INX_FOLL_WRITE : 0));
 
     /* Always release what find_get_task_by_vpid acquired. If put_task_struct
-     * wasn't resolvable we would never have reached here — g_ready requires
-     * g_has_put, see inx_mem_init — so this call is always valid here. */
+     * wasn't resolvable we would never have reached here -- g_ready requires
+     * g_has_put, see inx_mem_init -- so this call is always valid here. */
     fn_put_task_struct(task);
 
     return ret;
@@ -174,7 +175,7 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
 
     /* Fail CLOSED, not degraded: leaking a task_struct reference on every
      * read/write call (if we proceeded without put_task_struct) would pin
-     * exited processes' task_structs forever — a real, cumulative kernel
+     * exited processes' task_structs forever -- a real, cumulative kernel
      * memory leak and eventual instability under the repeated-call load
      * this is actually used under (aim loops poll many times a second).
      * That is strictly worse than simply not working. */
@@ -185,7 +186,7 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
             (void *)fn_put_task_struct, g_ready);
 
     if (!g_ready) {
-        pr_info("inx-mem: NOT READY on this kernel build — one or more required "
+        pr_info("inx-mem: NOT READY on this kernel build -- one or more required "
                 "symbols were not found via kallsyms. memory read/write via this "
                 "KPM is disabled; the client should fall back to its other "
                 "drivers. Check 'dmesg | grep inx-mem' for which symbol(s) are "
@@ -281,7 +282,7 @@ static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
 static long inx_mem_control1(void *a1, void *a2, void *a3)
 {
     (void)a1; (void)a2; (void)a3;
-    return -ENOSYS; /* unused — all control goes through control0's text protocol */
+    return -ENOSYS; /* unused -- all control goes through control0's text protocol */
 }
 
 static long inx_mem_exit(void *__user reserved)
