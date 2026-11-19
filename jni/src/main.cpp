@@ -769,6 +769,7 @@ struct SavedSettings {
     bool  brutalBT=false;   // BRUTAL BT — OG silent aim
     bool  aimCollider=false; // Aimbot Collider — OG aim lock
     bool  dragHeadshot=false; // [NEW] Drag Headshot — own silent redirect to Neck bone, only while actively dragging. Independent of aimCollider/aimSilent/Aimbot above.
+    float dragHeadshotRadius=12.f; // [NEW] trigger radius, % of half-screen-height
     bool  showFovCircle=false; float aimFovUI=10.f; int chestRateSave=1;
     bool  showAimLine=false; int selectedBone=0;
     float AimFovGlobal=150.f; int textSz=15; bool is3600=false;
@@ -2076,6 +2077,7 @@ void UpdateAndSaveSettings(){
     HardwareBT        = g_Cfg.hardwareBT;
     BrutalBT          = g_Cfg.brutalBT;
     DragHeadshot      = g_Cfg.dragHeadshot; // [RENAMED] was Collider Lock's slot
+    g_DragHSRadiusPct = g_Cfg.dragHeadshotRadius;
     showAimLine       = false;   // aim line removed
     selectedBoneIndex = g_Cfg.selectedBone;
     AimFov            = g_Cfg.aimFovUI;
@@ -2776,6 +2778,7 @@ static void ix_apply_control_sync() {
     // has no on-screen checkbox, so it reads the saved config value
     // directly).
     DragHeadshot      = g_Cfg.dragHeadshot;
+    g_DragHSRadiusPct = g_Cfg.dragHeadshotRadius;
     // [RE-ADDED] Aimbot — same reasoning as Drag Headshot above.
     Aimbot            = g_Cfg.Aimbot;
     BrutalBT          = g_Cfg.brutalBT;

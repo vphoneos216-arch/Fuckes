@@ -767,7 +767,7 @@ inline void RenderSingleMenuWindow() {
                     // checkbox (its own row) plus the Head/Body/Legit mode
                     // selector block, on top of everything that was already
                     // here (Body Kill included, unchanged).
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 610 * scale);
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 500 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -791,39 +791,24 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
                     ImGui::Checkbox1("Drag Headshot", &g_Cfg.dragHeadshot);
 
-                    // Row 1 — Body Kill | Aimbot
-                    // [RE-ADDED] Aimbot checkbox. UpdateAimbotFast() in
-                    // hook.h is already hook/HWBP-based (RT Hook PTE hook
-                    // on the rotation setter, or a hardware write-
-                    // breakpoint on the Rotation field when RT Hook isn't
-                    // available) with a fire-gate, human-speed Nlerp, and
-                    // a similarity skip already built in — same "safe"
-                    // design as the collider lock, it just had no
-                    // checkbox and its thread was never started. Synced
-                    // for real now, same pattern as everything else here.
+                    // Row 1 — Hardware BT | Show FOV Circle
+                    // [SIMPLIFIED] Aim section now only carries Aim
+                    // Silent, Hardware BT, Drag Headshot and FOV Circle
+                    // — Body Kill and Aimbot checkboxes removed from
+                    // this page entirely. Their code (BodyKillBone(),
+                    // UpdateAimbotFast(), g_Cfg.bodyKill/Aimbot) is left
+                    // untouched in hook.h/main.cpp, just unreachable
+                    // from any menu now — same approach already used
+                    // for the old Collider Lock globals.
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row));
-                    ImGui::Checkbox1("Body Kill", &g_Cfg.bodyKill);
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
-                    ImGui::Checkbox1("Aimbot", &g_Cfg.Aimbot);
-
-                    // Row 2 — FOV Circle
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 2));
-                    ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
-
-                    // Row 3 — [RE-ADDED] Hardware BT. Independent of Body
-                    // Kill: this only gates whether the mode selector below
-                    // (Head/Body/Legit) has any effect — see
-                    // UpdateHardwareBTFast() in hook.h, which no-ops the
-                    // whole offset calculation while this is off.
-                    ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3));
                     ImGui::Checkbox1("Hardware BT", &g_Cfg.hardwareBT);
+                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row));
+                    ImGui::Checkbox1("Show FOV Circle", &g_Cfg.showFovCircle);
 
                     // Label drawn here rather than by the slider: ImGui puts an
                     // inline label to the RIGHT of the widget, which pushed
                     // "FOV Range" outside the card and over the artwork.
-                    // (moved down one row, row*4.1 -> row*5.1, to clear the
-                    // new Hardware BT row above)
-                    float fovLabelY = startY + row * 5.1f;
+                    float fovLabelY = startY + row * 2.6f;
                     dl->AddText(NULL, 20.0f * scale,
                                 ImVec2(startX, fovLabelY),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "FOV Range");
@@ -831,52 +816,76 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
-                    // -- [RE-ADDED] Hardware BT mode selector --
-                    // Head / Body / Legit — reuses chestRateSlider() and
-                    // ChestRateHint(), both already written in main.cpp
-                    // above this file's #include, and already correct, just
-                    // never called from anywhere after this card stopped
-                    // drawing them. Legit's actual 70/30 head/body split is
-                    // implemented in UpdateHardwareBTFast() in hook.h; this
-                    // is only the picker for which of the three it runs.
-                    float modeY = fovLabelY + 30 * scale + 56 * scale;
+                    // -- [NEW] Drag Headshot trigger-radius slider --
+                    // How close (as % of half-screen-height, resolution
+                    // independent) your own crosshair must get to the
+                    // enemy's neck on screen before the redirect fires.
+                    // Own slider, own circle on screen (DrawFOVCircle
+                    // call in hook.h, g_ShowDragHSCircle) — independent
+                    // of the FOV Range slider above.
+                    float dhY = fovLabelY + 30 * scale + 56 * scale;
+                    dl->AddText(NULL, 20.0f * scale,
+                                ImVec2(startX, dhY),
+                                COL_TXT_HI((int)(255 * uiAlpha)), "Drag Headshot Radius");
+                    ImGui::SetCursorScreenPos(ImVec2(startX, dhY + 30 * scale));
+                    ImGui::SetNextItemWidth(cardW - 50 * scale);
+                    ImGui::SliderFloat("##DragHSRadius", &g_Cfg.dragHeadshotRadius, 2.0f, 40.0f, "%.0f");
+
+                    // -- [RE-ADDED, NOW TOGGLE BOXES] Hardware BT mode --
+                    // Head / Body / Legit. Was a slider (chestRateSlider);
+                    // tumne bola toggle-box style chahiye, same pattern as
+                    // the dead Scarecrow/SourceMenu.h code already had for
+                    // this exact picker. Neither box selected = Head.
+                    // Legit's actual 70/30 split is still implemented in
+                    // UpdateHardwareBTFast() in hook.h — this is only the
+                    // picker for which of the three it runs.
+                    float modeY = dhY + 30 * scale + 56 * scale;
                     dl->AddText(NULL, 20.0f * scale,
                                 ImVec2(startX, modeY),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Hardware BT Mode");
                     {
-                        int cr = g_Cfg.chestRateSave;
-                        if (cr < 1) cr = 1;
-                        if (cr > 3) cr = 3;
-                        ImGui::SetCursorScreenPos(ImVec2(startX, modeY + 30 * scale));
-                        if (chestRateSlider("##HWBTMode", &cr, uiAlpha)) g_Cfg.chestRateSave = cr;
-                        chestRate = cr; // UpdateHardwareBTFast() reads this global directly
+                        if (g_Cfg.chestRateSave < 1 || g_Cfg.chestRateSave > 3)
+                            g_Cfg.chestRateSave = 1;
+
+                        const char* btModes[] = { "Body", "Legit" };
+                        const int   btVals[]  = { 2, 3 };
+                        float modeBtnY   = modeY + 30 * scale;
+                        float modeW      = (cardW - 50 * scale - 20 * scale) * 0.5f;
+                        float modeH      = 40 * scale;
+                        float modeGap    = 20 * scale;
+                        for (int mi = 0; mi < 2; mi++) {
+                            int modeVal   = btVals[mi];
+                            bool selected = (g_Cfg.chestRateSave == modeVal);
+                            ImVec2 bMin = ImVec2(startX + mi * (modeW + modeGap), modeBtnY);
+                            ImVec2 bMax = ImVec2(bMin.x + modeW, bMin.y + modeH);
+                            ImU32 bg = selected ? COL_ACCENT((int)(255 * uiAlpha))
+                                                : COL_BTN_IDLE((int)(235 * uiAlpha));
+                            ImU32 tc = selected ? IM_COL32(255, 255, 255, (int)(255 * uiAlpha))
+                                                : COL_TXT_MID((int)(255 * uiAlpha));
+                            dl->AddRectFilled(bMin, bMax, bg, 12 * scale);
+                            ImFont* f = ImGui::GetFont();
+                            float tsz = 20.0f * scale;
+                            float tw2 = f->CalcTextSizeA(tsz, FLT_MAX, -1.f, btModes[mi]).x;
+                            dl->AddText(NULL, tsz,
+                                        ImVec2(bMin.x + (modeW - tw2) * 0.5f,
+                                               bMin.y + (modeH - tsz) * 0.5f),
+                                        tc, btModes[mi]);
+                            ImGui::SetCursorScreenPos(bMin);
+                            char btnId[32];
+                            snprintf(btnId, sizeof(btnId), "##btmode%d", mi);
+                            if (ImGui::InvisibleButton(btnId, ImVec2(modeW, modeH))) {
+                                if (selected) g_Cfg.chestRateSave = 1; // toggle off -> headshot
+                                else          g_Cfg.chestRateSave = modeVal;
+                            }
+                        }
+                        if (!g_Cfg.hardwareBT) g_Cfg.chestRateSave = 1;
+                        chestRate = g_Cfg.chestRateSave; // UpdateHardwareBTFast() reads this global directly
+                        const char* hint = "Head only";
+                        if (g_Cfg.chestRateSave == 2) hint = "Body 100%";
+                        else if (g_Cfg.chestRateSave == 3) hint = "Legit 70% body / 30% head";
                         dl->AddText(NULL, 16.0f * scale,
-                                    ImVec2(startX, modeY + 30 * scale + 46 * scale),
-                                    COL_TXT_MID((int)(200 * uiAlpha)), ChestRateHint());
-                    }
-
-                    // -- Body Kill HP slider --
-                    // Threshold switch, not a forced-HP hack — see
-                    // BodyKillThresholdReached()/BodyKillBone() in hook.h.
-                    // Standalone toggle (works without Aim Silent also
-                    // being on). Aim stays on the head (real damage) until
-                    // the enemy's actual HP drops to/below this slider
-                    // value; only then does aim redirect to the body. HP is
-                    // read-only, never written. (moved down to make room
-                    // for the Hardware BT mode selector above it)
-                    float bkY = modeY + 30 * scale + 56 * scale + 56 * scale;
-                    dl->AddText(NULL, 18.0f * scale,
-                                ImVec2(startX, bkY - 26 * scale),
-                                COL_TXT_MID((int)(180 * uiAlpha)),
-                                "Aim Silent = head only | Body Kill = head until HP threshold, then body");
-
-                    if (g_Cfg.bodyKill) {
-                        dl->AddText(NULL, 20.0f * scale,
-                                    ImVec2(startX, bkY),
-                                    COL_TXT_HI((int)(255 * uiAlpha)), "Kill HP");
-                        ImGui::SetCursorScreenPos(ImVec2(startX, bkY + 30 * scale));
-                        ImGui::SetNextItemWidth(cardW - 50 * scale);
-                        ImGui::SliderFloat("##BodyKillHP", &g_Cfg.bodyKillHP, 1.0f, 200.0f, "%.0f");
+                                    ImVec2(startX, modeBtnY + modeH + 10 * scale),
+                                    COL_TXT_MID((int)(200 * uiAlpha)), hint);
                     }
 
                     // Sync → hook globals
@@ -889,6 +898,7 @@ inline void RenderSingleMenuWindow() {
                     // unused now that nothing sets them from the menu);
                     // this feature is entirely its own global.
                     DragHeadshot      = g_Cfg.dragHeadshot;
+                    g_DragHSRadiusPct = g_Cfg.dragHeadshotRadius;
                     // [RE-ADDED] Aimbot — now synced from its own
                     // checkbox above instead of being forced off.
                     Aimbot            = g_Cfg.Aimbot;
@@ -903,7 +913,7 @@ inline void RenderSingleMenuWindow() {
                     chestRate         = g_Cfg.chestRateSave;
                     if (chestRate < 1) chestRate = 1;
                     if (chestRate > 3) chestRate = 3;
-                    // [RE-ADDED] Hardware BT — real checkbox is Row 3 above
+                    // [RE-ADDED] Hardware BT — real checkbox is Row 1 above
                     // now; just mirror it into the global the hook thread
                     // reads, same pattern as every other feature here.
                     HardwareBT        = g_Cfg.hardwareBT;

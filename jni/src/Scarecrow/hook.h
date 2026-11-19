@@ -264,6 +264,9 @@ bool  AimLockNew   = false;
 bool  Aimbot       = false;
 bool  AimSilent    = false;
 bool  DragHeadshot = false;  /* [NEW] own feature -- not AimLock/AimSilent/Aimbot. See UpdateDragHeadshotThread(). */
+float g_DragHSRadiusPct  = 12.f; /* [NEW] trigger radius, % of half-screen-height -- resolution-independent, same convention as AimFov being in degrees not pixels. User-tunable via its own slider. */
+bool  g_ShowDragHSCircle = false; /* [NEW] mirrors DragHeadshot -- circle only drawn while the feature itself is on */
+bool  g_DragHSTriggered  = false; /* [NEW] true the instant the redirect is actually armed this frame -- drives the circle's red/gray color, same convention as fovHasTarget */
 bool  HardwareBT   = false;  /* Hardware BT — Body / Legit modes */
 bool  GhostHack     = false;
 bool  NoRecoil      = false;
@@ -2149,8 +2152,6 @@ void UpdateSilentAimFast(){
 void UpdateDragHeadshotThread(){
     static uintptr_t s_lastDirAddr   = 0;
     static uint64_t  s_lastTwtHandle = 0;
-    static Quaternion s_prevRot = {0,0,0,1};
-    static bool       s_havePrevRot = false;
 
     auto disarm_dh = [&](){
         RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
@@ -2164,21 +2165,14 @@ void UpdateDragHeadshotThread(){
             AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
         s_lastDirAddr   = 0;
         s_lastTwtHandle = 0;
+        g_DragHSTriggered = false;
     };
 
-    // How different two polls of the view quaternion must be to count
-    // as "actively dragging right now". 1.0 = identical. Empirically
-    // a tiny real drag moves this well below 0.99995 between 5ms
-    // polls; idle/held-still stays above 0.999995. Exposed here as one
-    // named constant so it's the one place to retune if it ever feels
-    // too sticky or too dead in testing -- not a guess at a game value,
-    // just this function's own sensitivity knob.
-    constexpr float kDragRotDotThreshold = 0.99998f;
-
     while(dragHeadshotThreadRunning){
+        g_ShowDragHSCircle = DragHeadshot; // circle visible whenever the feature itself is on
+
         if(!ix_feat_aim() || !ix_rt_ready() || !DragHeadshot){
             disarm_dh();
-            s_havePrevRot = false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
@@ -2191,32 +2185,7 @@ void UpdateDragHeadshotThread(){
         uintptr_t currentTarget = g_CurrentBestTarget;
         if(!lp || !currentTarget){
             disarm_dh();
-            s_havePrevRot = false;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
-        }
-
-        // ── drag detection: is the player's own view actually moving? ──
-        Quaternion curRot = Read<Quaternion>(lp + PlayerOffsets::Rotation());
-        bool dragging = false;
-        if(s_havePrevRot){
-            float dot = s_prevRot.X*curRot.X + s_prevRot.Y*curRot.Y +
-                        s_prevRot.Z*curRot.Z + s_prevRot.W*curRot.W;
-            if(dot < 0.f) dot = -dot; // quaternion double-cover
-            dragging = dot < kDragRotDotThreshold;
-        }
-        s_prevRot     = curRot;
-        s_havePrevRot = true;
-
-        if(!dragging){
-            disarm_dh();
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
-        }
-
-        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
-        if(!aimingInfo){
-            std::this_thread::yield();
             continue;
         }
 
@@ -2232,7 +2201,69 @@ void UpdateDragHeadshotThread(){
             continue;
         }
 
-        Vector3 targetPos = NodePos(neckNode);
+        Vector3 neckWorld = NodePos(neckNode);
+        if(neckWorld.X == 0.f && neckWorld.Y == 0.f && neckWorld.Z == 0.f){
+            disarm_dh();
+            std::this_thread::yield();
+            continue;
+        }
+
+        // ── drag detection: is the player's OWN crosshair (screen
+        // center) currently close to this on-screen neck point? ──
+        // Replaces the earlier rotation-delta approach (unreliable in
+        // testing) with a direct screen-space proximity check, same
+        // projection math ESP already uses (W2S) but a fresh,
+        // independent trigger -- not reusing Collider/Silent/Aimbot's
+        // own target-distance logic, which is computed separately
+        // inside their own loops above.
+        D3DMatrix vm; bool vmOK = false;
+        if(g_LastGoodIC > 0x10000ULL && g_LastGoodIC < 0x7FFFFFFFFFFFULL){
+            D3DMatrix liveMX = Read<D3DMatrix>(g_LastGoodIC + PlayerOffsets::ViewMatrix());
+            bool finite = std::isfinite(liveMX._44) && std::isfinite(liveMX._41) &&
+                          std::isfinite(liveMX._42) && std::isfinite(liveMX._43) &&
+                          std::isfinite(liveMX._11) && std::isfinite(liveMX._22);
+            if(liveMX._44 != 0.0f && finite &&
+               fabsf(liveMX._44) < 1e6f && fabsf(liveMX._41) < 1e8f){
+                vm = liveMX; vmOK = true;
+            }
+        }
+        if(!vmOK && g_HasLastCam){ vm = g_LastGoodMX; vmOK = true; }
+        if(!vmOK){
+            disarm_dh();
+            std::this_thread::yield();
+            continue;
+        }
+
+        Vector3 screenPt = W2S(vm, neckWorld);
+        float sw = (float)abs_ScreenX, sh = (float)abs_ScreenY;
+        if(!OnSc(screenPt, sw, sh)){
+            disarm_dh();
+            std::this_thread::yield();
+            continue;
+        }
+
+        float dx = screenPt.X - sw/2.f;
+        float dy = screenPt.Y - sh/2.f;
+        float screenDist = sqrtf(dx*dx + dy*dy);
+        float radiusPx = (g_DragHSRadiusPct/100.f) * (sh/2.f);
+
+        if(screenDist > radiusPx){
+            // Neck is on screen but not close enough to the crosshair
+            // yet -- this is the "haven't dragged there yet" case.
+            disarm_dh();
+            std::this_thread::yield();
+            continue;
+        }
+
+        g_DragHSTriggered = true;
+
+        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
+        if(!aimingInfo){
+            std::this_thread::yield();
+            continue;
+        }
+
+        Vector3 targetPos = neckWorld;
         if(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f){
             std::this_thread::yield();
             continue;
@@ -3005,6 +3036,12 @@ void DrawAll(float sw, float sh, uintptr_t lib){
     if(sw < 10.f || sh < 10.f) return;
 
     if(buf.hasFov) DrawFOVCircle(dl, sw, sh, buf.fovRadius, buf.fovHasTarget);
+    // [NEW] Drag Headshot's own trigger-radius circle — same draw
+    // helper (generic "draw a circle" primitive, not feature logic),
+    // own independent radius/color state (g_DragHSRadiusPct/
+    // g_DragHSTriggered, set by UpdateDragHeadshotThread()).
+    if(g_ShowDragHSCircle)
+        DrawFOVCircle(dl, sw, sh, (g_DragHSRadiusPct/100.f) * (sh/2.f), g_DragHSTriggered);
 
     if(s_Vis.size() > (size_t)(MAX_ESP * 4)){
         std::map<uintptr_t,int> pruned;
