@@ -133,7 +133,7 @@ using json = nlohmann::json;
 //                                DECRYPT responses (confidentiality, not
 //                                authenticity)
 // Never embed either PRIVATE key here. Both are server-side only.
-#define CONNECT_URL      oxorany("https://adminshop.myvipsite.fun/keydock_connect.php")
+#define CONNECT_URL      oxorany("https://adminshop.vipsite.in/keydock_connect.php")
 
 #define ED25519_PUBLIC_KEY_HEX \
     oxorany("4e94b747bf4042fdb99c82dae81f41c278d95ad05e0b4763a89d4ec2316a8bb5")
@@ -783,7 +783,7 @@ static inline bool kd_http_post(const std::string& url, const std::string& body,
     // now cannot even read the request/response bodies without the X25519
     // transport key), but it is still a gap against a compromised CA. Get a
     // pin with:
-    //   openssl s_client -connect adminshop.myvipsite.fun:443 </dev/null 2>/dev/null \
+    //   openssl s_client -connect adminshop.vipsite.in:443 </dev/null 2>/dev/null \
     //     | openssl x509 -pubkey -noout \
     //     | openssl pkey -pubin -outform der \
     //     | openssl dgst -sha256 -binary | openssl base64
@@ -1325,13 +1325,16 @@ static inline bool kd_get_kernel_ok() {
 // Fixed expected hashes of the genuine macro values, computed offline with
 // the same FNV-1a32 routine below. Regenerate both if either macro value is
 // ever legitimately changed:
-//   URL : https://adminshop.myvipsite.fun/keydock_connect.php
+//   URL : https://adminshop.vipsite.in/keydock_connect.php
 //   PUB : 4e94b747bf4042fdb99c82dae81f41c278d95ad05e0b4763a89d4ec2316a8bb5
+// (PUB/the Ed25519 key is unchanged -- same backend, only the domain moved
+// from adminshop.myvipsite.fun to adminshop.vipsite.in -- so only the URL
+// hash below was regenerated.)
 // SECURITY NOTE: FNV-1a is non-cryptographic. These constants add friction
 // against a naïve string patch but are NOT a cryptographic guarantee — the
 // Ed25519 signature verification on the server's response is the actual
 // security boundary, not this check.
-static const uint32_t IX_IC_EXPECTED_URL_FNV = 0x459cfd3eu;
+static const uint32_t IX_IC_EXPECTED_URL_FNV = 0xe0979d80u;
 static const uint32_t IX_IC_EXPECTED_PUB_FNV = 0x8272ee91u;
 
 static inline uint32_t ix_ic_fnv32(const char* s, size_t n) {
@@ -1359,7 +1362,7 @@ static inline bool ix_ic_url_sane(const std::string& url) {
     if (url.rfind("https://", 0) != 0) return false;
     if (url.find("http://") != std::string::npos) return false;
     if (url.find('@') != std::string::npos) return false;
-    const std::string host = "adminshop.myvipsite.fun";
+    const std::string host = "adminshop.vipsite.in";
     const size_t p = 8;
     if (url.size() < p + host.size()) return false;
     if (url.compare(p, host.size(), host) != 0) return false;

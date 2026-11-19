@@ -59,7 +59,7 @@ using json = nlohmann::json;
 // Same deployment constants as jni/src/login.h — public values (a
 // server URL and public keys), safe to compile in plainly.
 #define CONNECT_URL \
-    "https://adminshop.myvipsite.fun/keydock_connect.php"
+    "https://adminshop.vipsite.in/keydock_connect.php"
 
 #define ED25519_PUBLIC_KEY_HEX \
     "4e94b747bf4042fdb99c82dae81f41c278d95ad05e0b4763a89d4ec2316a8bb5"
@@ -527,7 +527,7 @@ Java_com_invisiblex_loader_NativeAuth_integrityCheck(JNIEnv*, jclass) {
     if (url.rfind("https://", 0) != 0)                     return JNI_FALSE;
     if (url.find("http://") != std::string::npos)          return JNI_FALSE;
     if (url.find('@') != std::string::npos)                return JNI_FALSE;
-    if (url.find("adminshop.myvipsite.fun") == std::string::npos) return JNI_FALSE;
+    if (url.find("adminshop.vipsite.in") == std::string::npos) return JNI_FALSE;
     if (url.find("keydock_connect.php") == std::string::npos)     return JNI_FALSE;
 
     if (pub.size() != 64) return JNI_FALSE;
