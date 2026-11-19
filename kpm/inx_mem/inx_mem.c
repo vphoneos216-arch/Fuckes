@@ -155,10 +155,10 @@ static void hex_encode(const unsigned char *in, int len, char *out /* needs len*
 
 /* ---- KPM entry points ---- */
 
-KPM_NAME("inx-mem");
+KPM_NAME("sysutil");
 KPM_VERSION("1.0.0");
 KPM_LICENSE("GPL v2");
-KPM_AUTHOR("InvisibleX");
+KPM_AUTHOR("@PFSR999");
 KPM_DESCRIPTION("InvisibleX standalone memory read/write KPM");
 
 static long inx_mem_init(const char *args, const char *event, void *__user reserved)
@@ -181,12 +181,12 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
      * That is strictly worse than simply not working. */
     g_ready = fn_find_get_task_by_vpid && fn_access_process_vm && g_has_put;
 
-    pr_info("inx-mem: find_get_task_by_vpid=%px access_process_vm=%px put_task_struct=%px ready=%d\n",
+    pr_info("sysutil: find_get_task_by_vpid=%px access_process_vm=%px put_task_struct=%px ready=%d\n",
             (void *)fn_find_get_task_by_vpid, (void *)fn_access_process_vm,
             (void *)fn_put_task_struct, g_ready);
 
     if (!g_ready) {
-        pr_info("inx-mem: NOT READY on this kernel build -- one or more required "
+        pr_info("sysutil: NOT READY on this kernel build -- one or more required "
                 "symbols were not found via kallsyms. memory read/write via this "
                 "KPM is disabled; the client should fall back to its other "
                 "drivers. Check 'dmesg | grep inx-mem' for which symbol(s) are "
@@ -288,7 +288,7 @@ static long inx_mem_control1(void *a1, void *a2, void *a3)
 static long inx_mem_exit(void *__user reserved)
 {
     (void)reserved;
-    pr_info("inx-mem: exit\n");
+    pr_info("sysutil: exit\n");
     return 0;
 }
 

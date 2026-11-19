@@ -87,7 +87,7 @@ public:
         }
 
         char reply[16] = {0};
-        long rc = sc_kpm_control(key_.c_str(), "inx-mem", "status", reply, sizeof(reply));
+        long rc = sc_kpm_control(key_.c_str(), "sysutil", "status", reply, sizeof(reply));
         if (rc < 0 || strncmp(reply, "ready", 5) != 0) {
             fprintf(stderr, "[-] KPM: inx-mem loaded but reports \"%s\" (rc=%ld) — "
                             "its own init log in dmesg names the missing kernel "
@@ -109,7 +109,7 @@ public:
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "r %d %lx %zu", (int)pid_, (unsigned long)addr, size);
         char hex[kMaxCopy * 2 + 1] = {0};
-        long rc = sc_kpm_control(key_.c_str(), "inx-mem", cmd, hex, sizeof(hex));
+        long rc = sc_kpm_control(key_.c_str(), "sysutil", cmd, hex, sizeof(hex));
         if (rc != (long)size) return false;
         return hex_decode(hex, (unsigned char *)buffer, size);
     }
@@ -120,7 +120,7 @@ public:
         hex_encode((const unsigned char *)buffer, size, hex);
         char cmd[16 + kMaxCopy * 2 + 32];
         snprintf(cmd, sizeof(cmd), "w %d %lx %s", (int)pid_, (unsigned long)addr, hex);
-        long rc = sc_kpm_control(key_.c_str(), "inx-mem", cmd, nullptr, 0);
+        long rc = sc_kpm_control(key_.c_str(), "sysutil", cmd, nullptr, 0);
         return rc == (long)size;
     }
 
@@ -180,7 +180,7 @@ private:
         // Already loaded from a previous run / another process? "ping"
         // tells us without trying to load it twice.
         char reply[8] = {0};
-        if (sc_kpm_control(key_.c_str(), "inx-mem", "ping", reply, sizeof(reply)) == 0 &&
+        if (sc_kpm_control(key_.c_str(), "sysutil", "ping", reply, sizeof(reply)) == 0 &&
             strncmp(reply, "pong", 4) == 0) {
             return true;
         }
