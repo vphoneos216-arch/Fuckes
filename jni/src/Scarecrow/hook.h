@@ -1107,6 +1107,14 @@ void EspThreadFunc(){
         buf.fovRadius    = fovRadius;
         buf.fovHasTarget = false;
 
+        // [NEW] Drag Headshot must not be coupled to the FOV Circle
+        // slider -- its own candidate-selection radius, used below to
+        // widen the shared "is this enemy near the crosshair" check
+        // only when DragHeadshot is actually on, so it still finds a
+        // candidate even when the FOV Range slider is set smaller
+        // than Drag Headshot's own radius.
+        float dragHSRadiusPx = (g_DragHSRadiusPct/100.0f) * sh2;
+
         // ── POINTER CHAIN (more retries) ────────────────────
         uintptr_t GF=0,P2=0,BG=0,MM=0,lp=0,dict=0,elist=0;
         int matchState=0;
@@ -1383,7 +1391,11 @@ void EspThreadFunc(){
                     auto sc = W2S(mx, bonePos);
                     float dx = sc.X-sw2, dy = sc.Y-sh2;
                     float sd = sqrtf(dx*dx+dy*dy);
-                    if(sd <= fovRadius){
+                    // [NEW] widen to Drag Headshot's own radius when it's
+                    // on and that radius is bigger than the FOV circle --
+                    // see dragHSRadiusPx comment above.
+                    float selectRadius = DragHeadshot ? fmaxf(fovRadius, dragHSRadiusPx) : fovRadius;
+                    if(sd <= selectRadius){
                         // [RE-ADDED] AimLock back in this filter — without
                         // it, Collider Lock had no target-selection path
                         // of its own at all: g_CurrentBestTarget (which
@@ -1393,7 +1405,13 @@ void EspThreadFunc(){
                         // set and the collider loop always saw "no target
                         // selected" no matter what its own checkbox/
                         // thread fixes did.
-                        if((AimSilent || BrutalBT || HardwareBT || BodyKill || AimLock) && sd < bestSADist){
+                        // [FIX] DragHeadshot added -- without it,
+                        // g_CurrentBestTarget (which
+                        // UpdateDragHeadshotThread reads) never got
+                        // populated when Drag Headshot was the only
+                        // feature on, so the function always saw "no
+                        // target selected" and silently did nothing.
+                        if((AimSilent || BrutalBT || HardwareBT || BodyKill || AimLock || DragHeadshot) && sd < bestSADist){
                             bestSADist = sd;
                             bestE_SA   = e;
                             bestSAPos  = bonePos;
@@ -1428,10 +1446,10 @@ void EspThreadFunc(){
 
         {
             std::lock_guard<std::mutex>lk(g_SA_mtx);
-            if((AimSilent || BrutalBT || HardwareBT || BodyKill) && bestE_SA){
+            if((AimSilent || BrutalBT || HardwareBT || BodyKill || DragHeadshot) && bestE_SA){
                     g_CurrentBestTarget = bestE_SA;
                 }
-                if((AimSilent || BrutalBT || HardwareBT || BodyKill) && bestE_SA)
+                if((AimSilent || BrutalBT || HardwareBT || BodyKill || DragHeadshot) && bestE_SA)
                 g_SA_tgt = bestSAPos;
             else
                 g_SA_tgt = Vector3{0,0,0};
