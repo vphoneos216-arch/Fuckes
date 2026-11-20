@@ -55,6 +55,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cstdio>
+#include <sys/types.h>
 #include <sys/prctl.h>
 #include <errno.h>
 
@@ -99,8 +101,11 @@ enum {
 #define INC_MAX_GP_OVERRIDE 10
 #define INC_MAX_FP_OVERRIDE 10
 
-#pragma pack(push, 1)
-
+/* Natural alignment, NOT packed: the module's own offsets require the
+ * padding. gp_reg_values sits at +72, not +68, because the uint64_t array
+ * is 8-byte aligned after int32_t gp_reg_indices[10] ends at +68. The
+ * static_asserts at the bottom are what actually hold this to the
+ * module's layout. */
 struct inc_mem_patch {          /* hwbp_override.mem_patches[3] element    */
     int64_t  offset;            /* 32 bytes each (376..472 for 3)          */
     uint32_t len;
@@ -120,7 +125,10 @@ struct inc_hwbp_override {                  /* struct hwbp_override, 568 B */
     uint32_t is_write_fp_regs;              /* +152  */
     int32_t  fp_reg_count;                  /* +156  */
     int32_t  fp_reg_indices[10];            /* +160  */
-    uint64_t fp_reg_values[10];             /* +200  */
+    /* 128 bits per entry: [i][0] low half, [i][1] high half. FP/SIMD
+     * registers are 128-bit, which is why this is 160 bytes and not 80 --
+     * fp_reg_is_f64_mask then says how to read the low half. */
+    uint64_t fp_reg_values[10][2];          /* +200  */
     uint32_t fp_reg_is_f64_mask;            /* +360  */
     uint32_t is_mem_patch;                  /* +364  */
     int32_t  mem_patch_base_reg;            /* +368  */
@@ -205,8 +213,6 @@ struct inc_req_hwbp_hits {                  /* req_hwbp_hits, 32 B         */
     int32_t  out_len;                       /* capacity (see get_hits)     */
     int32_t  real_count;                    /* +28, written by the module  */
 };
-
-#pragma pack(pop)
 
 /* If any of these fire, the struct above stopped matching the module and
  * every call would be feeding it garbage -- better to fail the build. */
@@ -311,8 +317,9 @@ public:
         for (int i = 0; i < count; ++i) {
             uint32_t bits = 0;
             memcpy(&bits, &val[i], sizeof(bits));
-            r.ov.fp_reg_indices[i] = idx[i];
-            r.ov.fp_reg_values[i]  = (uint64_t)bits;   /* f32 in the low half */
+            r.ov.fp_reg_indices[i]   = idx[i];
+            r.ov.fp_reg_values[i][0] = (uint64_t)bits; /* f32 in the low half */
+            r.ov.fp_reg_values[i][1] = 0;
         }
         r.ov.fp_reg_is_f64_mask = 0;                   /* all single precision */
         r.ext.ext_magic         = INC_EXT_MAGIC;
@@ -336,8 +343,9 @@ public:
         for (int i = 0; i < count; ++i) {
             uint32_t bits = 0;
             memcpy(&bits, &val[i], sizeof(bits));
-            r.ov.fp_reg_indices[i] = idx[i];
-            r.ov.fp_reg_values[i]  = (uint64_t)bits;
+            r.ov.fp_reg_indices[i]   = idx[i];
+            r.ov.fp_reg_values[i][0] = (uint64_t)bits;
+            r.ov.fp_reg_values[i][1] = 0;
         }
         r.ov.fp_reg_is_f64_mask = 0;
         r.ext.ext_magic         = INC_EXT_MAGIC;
