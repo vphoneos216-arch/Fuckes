@@ -240,42 +240,93 @@ static uintptr_t ix_probe_resolve_fn() {
                      mp.perms, (unsigned long)mp.fileoff,
                      (unsigned long)(mp.end - mp.start));
 
-    /* Build the candidate list. Two conventions are possible and which one
-     * is right depends on the actual segment layout, so BOTH are tried and
-     * the prologue comparison decides -- nothing is assumed:
-     *   A) load_base = mapping.start - mapping.fileoff, address = base + RVA
-     *   B) address = mapping.start + (RVA - mapping.fileoff), when the RVA
-     *      falls inside that mapping's file range                        */
-    std::vector<std::pair<uintptr_t, std::string>> cands;
+    /* Build the candidate list.
+     *
+     * IMPORTANT, learned from the first probe run on this device: the same
+     * file bytes appear TWICE in this process. libil2cpp.so is also mapped
+     * as one big read-only full-file mapping (fileoff=0, ~0xb32d000 long),
+     * and the prologue matches there too -- but that page never executes,
+     * so an execute breakpoint placed on it can never fire. The first run
+     * matched exactly that mapping and logged zero records for 15 minutes.
+     *
+     * So only an address inside an EXECUTABLE mapping is accepted. A match
+     * in a non-executable mapping is still logged, as information, and then
+     * rejected.
+     *
+     * Two address conventions are possible depending on segment layout, so
+     * both are tried per mapping and the prologue bytes decide -- nothing is
+     * assumed. (The first run established that on this build the file-offset
+     * convention is the correct one, but the check is kept either way.) */
+    struct IxProbeCand {
+        uintptr_t   addr;
+        const char* how;
+        bool        exec;
+    };
+    std::vector<IxProbeCand> cands;
     for (const auto& mp : maps) {
-        uintptr_t loadBase = mp.start - mp.fileoff;
-        cands.push_back({ loadBase + IX_PROBE_FN_RVA,     "loadbase+RVA" });
-        cands.push_back({ loadBase + IX_PROBE_FN_FILEOFF, "loadbase+fileoffset" });
+        const bool isExec = strchr(mp.perms, 'x') != nullptr;
+        const uintptr_t loadBase = mp.start - mp.fileoff;
+
+        /* The function's file offset lies inside this mapping's file range */
         if (IX_PROBE_FN_FILEOFF >= mp.fileoff) {
-            uintptr_t inSeg = mp.start + (IX_PROBE_FN_FILEOFF - mp.fileoff);
-            if (inSeg < mp.end) cands.push_back({ inSeg, "segment+delta(fileoffset)" });
+            uintptr_t a = mp.start + (IX_PROBE_FN_FILEOFF - mp.fileoff);
+            if (a + sizeof(IX_PROBE_PROLOGUE) <= mp.end)
+                cands.push_back({ a, "segment+fileoffset-delta", isExec });
+        }
+        if (IX_PROBE_FN_RVA >= mp.fileoff) {
+            uintptr_t a = mp.start + (IX_PROBE_FN_RVA - mp.fileoff);
+            if (a + sizeof(IX_PROBE_PROLOGUE) <= mp.end)
+                cands.push_back({ a, "segment+RVA-delta", isExec });
+        }
+        cands.push_back({ loadBase + IX_PROBE_FN_FILEOFF, "loadbase+fileoffset", isExec });
+        cands.push_back({ loadBase + IX_PROBE_FN_RVA,     "loadbase+RVA",        isExec });
+    }
+
+    /* Executable candidates first, so a non-exec match can never win. */
+    uintptr_t nonExecMatch = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool wantExec = (pass == 0);
+        for (const auto& c : cands) {
+            if (c.exec != wantExec) continue;
+            uint8_t buf[16] = {0};
+            if (!ix_probe_read(c.addr, buf, sizeof(buf))) {
+                if (c.exec)
+                    ix_probe_log("candidate %016lx (%s, executable): read failed",
+                                 (unsigned long)c.addr, c.how);
+                continue;
+            }
+            bool match = memcmp(buf, IX_PROBE_PROLOGUE, sizeof(buf)) == 0;
+            /* Executable candidates are few, so log their bytes either way --
+             * a near-miss there would mean the code was patched in place. */
+            if (c.exec || match)
+                ix_probe_log("candidate %016lx (%s, %s): %02x %02x %02x %02x "
+                             "%02x %02x %02x %02x %02x %02x %02x %02x "
+                             "%02x %02x %02x %02x  -> %s",
+                             (unsigned long)c.addr, c.how,
+                             c.exec ? "executable" : "NOT executable",
+                             buf[0], buf[1], buf[2],  buf[3],  buf[4],  buf[5],
+                             buf[6], buf[7], buf[8],  buf[9],  buf[10], buf[11],
+                             buf[12], buf[13], buf[14], buf[15],
+                             match ? "MATCH" : "no");
+            if (!match) continue;
+            if (c.exec) return c.addr;
+            if (!nonExecMatch) nonExecMatch = c.addr;
         }
     }
 
-    for (const auto& c : cands) {
-        uint8_t buf[16] = {0};
-        if (!ix_probe_read(c.first, buf, sizeof(buf))) {
-            ix_probe_log("candidate %016lx (%s): read failed",
-                         (unsigned long)c.first, c.second.c_str());
-            continue;
-        }
-        bool match = memcmp(buf, IX_PROBE_PROLOGUE, sizeof(buf)) == 0;
-        ix_probe_log("candidate %016lx (%s): %02x %02x %02x %02x %02x %02x %02x %02x "
-                     "%02x %02x %02x %02x %02x %02x %02x %02x  -> %s",
-                     (unsigned long)c.first, c.second.c_str(),
-                     buf[0], buf[1], buf[2],  buf[3],  buf[4],  buf[5],  buf[6],  buf[7],
-                     buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
-                     match ? "MATCH" : "no");
-        if (match) return c.first;
+    if (nonExecMatch) {
+        ix_probe_log("resolve: the prologue was found at %016lx but only in a "
+                     "non-executable mapping (the read-only full-file mapping). "
+                     "Code never runs there, so arming a breakpoint on it would "
+                     "never fire -- arming nothing. No executable mapping covered "
+                     "file offset %#llx this time.",
+                     (unsigned long)nonExecMatch,
+                     (unsigned long long)IX_PROBE_FN_FILEOFF);
+    } else {
+        ix_probe_log("resolve: no candidate matched the known prologue -- arming "
+                     "nothing. Most likely the game build changed since the dump "
+                     "was taken.");
     }
-
-    ix_probe_log("resolve: no candidate matched the known prologue -- arming nothing. "
-                 "Most likely the game build changed since the dump was taken.");
     return 0;
 }
 
