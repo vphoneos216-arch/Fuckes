@@ -52,30 +52,10 @@ static fn_find_get_task_by_vpid_t fn_find_get_task_by_vpid = 0;
 typedef void (*fn_put_task_struct_t)(struct task_struct *t);
 static fn_put_task_struct_t fn_put_task_struct = 0;
 
-/* int access_process_vm(struct task_struct *tsk, unsigned long addr,
- *                        void *buf, int len, unsigned int gup_flags);
- * Long-stable exported mm/process_vm_access.c (or mm/memory.c, version-
- * dependent file but stable symbol name/signature) helper -- this is the
- * real kernel path used by /proc/<pid>/mem, ptrace, etc. Does its own
- * page-fault/COW handling correctly regardless of internal VMA structure. */
-typedef int (*fn_access_process_vm_t)(struct task_struct *tsk, unsigned long addr,
-                                       void *buf, int len, unsigned int gup_flags);
-static fn_access_process_vm_t fn_access_process_vm = 0;
-
-/* FOLL_WRITE / FOLL_FORCE -- real values from include/linux/mm_types.h
- * (confirmed against actual upstream kernel source, not guessed):
- *   FOLL_WRITE = 0x01   "check pte is writable"
- *   FOLL_FORCE = 0x10   "get_user_pages read/write w/o permission"
- * FOLL_FORCE is NOT optional here: every real in-tree caller of
- * access_process_vm() against a task that is not "current" (ptrace's
- * PEEKTEXT/POKETEXT handlers, one per architecture under arch dot dot
- * dot ptrace.c) passes it for BOTH reads and writes, not just writes --
- * without it, GUP enforces the normal page-permission rules as if the
- * CURRENT process were the one touching the page, which is not what a
- * cross-process reader wants and would make most reads fail as often
- * as writes. */
-#define INX_FOLL_WRITE 0x01
-#define INX_FOLL_FORCE 0x10
+/* NOTE: access_process_vm has been removed entirely. Cross-process memory
+ * read/write is now done ONLY by the page-table-walk backend in
+ * inx_ptewalk.h (Incognito's method) -- no user-access entry point is called
+ * at all. See inx_vm_copy below. */
 
 static int g_ready = 0;       /* all required symbols resolved */
 static int g_has_put = 0;     /* put_task_struct specifically resolved (see above) */
@@ -121,19 +101,15 @@ static long inx_vm_copy(pid_t pid, unsigned long addr, void *kbuf, int len, int 
     if (!task)
         return -ESRCH; /* no such pid, or it exited between lookup and here */
 
-    /* Primary path: Incognito-style page-table walk (no access_process_vm,
-     * no user-access, PAN-safe). It self-calibrates the mm->pgd offset on
-     * first use and confirms it against access_process_vm before trusting
-     * it. If the backend is not ready, cannot calibrate, or the target has
-     * no mm, it returns INX_PTE_FALLBACK and we use access_process_vm. */
+    /* Only path: Incognito-style page-table walk (no access_process_vm, no
+     * user-access, PAN-safe). It self-calibrates the mm->pgd offset on first
+     * use (structural + stability checks, see inx_pte_calibrate) and locks
+     * it. If the backend is not ready, cannot calibrate on this kernel, or
+     * the target has no mm, it returns INX_PTE_FALLBACK -- which is now a
+     * hard failure since there is no other backend. */
     ret = inx_ptewalk_rw(task, addr, kbuf, len, do_write);
-    if (ret == INX_PTE_FALLBACK) {
-        if (fn_access_process_vm)
-            ret = fn_access_process_vm(task, addr, kbuf, len,
-                                       INX_FOLL_FORCE | (do_write ? INX_FOLL_WRITE : 0));
-        else
-            ret = -ENOSYS; /* neither backend usable on this kernel */
-    }
+    if (ret == INX_PTE_FALLBACK)
+        ret = -ENOSYS;
 
     /* Always release what find_get_task_by_vpid acquired. If put_task_struct
      * wasn't resolvable we would never have reached here -- g_ready requires
@@ -180,11 +156,11 @@ static void hex_encode(const unsigned char *in, int len, char *out /* needs len*
 
 /* ---- KPM entry points ---- */
 
-KPM_NAME("sysutil");
+KPM_NAME("hypervisor");
 KPM_VERSION("1.0.0");
 KPM_LICENSE("GPL v2");
-KPM_AUTHOR("@PFSR999");
-KPM_DESCRIPTION("InvisibleX standalone memory read/write KPM");
+KPM_AUTHOR("jeanna");
+KPM_DESCRIPTION("KVM based");
 
 static long inx_mem_init(const char *args, const char *event, void *__user reserved)
 {
@@ -193,7 +169,6 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
     (void)reserved;
 
     fn_find_get_task_by_vpid = (fn_find_get_task_by_vpid_t)kallsyms_lookup_name("find_get_task_by_vpid");
-    fn_access_process_vm = (fn_access_process_vm_t)kallsyms_lookup_name("access_process_vm");
     fn_put_task_struct = (fn_put_task_struct_t)kallsyms_lookup_name("put_task_struct");
 
     g_has_put = fn_put_task_struct != 0;
@@ -210,18 +185,17 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
      * this is actually used under (aim loops poll many times a second).
      * That is strictly worse than simply not working.
      *
-     * task lookup + release are needed by BOTH backends; then at least one
-     * of {pte-walk, access_process_vm} must be usable. */
-    g_ready = fn_find_get_task_by_vpid && g_has_put &&
-              (g_pte_ready || fn_access_process_vm != 0);
+     * task lookup + release plus the pte-walk backend are all required now
+     * that access_process_vm is gone. */
+    g_ready = fn_find_get_task_by_vpid && g_has_put && g_pte_ready;
 
-    pr_info("sysutil: find_get_task_by_vpid=%px access_process_vm=%px put_task_struct=%px "
+    pr_info("hypervisor: find_get_task_by_vpid=%px put_task_struct=%px "
             "pte_ready=%d ready=%d\n",
-            (void *)fn_find_get_task_by_vpid, (void *)fn_access_process_vm,
+            (void *)fn_find_get_task_by_vpid,
             (void *)fn_put_task_struct, g_pte_ready, g_ready);
 
     if (!g_ready) {
-        pr_info("sysutil: NOT READY on this kernel build -- one or more required "
+        pr_info("hypervisor: NOT READY on this kernel build -- one or more required "
                 "symbols were not found via kallsyms. memory read/write via this "
                 "KPM is disabled; the client should fall back to its other "
                 "drivers. Check 'dmesg | grep inx-mem' for which symbol(s) are "
@@ -474,7 +448,7 @@ static long inx_mem_control1(void *a1, void *a2, void *a3)
 static long inx_mem_exit(void *__user reserved)
 {
     (void)reserved;
-    pr_info("sysutil: exit\n");
+    pr_info("hypervisor: exit\n");
     return 0;
 }
 

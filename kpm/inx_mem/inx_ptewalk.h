@@ -4,26 +4,27 @@
 /*
  * inx_ptewalk -- cross-process memory read/write by SOFTWARE PAGE-TABLE WALK.
  *
- * This is the read/write method used by the Incognito KPM, ported here as a
- * drop-in primary backend for inx_mem (access_process_vm stays as the
- * fallback, see inx_vm_copy in inx_mem.c). Instead of calling
- * access_process_vm() -- an easily-watched kernel entry point -- it walks the
- * target process's own page tables to turn a user virtual address into a
- * physical address, maps that physical address through the kernel linear map,
- * and copies with copy_{from,to}_kernel_nofault(). Because the data copy then
- * touches a KERNEL linear-map address (not a user address), PAN never trips
- * and no user-access path is used at all.
+ * This is the read/write method used by the Incognito KPM, and it is the ONLY
+ * memory read/write backend in inx_mem -- access_process_vm has been removed
+ * entirely. Instead of calling access_process_vm() -- an easily-watched kernel
+ * entry point -- it walks the target process's own page tables to turn a user
+ * virtual address into a physical address, maps that physical address through
+ * the kernel linear map, and copies with copy_{from,to}_kernel_nofault().
+ * Because the data copy then touches a KERNEL linear-map address (not a user
+ * address), PAN never trips and no user-access path is used at all.
  *
  * WHY THIS IS SAFE WHERE A NAIVE PTE-WALK IS NOT (the concern in inx_mem.c's
  * header): it does NOT touch the maple-tree / VMA structure. It only reads
  * mm->pgd and then walks hardware page tables, whose format is fixed by the
  * ARMv8 architecture, not by kernel version. The one kernel-build-specific
  * value -- the byte offset of the `pgd` field inside mm_struct -- is NOT
- * guessed: it is brute-forced from a candidate table and then CONFIRMED by
- * cross-checking the first bytes it produces against access_process_vm()
- * before it is ever trusted (see inx_pte_calibrate). If confirmation fails on
- * a given kernel, this backend reports "not calibrated" and inx_vm_copy falls
- * back to access_process_vm. Nothing here is hardcoded per device:
+ * guessed: it is brute-forced from a candidate table and then accepted only
+ * after passing structural + stability checks (valid multi-level walk, leaf
+ * low-12 bits match the VA, physical address inside RAM, and a re-read of the
+ * resolved page is stable), see inx_pte_calibrate. This is Incognito's own
+ * calibration -- fully self-contained, no access_process_vm. If no candidate
+ * passes, this backend reports "not calibrated" and the read/write fails
+ * (there is no other backend). Nothing here is hardcoded per device:
  *   - VA_BITS        : read from TCR_EL1.T0SZ at init
  *   - PAGE_OFFSET    : derived from VA_BITS   ((~0UL) << (VA_BITS-1))
  *   - PHYS_OFFSET    : read from the kernel's memstart_addr symbol
@@ -143,54 +144,45 @@ static int inx_read_pgd(void *mm, unsigned long pgd_off, unsigned long *pgd_va)
     return 0;
 }
 
-/* Try each candidate pgd offset against a known-mapped probe address, and
- * CONFIRM the winner by comparing the bytes it yields against what
- * access_process_vm() reads for the same address. Only a confirmed offset is
- * locked in. fn_access_process_vm is the one declared in inx_mem.c (this
- * header is included after it). If it is unavailable, fall back to a
- * structural accept (valid walk + sane physical address). */
-static int inx_pte_calibrate(struct task_struct *task, void *mm,
-                             unsigned long probe_va)
+/* 64 GB ceiling above memstart -- a sane upper bound for a resolved
+ * physical address on any phone, used only as a calibration tripwire. */
+#define INX_RAM_MAX  (64ULL << 30)
+
+/* Try each candidate pgd offset against a known-mapped probe address and
+ * accept the first that passes every structural + stability check. This is
+ * Incognito's own calibration style -- no access_process_vm, no external
+ * reference. A wrong offset is rejected because it has to clear ALL of:
+ *   - mm->pgd read looks like a kernel linear-map pointer (inx_read_pgd)
+ *   - the multi-level walk is fully valid down to a leaf
+ *   - the leaf's low 12 bits equal the VA's (true for any correct walk)
+ *   - the physical address lands inside RAM [memstart, memstart+64G)
+ *   - the resolved page reads back, twice, identically (a garbage chain
+ *     almost never yields a stable, re-readable page here)
+ * Only then is the offset locked in; until one locks, inx_ptewalk_rw
+ * reports not-ready to its caller. */
+static int inx_pte_calibrate(void *mm, unsigned long probe_va)
 {
     int i;
-    unsigned char ref[8];
-    int have_ref = 0;
-    int reflen = 8;
-
-    if (fn_access_process_vm) {
-        int n = fn_access_process_vm(task, probe_va, ref, reflen, INX_FOLL_FORCE);
-        if (n == reflen)
-            have_ref = 1;
-    }
 
     for (i = 0; i < INX_PGD_OFF_N; i++) {
         unsigned long off = INX_PGD_OFF_CANDIDATES[i];
         unsigned long pgd_va = 0, phys = 0;
-        unsigned char got[8];
+        unsigned char a[8], b[8];
 
         if (inx_read_pgd(mm, off, &pgd_va) != 0)
             continue;
         if (inx_pte_walk(pgd_va, probe_va, &phys) != 0)
             continue;
-
-        /* Low 12 bits of phys must equal low 12 bits of the VA. Always true
-         * for a correct walk; a sanity tripwire against a coincidental hit. */
         if ((phys & 0xfffUL) != (probe_va & 0xfffUL))
             continue;
-
-        if (have_ref) {
-            /* Strong confirmation: read the same bytes through the linear
-             * map and require them to match access_process_vm's view. */
-            if (p_cfkn(got, (void *)inx_pa_to_va(phys), reflen) != 0)
-                continue;
-            if (memcmp(got, ref, reflen) != 0)
-                continue;
-        } else {
-            /* No cross-check available: require the physical address to sit
-             * at or above memstart (inside RAM), a weak but non-zero guard. */
-            if (phys < g_phys_offset)
-                continue;
-        }
+        if (phys < g_phys_offset || phys >= g_phys_offset + INX_RAM_MAX)
+            continue;
+        if (p_cfkn(a, (void *)inx_pa_to_va(phys), sizeof(a)) != 0)
+            continue;
+        if (p_cfkn(b, (void *)inx_pa_to_va(phys), sizeof(b)) != 0)
+            continue;
+        if (memcmp(a, b, sizeof(a)) != 0)
+            continue;
 
         g_cal_pgd_off = off;
         g_cal_locked  = 1;
@@ -220,7 +212,7 @@ static long inx_ptewalk_rw(struct task_struct *task, unsigned long addr,
         return INX_PTE_FALLBACK;   /* kernel thread / no mm -- let fallback try */
 
     if (!g_cal_locked)
-        inx_pte_calibrate(task, mm, addr);
+        inx_pte_calibrate(mm, addr);
     if (!g_cal_locked) {
         p_mmput(mm);
         return INX_PTE_FALLBACK;
@@ -302,7 +294,7 @@ static void inx_ptewalk_resolve(void)
     g_pte_ready = p_get_task_mm && p_mmput && p_cfkn && p_ctkn &&
                   p_memstart && g_va_bits != 0;
 
-    pr_info("sysutil: ptewalk get_task_mm=%px mmput=%px cfkn=%px ctkn=%px "
+    pr_info("hypervisor: ptewalk get_task_mm=%px mmput=%px cfkn=%px ctkn=%px "
             "memstart=%lx va_bits=%lu page_off=%lx ready=%d\n",
             (void *)p_get_task_mm, (void *)p_mmput, (void *)p_cfkn,
             (void *)p_ctkn, g_phys_offset, g_va_bits, g_page_offset,

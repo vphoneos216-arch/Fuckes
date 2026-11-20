@@ -268,7 +268,7 @@ static void inx_hwbp_resolve(void)
     g_hwbp_ready = (p_register_user_hw_breakpoint != 0) &&
                    (p_unregister_hw_breakpoint != 0);
 
-    pr_info("sysutil/hwbp: reg_user_hwbp=%px unreg_hwbp=%px fpsimd_save=%px "
+    pr_info("hypervisor/hwbp: reg_user_hwbp=%px unreg_hwbp=%px fpsimd_save=%px "
             "fpsimd_update=%px ready=%d\n",
             (void *)p_register_user_hw_breakpoint,
             (void *)p_unregister_hw_breakpoint,
@@ -326,7 +326,7 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
     /* register_user_hw_breakpoint returns an ERR_PTR on failure. Treat any
      * value in the top error page as failure without assuming IS_ERR macros. */
     if (!ev || (unsigned long)ev >= (unsigned long)(-4095)) {
-        pr_info("sysutil/hwbp: register_user_hw_breakpoint failed ev=%px addr=%llx pid=%d\n",
+        pr_info("hypervisor/hwbp: register_user_hw_breakpoint failed ev=%px addr=%llx pid=%d\n",
                 (void *)ev, (unsigned long long)addr, (int)pid);
         return -EFAULT;
     }
@@ -338,7 +338,7 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
     g_hwbp_slots[slot].addr   = addr;
     g_hwbp_slots[slot].in_use = 1;
 
-    pr_info("sysutil/hwbp: armed slot=%d pid=%d addr=%llx ev=%px\n",
+    pr_info("hypervisor/hwbp: armed slot=%d pid=%d addr=%llx ev=%px\n",
             slot, (int)pid, (unsigned long long)addr, (void *)ev);
     return slot;
 }
