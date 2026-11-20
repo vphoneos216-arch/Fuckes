@@ -80,6 +80,20 @@ static fn_access_process_vm_t fn_access_process_vm = 0;
 static int g_ready = 0;       /* all required symbols resolved */
 static int g_has_put = 0;     /* put_task_struct specifically resolved (see above) */
 
+/* Hardware-breakpoint register/memory override engine. Included AFTER the
+ * fn_find_get_task_by_vpid / fn_put_task_struct declarations above, which it
+ * reuses. Self-contained otherwise; see inx_hwbp.h for the full design and
+ * safety notes. Loading the module arms nothing -- a breakpoint exists only
+ * after a valid "hbadd" command. */
+#include "inx_hwbp.h"
+
+/* Page-table-walk read/write backend (Incognito's method). Included AFTER
+ * fn_access_process_vm and the INX_FOLL_* defines above, which its
+ * calibration cross-check reuses. Loading it resolves nothing by itself;
+ * inx_ptewalk_resolve() in init does that, and it stays fully off unless
+ * every symbol it needs is present. */
+#include "inx_ptewalk.h"
+
 /* ---- bounded, gated memory copy ---- */
 
 /* Hard bound -- never trust caller-supplied length blindly. Kept small
@@ -107,8 +121,19 @@ static long inx_vm_copy(pid_t pid, unsigned long addr, void *kbuf, int len, int 
     if (!task)
         return -ESRCH; /* no such pid, or it exited between lookup and here */
 
-    ret = fn_access_process_vm(task, addr, kbuf, len,
-                                INX_FOLL_FORCE | (do_write ? INX_FOLL_WRITE : 0));
+    /* Primary path: Incognito-style page-table walk (no access_process_vm,
+     * no user-access, PAN-safe). It self-calibrates the mm->pgd offset on
+     * first use and confirms it against access_process_vm before trusting
+     * it. If the backend is not ready, cannot calibrate, or the target has
+     * no mm, it returns INX_PTE_FALLBACK and we use access_process_vm. */
+    ret = inx_ptewalk_rw(task, addr, kbuf, len, do_write);
+    if (ret == INX_PTE_FALLBACK) {
+        if (fn_access_process_vm)
+            ret = fn_access_process_vm(task, addr, kbuf, len,
+                                       INX_FOLL_FORCE | (do_write ? INX_FOLL_WRITE : 0));
+        else
+            ret = -ENOSYS; /* neither backend usable on this kernel */
+    }
 
     /* Always release what find_get_task_by_vpid acquired. If put_task_struct
      * wasn't resolvable we would never have reached here -- g_ready requires
@@ -173,17 +198,27 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
 
     g_has_put = fn_put_task_struct != 0;
 
+    /* Resolve the page-table-walk backend (sets g_pte_ready). Done before
+     * the readiness check below so the module can be READY on a kernel that
+     * has the pte-walk symbols even if access_process_vm is absent. */
+    inx_ptewalk_resolve();
+
     /* Fail CLOSED, not degraded: leaking a task_struct reference on every
      * read/write call (if we proceeded without put_task_struct) would pin
      * exited processes' task_structs forever -- a real, cumulative kernel
      * memory leak and eventual instability under the repeated-call load
      * this is actually used under (aim loops poll many times a second).
-     * That is strictly worse than simply not working. */
-    g_ready = fn_find_get_task_by_vpid && fn_access_process_vm && g_has_put;
+     * That is strictly worse than simply not working.
+     *
+     * task lookup + release are needed by BOTH backends; then at least one
+     * of {pte-walk, access_process_vm} must be usable. */
+    g_ready = fn_find_get_task_by_vpid && g_has_put &&
+              (g_pte_ready || fn_access_process_vm != 0);
 
-    pr_info("sysutil: find_get_task_by_vpid=%px access_process_vm=%px put_task_struct=%px ready=%d\n",
+    pr_info("sysutil: find_get_task_by_vpid=%px access_process_vm=%px put_task_struct=%px "
+            "pte_ready=%d ready=%d\n",
             (void *)fn_find_get_task_by_vpid, (void *)fn_access_process_vm,
-            (void *)fn_put_task_struct, g_ready);
+            (void *)fn_put_task_struct, g_pte_ready, g_ready);
 
     if (!g_ready) {
         pr_info("sysutil: NOT READY on this kernel build -- one or more required "
@@ -192,6 +227,11 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
                 "drivers. Check 'dmesg | grep inx-mem' for which symbol(s) are "
                 "0x0 above and report that line.\n");
     }
+
+    /* Resolve the HWBP-override symbols separately. This is independent of
+     * the mem r/w readiness above: if these are missing, mem r/w still works
+     * and only the "hb*" commands report NOT READY. Arms nothing here. */
+    inx_hwbp_resolve();
 
     return 0;
 }
@@ -274,6 +314,152 @@ static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
             return -EINVAL;
 
         return inx_vm_copy((pid_t)pid_l, addr, buf, n, 1);
+    }
+
+    /* ---- hardware-breakpoint override commands ---- */
+
+    if (!strncmp(args, "hbstatus", 8)) {
+        const char *s = g_hwbp_ready ? "ready" : "not_ready";
+        compat_copy_to_user(out_msg, s, strlen(s) + 1);
+        return 0;
+    }
+
+    /* "hbadd <pid_dec> <addr_hex>" -> out_msg = slot index (decimal string),
+     * return value is the slot index or a negative errno. */
+    if (!strncmp(args, "hbadd ", 6)) {
+        long pid_l = 0;
+        unsigned long addr = 0;
+        const char *p = args + 6;
+        int slot;
+        char num[16];
+        int ni = 0, v;
+
+        while (*p >= '0' && *p <= '9') { pid_l = pid_l * 10 + (*p - '0'); p++; }
+        while (*p == ' ') p++;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+        while (hexval(*p) >= 0) { addr = (addr << 4) | (unsigned long)hexval(*p); p++; }
+
+        slot = inx_hwbp_add((pid_t)pid_l, (inx_u64)addr);
+        if (slot < 0)
+            return slot;
+
+        /* encode slot index as a short decimal string */
+        v = slot;
+        if (v == 0) { num[ni++] = '0'; }
+        else { char tmp[16]; int t = 0; while (v > 0 && t < 15) { tmp[t++] = '0' + (v % 10); v /= 10; }
+               while (t > 0) num[ni++] = tmp[--t]; }
+        num[ni] = '\0';
+        compat_copy_to_user(out_msg, num, ni + 1);
+        return slot;
+    }
+
+    /* "hbset <slot_dec> <tokens...>" rewrites the override of an existing slot
+     * WITHOUT re-registering the perf_event -- this is the per-frame hot path.
+     * Tokens (space separated):
+     *   g<idx>=<hex>   GP reg override, idx 0..30, value up to 16 hex digits
+     *   f<idx>=<hex>   FP reg override, idx 0..31, value up to 32 hex digits
+     *                  (for s<idx> float, low 32 bits = the float's bit pattern)
+     *   c<base>:<off_hex>:<expect_hex>  condition: only apply when the
+     *                  expect bytes match [regs[base]+off]
+     *   (no c token clears any previous condition)
+     */
+    if (!strncmp(args, "hbset ", 6)) {
+        long slot_l = 0;
+        const char *p = args + 6;
+        struct inx_hwbp_slot *s;
+        inx_u32 gp_n = 0, fp_n = 0;
+        inx_u32 gp_i[INX_HWBP_MAX_GP]; inx_u64 gp_v[INX_HWBP_MAX_GP];
+        inx_u32 fp_i[INX_HWBP_MAX_FP]; __uint128_t fp_v[INX_HWBP_MAX_FP];
+        inx_u32 cond_on = 0, cond_base = 0, cond_len = 0;
+        inx_s64 cond_off = 0;
+        inx_u8  cond_exp[INX_HWBP_COND_MAX];
+
+        while (*p >= '0' && *p <= '9') { slot_l = slot_l * 10 + (*p - '0'); p++; }
+        if (slot_l < 0 || slot_l >= INX_HWBP_SLOTS)
+            return -EINVAL;
+        s = &g_hwbp_slots[slot_l];
+        if (!s->in_use)
+            return -ENOENT;
+
+        while (*p) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+
+            if ((*p == 'g' || *p == 'f')) {
+                int is_fp = (*p == 'f');
+                unsigned idx = 0;
+                p++;
+                while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; }
+                if (*p != '=') return -EINVAL;
+                p++;
+                if (!is_fp) {
+                    inx_u64 val = 0;
+                    while (hexval(*p) >= 0) { val = (val << 4) | (inx_u64)hexval(*p); p++; }
+                    if (idx < 31 && gp_n < INX_HWBP_MAX_GP) {
+                        gp_i[gp_n] = idx; gp_v[gp_n] = val; gp_n++;
+                    }
+                } else {
+                    __uint128_t val = 0;
+                    while (hexval(*p) >= 0) { val = (val << 4) | (__uint128_t)hexval(*p); p++; }
+                    if (idx < 32 && fp_n < INX_HWBP_MAX_FP) {
+                        fp_i[fp_n] = idx; fp_v[fp_n] = val; fp_n++;
+                    }
+                }
+            } else if (*p == 'c') {
+                unsigned base = 0; inx_s64 off = 0; int neg = 0; int bn = 0;
+                p++;
+                while (*p >= '0' && *p <= '9') { base = base * 10 + (*p - '0'); p++; }
+                if (*p != ':') return -EINVAL;
+                p++;
+                if (*p == '-') { neg = 1; p++; }
+                while (hexval(*p) >= 0) { off = (off << 4) | hexval(*p); p++; }
+                if (neg) off = -off;
+                if (*p != ':') return -EINVAL;
+                p++;
+                /* expect bytes, hex pairs */
+                while (hexval(p[0]) >= 0 && hexval(p[1]) >= 0 && bn < INX_HWBP_COND_MAX) {
+                    cond_exp[bn++] = (inx_u8)((hexval(p[0]) << 4) | hexval(p[1]));
+                    p += 2;
+                }
+                cond_on = 1; cond_base = base; cond_off = off; cond_len = (inx_u32)bn;
+            } else {
+                /* unknown token -- skip to next space to stay robust */
+                while (*p && *p != ' ') p++;
+            }
+        }
+
+        /* publish into the slot so the handler sees a consistent view:
+         * drop counts to 0 first, write arrays, then set counts last. */
+        s->gp_count = 0; s->fp_count = 0; s->cond_active = 0;
+        __asm__ __volatile__("" ::: "memory");
+        {
+            inx_u32 k;
+            for (k = 0; k < gp_n; k++) { s->gp_idx[k] = gp_i[k]; s->gp_val[k] = gp_v[k]; }
+            for (k = 0; k < fp_n; k++) { s->fp_idx[k] = fp_i[k]; s->fp_val[k] = fp_v[k]; }
+            if (cond_on) {
+                s->cond_base = cond_base; s->cond_off = cond_off;
+                s->cond_len = cond_len;
+                for (k = 0; k < cond_len; k++) s->cond_expect[k] = cond_exp[k];
+            }
+        }
+        __asm__ __volatile__("" ::: "memory");
+        s->gp_count = gp_n; s->fp_count = fp_n; s->cond_active = cond_on;
+        return 0;
+    }
+
+    if (!strncmp(args, "hbdel ", 6)) {
+        long slot_l = 0;
+        const char *p = args + 6;
+        while (*p >= '0' && *p <= '9') { slot_l = slot_l * 10 + (*p - '0'); p++; }
+        if (slot_l < 0 || slot_l >= INX_HWBP_SLOTS)
+            return -EINVAL;
+        inx_hwbp_del_slot((int)slot_l);
+        return 0;
+    }
+
+    if (!strncmp(args, "hbclr", 5)) {
+        inx_hwbp_clear_all();
+        return 0;
     }
 
     return -EINVAL;
