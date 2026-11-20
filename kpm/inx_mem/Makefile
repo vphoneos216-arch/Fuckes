@@ -26,7 +26,10 @@ INCLUDE_DIRS := . include patch/include linux/include linux/arch/arm64/include l
 
 INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(dir))
 
-objs := inx_mem.o
+# inx_libc.o provides bare memcpy/memset/memmove/memcmp so compiler-
+# synthesized aggregate copies resolve inside the module (KParch does not
+# export the bare names, only kf_*). See inx_libc.c.
+objs := inx_mem.o inx_libc.o
 
 all: inx_mem.kpm
 
