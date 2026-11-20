@@ -55,6 +55,7 @@ void ix_retry_collider_injection();
 
 #include "wanbai.h"
 #include "Scarecrow/hook.h"
+#include "ix_pd_probe.h"
 #include "UI/bar.hpp"
 
 // WebUI Settings → menu_open: "vol" | "bar" (loader exports IX_MENU_OPEN)
@@ -3026,6 +3027,10 @@ int main(int argc,char* argv[]){
     StartAimLockNewThread();
     StartAimbotThread();
     StartEspThread();
+    // Measurement only, and only while /sdcard/Download/ix_probe.on exists.
+    // Touches no feature and no game state unless the separate override
+    // trigger file is also present. See ix_pd_probe.h for what it answers.
+    StartPdProbeWatch();
 
     game_pid=getProcessID(packageName);
     if(game_pid<=0) g_GameIsRunning=false;
