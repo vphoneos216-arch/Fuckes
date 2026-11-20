@@ -110,43 +110,75 @@ static const uint8_t IX_PROBE_PROLOGUE[16] = {
     0xed, 0x33, 0x12, 0x6d,  0xeb, 0x2b, 0x13, 0x6d
 };
 
-static const char* IX_PROBE_ON_FILE       = "/sdcard/Download/ix_probe.on";
-static const char* IX_PROBE_OVERRIDE_FILE = "/sdcard/Download/ix_probe_override.on";
-static const char* IX_PROBE_LOG_FILE      = "/sdcard/Download/pd_probe.txt";
+/* The process may run as root inside its own mount namespace, where
+ * /sdcard is not mounted at all. So every path below is tried, both for
+ * the trigger files and for the log. /data/local/tmp is the one that is
+ * always present for a root process; the /sdcard spellings are there so
+ * the log also lands somewhere a file manager can reach when it can. */
+static const char* IX_PROBE_DIRS[] = {
+    "/data/local/tmp",
+    "/sdcard/Download",
+    "/storage/emulated/0/Download",
+    "/data/media/0/Download",
+};
+static const size_t IX_PROBE_DIR_COUNT =
+    sizeof(IX_PROBE_DIRS) / sizeof(IX_PROBE_DIRS[0]);
 
 static std::atomic<bool> g_PdProbeRunning{false};
-
-/* ── log ──────────────────────────────────────────────────────────────── */
-static void ix_probe_log(const char* fmt, ...) {
-    FILE* f = fopen(IX_PROBE_LOG_FILE, "a");
-    if (!f) return;
-    struct timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    fprintf(f, "[%6ld.%03ld] ", (long)ts.tv_sec, (long)(ts.tv_nsec / 1000000));
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-    fputc('\n', f);
-    fclose(f);
-}
 
 static bool ix_probe_file_exists(const char* p) {
     struct stat st{};
     return stat(p, &st) == 0;
 }
 
-/* Reads the override delta out of the trigger file; falls back to 2.0 when
- * the file is empty or unparsable. Never silently uses a number the file
- * did not contain without saying so in the log. */
+/* Returns the first directory that holds the given trigger file, or null. */
+static const char* ix_probe_find_trigger(const char* name) {
+    static char path[256];
+    for (size_t i = 0; i < IX_PROBE_DIR_COUNT; ++i) {
+        snprintf(path, sizeof(path), "%s/%s", IX_PROBE_DIRS[i], name);
+        if (ix_probe_file_exists(path)) return IX_PROBE_DIRS[i];
+    }
+    return nullptr;
+}
+
+/* ── log: writes to every directory that accepts it ───────────────────── */
+static void ix_probe_log(const char* fmt, ...) {
+    struct timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    char msg[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    char path[256];
+    for (size_t i = 0; i < IX_PROBE_DIR_COUNT; ++i) {
+        snprintf(path, sizeof(path), "%s/pd_probe.txt", IX_PROBE_DIRS[i]);
+        FILE* f = fopen(path, "a");
+        if (!f) continue;
+        fprintf(f, "[%6ld.%03ld] %s\n",
+                (long)ts.tv_sec, (long)(ts.tv_nsec / 1000000), msg);
+        fclose(f);
+    }
+}
+
+/* Reads the override delta out of whichever directory holds the trigger
+ * file; falls back to 2.0 when the file is empty or unparsable. Never
+ * silently uses a number the file did not contain. */
 static float ix_probe_override_delta() {
-    FILE* f = fopen(IX_PROBE_OVERRIDE_FILE, "r");
-    if (!f) return 2.0f;
-    float v = 0.f;
-    int got = fscanf(f, "%f", &v);
-    fclose(f);
-    if (got != 1 || !std::isfinite(v)) return 2.0f;
-    return v;
+    char path[256];
+    for (size_t i = 0; i < IX_PROBE_DIR_COUNT; ++i) {
+        snprintf(path, sizeof(path), "%s/ix_probe_override.on", IX_PROBE_DIRS[i]);
+        FILE* f = fopen(path, "r");
+        if (!f) continue;
+        float v = 0.f;
+        int got = fscanf(f, "%f", &v);
+        fclose(f);
+        if (got == 1 && std::isfinite(v)) return v;
+        return 2.0f;
+    }
+    return 2.0f;
 }
 
 /* ── raw read that works with or without the kernel driver ────────────── */
@@ -252,10 +284,13 @@ static void ix_pd_probe_thread() {
     ix_probe_log("==== probe start (pid=%d) ====", (int)game_pid);
 
     uintptr_t fn = 0;
+    int waitLoops = 0;
     while (g_PdProbeRunning) {
-        if (game_pid > 0 && (g_driver != nullptr || game_pid > 0)) {
+        if (game_pid > 0) {
             fn = ix_probe_resolve_fn();
             if (fn) break;
+        } else if (++waitLoops % 10 == 0) {
+            ix_probe_log("waiting for the game process (game_pid=%d)", (int)game_pid);
         }
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
@@ -339,7 +374,7 @@ static void ix_pd_probe_thread() {
          * sets the 2-bit mask to WRITE on Q1 (the Y component) and writes
          * the shifted value back. Everything else in the record is left
          * exactly as captured. */
-        if (!overrideDone && ix_probe_file_exists(IX_PROBE_OVERRIDE_FILE) && count > 0) {
+        if (!overrideDone && ix_probe_find_trigger("ix_probe_override.on") && count > 0) {
             const float delta = ix_probe_override_delta();
             paradise_bp_record w = recs[0];
 
@@ -378,14 +413,23 @@ static void ix_pd_probe_thread() {
  * startup and then every 5 s, so the file can be created while the game
  * is already running. */
 static void ix_pd_probe_watch_thread() {
+    bool announced = false;
     for (;;) {
-        bool want = ix_probe_file_exists(IX_PROBE_ON_FILE);
+        const char* dir = ix_probe_find_trigger("ix_probe.on");
+        bool want = dir != nullptr;
         bool have = g_PdProbeRunning.load();
+        if (want && !announced) {
+            /* First thing written, so an empty log still proves the build
+             * actually contains the probe and found the trigger file. */
+            ix_probe_log("==== trigger found in %s, starting probe ====", dir);
+            announced = true;
+        }
         if (want && !have) {
             g_PdProbeRunning = true;
             std::thread(ix_pd_probe_thread).detach();
         } else if (!want && have) {
             g_PdProbeRunning = false;
+            announced = false;
         }
         std::this_thread::sleep_for(std::chrono::seconds(5));
     }
