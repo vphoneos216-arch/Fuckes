@@ -181,8 +181,18 @@ static int inx_pte_calibrate(void *mm, unsigned long probe_va)
             continue;
         if (p_cfkn(b, (void *)inx_pa_to_va(phys), sizeof(b)) != 0)
             continue;
-        if (memcmp(a, b, sizeof(a)) != 0)
-            continue;
+        /* byte-equal check WITHOUT memcmp: the KernelPatch KPM loader only
+         * resolves symbols it explicitly exports, and memcmp (kf_memcmp) is
+         * not guaranteed present on every KParch build -- referencing it made
+         * the whole module fail to load (-1). A tiny local loop has no such
+         * dependency. */
+        {
+            int _i, _eq = 1;
+            for (_i = 0; _i < (int)sizeof(a); _i++)
+                if (a[_i] != b[_i]) { _eq = 0; break; }
+            if (!_eq)
+                continue;
+        }
 
         g_cal_pgd_off = off;
         g_cal_locked  = 1;

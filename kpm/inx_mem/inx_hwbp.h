@@ -57,6 +57,19 @@
 #ifndef INX_HWBP_H
 #define INX_HWBP_H
 
+/* Zero memory WITHOUT emitting a memset() call. The KernelPatch KPM loader
+ * only resolves the symbols it exports, and a build whose libc-shim block
+ * lacks kf_memset would make the whole module fail to load (-1). The
+ * volatile byte pointer also stops the compiler from turning this loop back
+ * into a memset under -O2. Used in place of __builtin_memset below. */
+static inline void inx_bzero(void *p, unsigned long n)
+{
+    volatile unsigned char *b = (volatile unsigned char *)p;
+    unsigned long i;
+    for (i = 0; i < n; i++)
+        b[i] = 0;
+}
+
 /* ---- fixed-width types without pulling in kernel headers ---- */
 typedef unsigned int        inx_u32;
 typedef int                 inx_s32;
@@ -308,7 +321,7 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
 
     /* hw_breakpoint_init() equivalent, done by hand: zero, then set the
      * execute-breakpoint attributes. */
-    __builtin_memset(&attr, 0, sizeof(attr));
+    inx_bzero(&attr, sizeof(attr));
     attr.type         = INX_PERF_TYPE_BREAKPOINT;
     attr.size         = sizeof(struct inx_perf_event_attr); /* 128 */
     attr.bp_type      = INX_HW_BREAKPOINT_X;
@@ -332,7 +345,7 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
     }
 
     /* zero the override, mark in_use */
-    __builtin_memset(&g_hwbp_slots[slot], 0, sizeof(g_hwbp_slots[slot]));
+    inx_bzero(&g_hwbp_slots[slot], sizeof(g_hwbp_slots[slot]));
     g_hwbp_slots[slot].event  = ev;
     g_hwbp_slots[slot].pid    = (inx_u32)pid;
     g_hwbp_slots[slot].addr   = addr;
@@ -352,7 +365,7 @@ static void inx_hwbp_del_slot(int slot)
         return;
     if (p_unregister_hw_breakpoint && g_hwbp_slots[slot].event)
         p_unregister_hw_breakpoint(g_hwbp_slots[slot].event);
-    __builtin_memset(&g_hwbp_slots[slot], 0, sizeof(g_hwbp_slots[slot]));
+    inx_bzero(&g_hwbp_slots[slot], sizeof(g_hwbp_slots[slot]));
 }
 
 static void inx_hwbp_clear_all(void)
