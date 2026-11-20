@@ -74,6 +74,11 @@ static int g_has_put = 0;     /* put_task_struct specifically resolved (see abov
  * every symbol it needs is present. */
 #include "inx_ptewalk.h"
 
+/* In-kernel pid-by-name + module-base lookup (Incognito's two functional
+ * extras). Included after the task-lookup symbols it reuses. Pure VFS, no
+ * struct offsets. See inx_proc.h. */
+#include "inx_proc.h"
+
 /* ---- bounded, gated memory copy ---- */
 
 /* Hard bound -- never trust caller-supplied length blindly. Kept small
@@ -207,6 +212,10 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
      * and only the "hb*" commands report NOT READY. Arms nothing here. */
     inx_hwbp_resolve();
 
+    /* Resolve the pid-by-name / module-base VFS symbols. Independent too:
+     * if missing, only the "pidof"/"modbase" commands report failure. */
+    inx_proc_resolve();
+
     return 0;
 }
 
@@ -288,6 +297,54 @@ static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
             return -EINVAL;
 
         return inx_vm_copy((pid_t)pid_l, addr, buf, n, 1);
+    }
+
+    /* ---- in-kernel pid-by-name / module-base (Incognito's extras) ---- */
+
+    /* "pidof <name>" -> out_msg = decimal pid string; return value is the
+     * pid, or -ESRCH if no process cmdline contains <name>. */
+    if (!strncmp(args, "pidof ", 6)) {
+        const char *name = args + 6;
+        int pid = inx_find_pid_by_name(name);
+        char num[16]; int ni = 0, v;
+        if (pid < 0)
+            return -ESRCH;
+        v = pid;
+        if (v == 0) { num[ni++] = '0'; }
+        else { char tmp[16]; int t = 0; while (v > 0 && t < 15) { tmp[t++] = '0' + (v % 10); v /= 10; }
+               while (t > 0) num[ni++] = tmp[--t]; }
+        num[ni] = '\0';
+        compat_copy_to_user(out_msg, num, ni + 1);
+        return pid;
+    }
+
+    /* "modbase <pid_dec> <lib>" -> out_msg = lowercase hex base (no 0x);
+     * return 0 on success, -ENOENT if no mapping path contains <lib>. */
+    if (!strncmp(args, "modbase ", 8)) {
+        long pid_l = 0;
+        const char *p = args + 8;
+        unsigned long base;
+        char hx[20]; int hi = 0, started = 0, shift;
+
+        while (*p >= '0' && *p <= '9') { pid_l = pid_l * 10 + (*p - '0'); p++; }
+        while (*p == ' ') p++;
+        if (!*p)
+            return -EINVAL; /* no library name */
+
+        base = inx_module_base((int)pid_l, p);
+        if (!base)
+            return -ENOENT;
+
+        for (shift = 60; shift >= 0; shift -= 4) {
+            int nyb = (int)((base >> shift) & 0xf);
+            if (nyb || started || shift == 0) {
+                hx[hi++] = nyb < 10 ? ('0' + nyb) : ('a' + nyb - 10);
+                started = 1;
+            }
+        }
+        hx[hi] = '\0';
+        compat_copy_to_user(out_msg, hx, hi + 1);
+        return 0;
     }
 
     /* ---- hardware-breakpoint override commands ---- */
