@@ -94,6 +94,8 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include "Incognito/incognito_api.h"
+
 /* ── Ground truth taken from the device's own libil2cpp.so ─────────────── */
 #define IX_PROBE_FN_RVA       0x7589260ull   /* dump.cs RVA              */
 #define IX_PROBE_FN_FILEOFF   0x7585260ull   /* dump.cs file Offset      */
@@ -351,41 +353,44 @@ static void ix_pd_probe_thread() {
     ix_probe_log("fn verified at %016lx, breakpoint target (bl WorldPosToUIPos) = %016lx",
                  (unsigned long)fn, (unsigned long)w2s);
 
+    /* ── which backend can actually place an execute breakpoint? ─────
+     *
+     * Paradise was tried first and ruled itself out on this device:
+     *   num_brps=6, num_wrps=4        hardware registers exist
+     *   point_count=1, type=4 len=4   the point really was registered
+     *   hwbp_get_records -> true, count 0 for 20 s, on five points at once
+     *   ptebp_set -> false            that backend is not in this build
+     *
+     * The Incognito KPM takes a different route: it registers real kernel
+     * perf hardware breakpoints (register_user_hw_breakpoint; its init line
+     * prints reg_hwbp=) and records the GP register state on each hit. It is
+     * driven straight through its prctl hook, so it does not have to be the
+     * selected driver -- it only has to be loaded. See
+     * Incognito/incognito_api.h, where the request layouts, command numbers
+     * and call ABI were all taken out of the .kpm's own DWARF and
+     * disassembly.
+     *
+     * Its own init log also says the hardware breakpoint budget is a
+     * "fixed, system-wide budget shared by ALL processes", which is worth
+     * keeping in mind: Aim Silent's Paradise watchpoint and this probe are
+     * drawing on the same pool. */
+
+    IncognitoDriver inc((pid_t)game_pid);
+    const bool haveInc = inc.available();
     paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-    if (!pd) {
-        ix_probe_log("Paradise driver not available (GetParadise()==null) -- cannot arm. "
-                     "The probe needs the Paradise driver specifically.");
+
+    ix_probe_log("backends: Incognito KPM %s, Paradise %s",
+                 haveInc ? "present (ping ok)" : "NOT present (prctl ping failed)",
+                 pd ? "present" : "not selected");
+
+    if (!haveInc) {
+        ix_probe_log("The Incognito KPM is not answering, so there is no backend "
+                     "left that places a working execute breakpoint here -- "
+                     "Paradise already demonstrated it does not. Load the KPM "
+                     "and run this again. Nothing was armed.");
         ix_probe_log("==== probe stop ====");
         return;
     }
-
-    /* ── where does execution actually go? ───────────────────────────
-     * What the last run established, on the device:
-     *   num_brps=6, num_wrps=4   the CPU does expose hardware breakpoint
-     *                            registers, so there is no shortage
-     *   point_count=1            the driver really registered the point
-     *   point[0] addr=...970 type=4 len=4 scope=2
-     *                            registered at the verified address, as
-     *                            EXECUTE, 4 bytes, all threads
-     *   hwbp_get_records -> true, count 0 for 20 s
-     *   ptebp_set -> false       that backend is simply not available on
-     *                            this driver build, both plain and with
-     *                            the coord mask
-     *
-     * So the hardware breakpoint is installed correctly, on executable
-     * memory, with registers to spare -- and never fires. That points at
-     * the instruction never being reached, not at the mechanism.
-     *
-     * Inside this function, +0x100 calls WrappersManagerImpl.IsPatched()
-     * and +0x154 calls ILFixDynamicMethodWrapper.__Gen_Wrap_15411(). If
-     * the method is hot-patched, execution leaves through the wrapper and
-     * never reaches +0x710 at all.
-     *
-     * With 6 BRPs available, several points can be armed at once, so this
-     * run watches the whole route instead of one instruction. Whichever
-     * points report hits say exactly where execution goes -- or, if even
-     * the entry never hits, that this method is not called at all in the
-     * situation being tested. */
 
     struct IxProbePoint { uint64_t delta; const char* name; };
     static const IxProbePoint kPoints[] = {
@@ -395,156 +400,107 @@ static void ix_pd_probe_thread() {
         { 0x2dc, "bl get player HFMDJGBOJKF"      },
         { 0x710, "bl WorldPosToUIPos (aim point)" },
     };
-    const uint32_t kPointCount = (uint32_t)(sizeof(kPoints) / sizeof(kPoints[0]));
+    const int kPointCount = (int)(sizeof(kPoints) / sizeof(kPoints[0]));
 
-    /* ── do not fight the aim features over the same breakpoint set ────
-     * Paradise keeps ONE global point set: hwbp_set() replaces all of it
-     * and hwbp_remove() clears every CPU debug register. The aim threads
-     * (Aim Silent, Hardware BT, Body Kill, Drag Headshot) arm their own
-     * watchpoint through the same driver and cache the address they armed,
-     * so an earlier version of this probe silently disarmed Aim Silent and
-     * left it dead. The Incognito KPM's own log line says the same thing
-     * about the hardware itself: the breakpoint budget is "fixed,
-     * system-wide ... shared by ALL processes".
-     *
-     * So the probe refuses to arm while any of those features is on, and
-     * asks them to re-arm when it lets go. */
-    if (AimSilent || HardwareBT || BodyKill || DragHeadshot) {
-        ix_probe_log("refusing to arm: an aim feature is currently on "
-                     "(AimSilent=%d HardwareBT=%d BodyKill=%d DragHeadshot=%d) "
-                     "and Paradise keeps one global breakpoint set, so arming "
-                     "here would disarm it. Turn those off in the menu to run "
-                     "the probe, then turn them back on afterwards.",
-                     (int)AimSilent, (int)HardwareBT,
-                     (int)BodyKill, (int)DragHeadshot);
-        while (g_PdProbeRunning
-               && (AimSilent || HardwareBT || BodyKill || DragHeadshot))
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-        if (!g_PdProbeRunning) { ix_probe_log("==== probe stop ===="); return; }
-        ix_probe_log("aim features now off -- arming");
+    /* Start from a clean slate so a stale point from an earlier run cannot
+     * be mistaken for a hit now. */
+    inc.bp_clear();
+
+    int armedCount = 0;
+    for (int i = 0; i < kPointCount; ++i) {
+        const uintptr_t a = fn + kPoints[i].delta;
+        const bool ok = inc.bp_add_exec(a, true);
+        ix_probe_log("arm point[%d] %016lx  +%#05llx  %-32s -> %s",
+                     i, (unsigned long)a,
+                     (unsigned long long)kPoints[i].delta,
+                     kPoints[i].name, ok ? "ok" : "FAILED");
+        if (ok) ++armedCount;
     }
-
-    pd->hwbp_remove();
-    pd->ptebp_remove();
-    pd->hwbp_clear_records(-1);
-
-    paradise_bp_point_config pts[8]{};
-    for (uint32_t i = 0; i < kPointCount; ++i) {
-        pts[i].address  = (uint64_t)(fn + kPoints[i].delta);
-        pts[i].type     = PARADISE_HWBP_EXECUTE;
-        pts[i].length   = 4;
-        pts[i].scope    = PARADISE_HWBP_ALL_THREADS;
-        pts[i].reserved = 0;
-    }
-
-    bool armed = pd->hwbp_set(pts, kPointCount);
-    ix_probe_log("hwbp_set(%u EXECUTE points) -> %s", kPointCount,
-                 armed ? "true" : "false");
-    for (uint32_t i = 0; i < kPointCount; ++i)
-        ix_probe_log("  point[%u] %016lx  +%#05llx  %s",
-                     i, (unsigned long)(fn + kPoints[i].delta),
-                     (unsigned long long)kPoints[i].delta, kPoints[i].name);
-    if (!armed) {
-        ix_probe_log("==== probe stop (arm failed) ====");
+    if (armedCount == 0) {
+        ix_probe_log("no point armed -- with a system-wide breakpoint budget "
+                     "this usually means the registers are already taken. "
+                     "Check the KPM's own line in dmesg for hw_breakpoints=.");
+        ix_probe_log("==== probe stop ====");
         return;
     }
+    if (armedCount < kPointCount)
+        ix_probe_log("NOTE: only %d of %d points armed -- the others' silence "
+                     "means nothing", armedCount, kPointCount);
 
-    paradise_bp_config cfg{};
-    if (pd->hwbp_get_config(&cfg)) {
-        ix_probe_log("config: tgid=%d point_count=%u num_brps=%llu num_wrps=%llu",
-                     (int)cfg.tgid, cfg.point_count,
-                     (unsigned long long)cfg.num_brps,
-                     (unsigned long long)cfg.num_wrps);
-        for (uint32_t i = 0; i < cfg.point_count && i < 8; ++i)
-            ix_probe_log("  registered[%u] addr=%016llx type=%u len=%u scope=%u",
-                         i, (unsigned long long)cfg.points[i].address,
-                         cfg.points[i].type, cfg.points[i].length,
-                         cfg.points[i].scope);
-        if (cfg.point_count < kPointCount)
-            ix_probe_log("NOTE: only %u of %u points registered -- the rest did "
-                         "not fit, so their silence means nothing",
-                         cfg.point_count, kPointCount);
-    } else {
-        ix_probe_log("hwbp_get_config -> false");
-    }
-
-    /* ── poll every point, report the first hit on each ──────────────── */
-    bool     reported[8] = {false};
-    uint64_t lastHits[8] = {0};
-    bool     anyHit      = false;
-    bool     overrideDone = false;
-    int      quietTicks  = 0;
+    /* ── poll every point ────────────────────────────────────────────── */
+    bool reported[8]     = {false};
+    uint64_t lastSeen[8] = {0};
+    bool anyHit          = false;
+    bool overrideDone    = false;
+    int  quietTicks      = 0;
 
     while (g_PdProbeRunning) {
-        for (uint32_t i = 0; i < kPointCount; ++i) {
-            paradise_bp_record recs[2]{};
-            uint32_t count = 0;
-            if (!pd->hwbp_get_records(i, 0, recs, 2, &count)) continue;
-            if (count == 0) continue;
+        for (int i = 0; i < kPointCount; ++i) {
+            const uintptr_t a = fn + kPoints[i].delta;
+            struct inc_hwbp_hit_item hits[4]{};
+            int got = 0, real = 0;
+            if (!inc.bp_get_hits(a, hits, 4, &got, &real)) continue;
+            if (got <= 0) continue;
 
-            const paradise_bp_record& r = recs[0];
-            if (r.hit_count == lastHits[i] && reported[i]) continue;
-            lastHits[i] = r.hit_count;
+            const struct inc_hwbp_hit_item& h = hits[0];
+            if (reported[i] && h.hit_time == lastSeen[i]) continue;
+            lastSeen[i] = h.hit_time;
             anyHit = true;
 
-            uint32_t bx = (uint32_t)(uint64_t)r.q0;
-            uint32_t by = (uint32_t)(uint64_t)r.q1;
-            uint32_t bz = (uint32_t)(uint64_t)r.q2;
-            float x, y, z;
-            memcpy(&x, &bx, 4); memcpy(&y, &by, 4); memcpy(&z, &bz, 4);
-
-            ix_probe_log("HIT point[%u] %s  pc=%016lx hits=%llu  "
-                         "q0q1q2=(%.3f, %.3f, %.3f)  x0=%016lx x1=%016lx x19=%016lx",
-                         i, kPoints[i].name, (unsigned long)r.pc,
-                         (unsigned long long)r.hit_count, x, y, z,
-                         (unsigned long)r.x0, (unsigned long)r.x1,
-                         (unsigned long)r.x19);
+            /* Hits carry GP registers only -- user_pt_regs_min has no
+             * vregs -- so the float arguments are not in here. x19/x20/x21
+             * are the callee-saved registers this function parks the
+             * player and camera pointers in. */
+            ix_probe_log("HIT point[%d] %-32s pc=%016llx hits_avail=%d "
+                         "x0=%016llx x1=%016llx x19=%016llx x20=%016llx x21=%016llx",
+                         i, kPoints[i].name,
+                         (unsigned long long)h.regs_info.pc, real,
+                         (unsigned long long)h.regs_info.regs[0],
+                         (unsigned long long)h.regs_info.regs[1],
+                         (unsigned long long)h.regs_info.regs[19],
+                         (unsigned long long)h.regs_info.regs[20],
+                         (unsigned long long)h.regs_info.regs[21]);
             reported[i] = true;
 
-            /* Override test, only on the aim-point instruction and only
-             * once the trigger file is there. Shifts Y by a large amount
-             * so the effect is unmistakable, and touches nothing else in
-             * the captured record. */
+            /* ── override test, aim-point instruction only ─────────────
+             * Uses the module's fp_reg_add_mask rather than replacing the
+             * value: bit 1 set means s1 (the Y component) gets `delta`
+             * ADDED to whatever the game just put there, so there is no
+             * need to know the current Y, and X/Z are left alone. */
             if (kPoints[i].delta == 0x710 && !overrideDone
                 && ix_probe_find_trigger("ix_probe_override.on")) {
                 const float delta = ix_probe_override_delta();
-                paradise_bp_record w = r;
-                float oldY = y;
-                float newY = oldY + delta;
-                uint32_t nb = 0;
-                memcpy(&nb, &newY, 4);
-                w.q1 = (w.q1 & ~(__uint128_t)0xffffffffull) | (__uint128_t)nb;
-                PARADISE_BP_SET_MASK(&w, PARADISE_REG_Q1, PARADISE_BP_OP_WRITE);
-                bool wok = pd->hwbp_set_record(i, 0, &w);
-                ix_probe_log("OVERRIDE: Y %.3f -> %.3f (delta %.3f), mask=WRITE on "
-                             "Q1, hwbp_set_record -> %s",
-                             oldY, newY, delta, wok ? "true" : "false");
-                ix_probe_log("OVERRIDE: watch the game. Aim/absorb point moves = "
-                             "this instruction drives the aim. Only a HUD marker "
-                             "moves = HUD only. Nothing moves = the mask-write "
-                             "path does not apply, which would also explain the "
-                             "existing Paradise SilentAimDir helpers never "
-                             "setting that mask.");
+                const int   idx[1] = { 1 };          /* s1 == Vector3.Y */
+                const float val[1] = { delta };
+                const bool ok = inc.bp_update_exec_fp(a, idx, val, 1,
+                                                      /*add_mask=*/0x2u);
+                ix_probe_log("OVERRIDE: s1 (Y) += %.3f via fp_reg_add_mask=0x2, "
+                             "update -> %s", delta, ok ? "true" : "false");
+                ix_probe_log("OVERRIDE: watch the game. Aim/absorb point moves "
+                             "up = this instruction drives the aim, and the "
+                             "neck version will work. Only a HUD marker moves "
+                             "= it is display only. Nothing moves = the "
+                             "register override does not reach this call.");
                 overrideDone = true;
             }
         }
 
         if (!anyHit && ++quietTicks % 80 == 0)
             ix_probe_log("no point has hit yet (%ds). If even `entry` stays "
-                         "silent, this method is not being called in whatever "
-                         "is on screen right now -- it needs a live match with "
-                         "an enemy actually being aimed at.",
+                         "silent, this method is not being called in what is on "
+                         "screen right now -- it needs a live match with an "
+                         "enemy actually being aimed at.",
                          quietTicks / 4);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
-    pd->hwbp_remove();
-    /* Ask the aim threads to re-arm: this probe just replaced the whole
-     * Paradise point set, so whatever they had installed is gone and their
-     * cached address would otherwise stop them re-arming. */
+    inc.bp_clear();
+    /* Aim Silent keeps its own Paradise point; this probe no longer touches
+     * Paradise at all, but the re-arm request is harmless and keeps the
+     * previous behaviour for the case where it did. */
     g_SilentRearmRequest = true;
-    ix_probe_log("==== probe stop (asked the aim threads to re-arm) ====");
+    ix_probe_log("==== probe stop ====");
 }
 
 /* Starts the probe only when the trigger file exists. Checked once at
