@@ -397,6 +397,33 @@ static void ix_pd_probe_thread() {
     };
     const uint32_t kPointCount = (uint32_t)(sizeof(kPoints) / sizeof(kPoints[0]));
 
+    /* ── do not fight the aim features over the same breakpoint set ────
+     * Paradise keeps ONE global point set: hwbp_set() replaces all of it
+     * and hwbp_remove() clears every CPU debug register. The aim threads
+     * (Aim Silent, Hardware BT, Body Kill, Drag Headshot) arm their own
+     * watchpoint through the same driver and cache the address they armed,
+     * so an earlier version of this probe silently disarmed Aim Silent and
+     * left it dead. The Incognito KPM's own log line says the same thing
+     * about the hardware itself: the breakpoint budget is "fixed,
+     * system-wide ... shared by ALL processes".
+     *
+     * So the probe refuses to arm while any of those features is on, and
+     * asks them to re-arm when it lets go. */
+    if (AimSilent || HardwareBT || BodyKill || DragHeadshot) {
+        ix_probe_log("refusing to arm: an aim feature is currently on "
+                     "(AimSilent=%d HardwareBT=%d BodyKill=%d DragHeadshot=%d) "
+                     "and Paradise keeps one global breakpoint set, so arming "
+                     "here would disarm it. Turn those off in the menu to run "
+                     "the probe, then turn them back on afterwards.",
+                     (int)AimSilent, (int)HardwareBT,
+                     (int)BodyKill, (int)DragHeadshot);
+        while (g_PdProbeRunning
+               && (AimSilent || HardwareBT || BodyKill || DragHeadshot))
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (!g_PdProbeRunning) { ix_probe_log("==== probe stop ===="); return; }
+        ix_probe_log("aim features now off -- arming");
+    }
+
     pd->hwbp_remove();
     pd->ptebp_remove();
     pd->hwbp_clear_records(-1);
@@ -513,7 +540,11 @@ static void ix_pd_probe_thread() {
     }
 
     pd->hwbp_remove();
-    ix_probe_log("==== probe stop ====");
+    /* Ask the aim threads to re-arm: this probe just replaced the whole
+     * Paradise point set, so whatever they had installed is gone and their
+     * cached address would otherwise stop them re-arming. */
+    g_SilentRearmRequest = true;
+    ix_probe_log("==== probe stop (asked the aim threads to re-arm) ====");
 }
 
 /* Starts the probe only when the trigger file exists. Checked once at

@@ -264,6 +264,13 @@ bool  AimLockNew   = false;
 bool  Aimbot       = false;
 bool  AimSilent    = false;
 bool  DragHeadshot = false;  /* [NEW] own feature -- not AimLock/AimSilent/Aimbot. See UpdateDragHeadshotThread(). */
+/* [NEW] Set by anything that wipes the Paradise breakpoint set behind the
+ * aim threads' backs (the diagnostic probe in ix_pd_probe.h does exactly
+ * that, since hwbp_set replaces the whole point set and hwbp_remove clears
+ * every debug register). The aim threads cache which address they last
+ * armed and only re-arm when it changes, so without this they would stay
+ * silently disarmed until the target changed. */
+std::atomic<bool> g_SilentRearmRequest{false};
 float g_DragHSRadiusPct  = 12.f; /* [NEW] trigger radius, % of half-screen-height -- resolution-independent, same convention as AimFov being in degrees not pixels. User-tunable via its own slider. */
 bool  g_ShowDragHSCircle = false; /* [NEW] mirrors DragHeadshot -- circle only drawn while the feature itself is on */
 bool  g_DragHSTriggered  = false; /* [NEW] true the instant the redirect is actually armed this frame -- drives the circle's red/gray color, same convention as fovHasTarget */
@@ -2039,6 +2046,12 @@ void UpdateSilentAimFast(){
     };
 
     while(silentThreadRunning){
+        /* [NEW] Something wiped the Paradise point set from outside (see
+         * g_SilentRearmRequest). Forget the cached address so the arm below
+         * actually re-runs instead of assuming it is still installed. */
+        if(g_SilentRearmRequest.exchange(false))
+            s_lastDirAddr = 0;
+
         if(!ix_feat_aim() || !ix_rt_ready() || !(AimSilent || BodyKill)){
             disarm_silent();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
