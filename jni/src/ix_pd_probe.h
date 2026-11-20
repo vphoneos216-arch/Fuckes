@@ -359,242 +359,160 @@ static void ix_pd_probe_thread() {
         return;
     }
 
-    /* ── experiment sequence ──────────────────────────────────────────
-     * The previous run proved the address is right (prologue MATCH inside
-     * an r-xp mapping) and that hwbp_set() returns true, yet no records
-     * ever appeared. So the question is now about the MECHANISM, not the
-     * address, and this runs the three candidates in order and logs what
-     * each one produces.
+    /* ── where does execution actually go? ───────────────────────────
+     * What the last run established, on the device:
+     *   num_brps=6, num_wrps=4   the CPU does expose hardware breakpoint
+     *                            registers, so there is no shortage
+     *   point_count=1            the driver really registered the point
+     *   point[0] addr=...970 type=4 len=4 scope=2
+     *                            registered at the verified address, as
+     *                            EXECUTE, 4 bytes, all threads
+     *   hwbp_get_records -> true, count 0 for 20 s
+     *   ptebp_set -> false       that backend is simply not available on
+     *                            this driver build, both plain and with
+     *                            the coord mask
      *
-     * Phase A: hwbp_set with type=EXECUTE. This is what ran before. The
-     *   config is now dumped too -- num_brps says how many hardware
-     *   breakpoint registers the CPU actually exposes, and point_count
-     *   says whether the point was really registered. Zero BRPs would
-     *   explain everything on its own.
+     * So the hardware breakpoint is installed correctly, on executable
+     * memory, with registers to spare -- and never fires. That points at
+     * the instruction never being reached, not at the mechanism.
      *
-     * Phase B: ptebp_set with type=EXECUTE, length=4. paradise_api.h
-     *   documents this backend for exactly that combination
-     *   ("PTE 执行断点：最多 16 个，type=EXECUTE、length=4"), and it works
-     *   through page-table shadowing instead of debug registers. Its
-     *   config comment also says num_brps/num_wrps come back zero and
-     *   that records stay readable after monitoring is auto-revoked.
+     * Inside this function, +0x100 calls WrappersManagerImpl.IsPatched()
+     * and +0x154 calls ILFixDynamicMethodWrapper.__Gen_Wrap_15411(). If
+     * the method is hot-patched, execution leaves through the wrapper and
+     * never reaches +0x710 at all.
      *
-     * Phase C: ptebp again, but with the point's reserved field set to
-     *   PARADISE_PTEBP_POINT_COORD_X0_Q0_Q1_Q2. That named constant
-     *   describes precisely this call site -- x0 plus a Vector3 in
-     *   q0/q1/q2 -- and feeds ptebp_get_coord_samples(), which returns
-     *   x_bits/y_bits/z_bits per hit. The header does not say which field
-     *   carries that mask, so this phase is what establishes whether it
-     *   is `reserved`; the result is logged either way rather than
-     *   assumed.
-     *
-     * Whichever phase produces data is kept running. */
+     * With 6 BRPs available, several points can be armed at once, so this
+     * run watches the whole route instead of one instruction. Whichever
+     * points report hits say exactly where execution goes -- or, if even
+     * the entry never hits, that this method is not called at all in the
+     * situation being tested. */
 
-    auto log_cfg = [&](const char* tag, paradise_bp_config& cfg){
-        ix_probe_log("%s config: tgid=%d point_count=%u num_brps=%llu num_wrps=%llu",
-                     tag, (int)cfg.tgid, cfg.point_count,
-                     (unsigned long long)cfg.num_brps,
-                     (unsigned long long)cfg.num_wrps);
-        for (uint32_t i = 0; i < cfg.point_count && i < 4; ++i)
-            ix_probe_log("%s   point[%u] addr=%016llx type=%u len=%u scope=%u reserved=%#x",
-                         tag, i, (unsigned long long)cfg.points[i].address,
-                         cfg.points[i].type, cfg.points[i].length,
-                         cfg.points[i].scope, cfg.points[i].reserved);
+    struct IxProbePoint { uint64_t delta; const char* name; };
+    static const IxProbePoint kPoints[] = {
+        { 0x000, "entry"                          },
+        { 0x100, "bl IsPatched"                   },
+        { 0x154, "bl hotfix wrapper Gen_Wrap"     },
+        { 0x2dc, "bl get player HFMDJGBOJKF"      },
+        { 0x710, "bl WorldPosToUIPos (aim point)" },
     };
+    const uint32_t kPointCount = (uint32_t)(sizeof(kPoints) / sizeof(kPoints[0]));
 
-    auto decode_vec = [](const paradise_bp_record& r, float& x, float& y, float& z){
-        uint32_t bx = (uint32_t)(uint64_t)r.q0;
-        uint32_t by = (uint32_t)(uint64_t)r.q1;
-        uint32_t bz = (uint32_t)(uint64_t)r.q2;
-        memcpy(&x, &bx, 4); memcpy(&y, &by, 4); memcpy(&z, &bz, 4);
-    };
+    pd->hwbp_remove();
+    pd->ptebp_remove();
+    pd->hwbp_clear_records(-1);
 
-    /* Runs one phase for `seconds` and returns how many records/coord
-     * samples it saw. Leaves the point armed on success so the caller can
-     * keep it. */
-    enum IxPhase { PH_HWBP = 0, PH_PTEBP = 1, PH_PTEBP_COORD = 2 };
-
-    auto run_phase = [&](IxPhase ph, int seconds) -> uint64_t {
-        const char* tag = (ph == PH_HWBP) ? "A/hwbp"
-                        : (ph == PH_PTEBP) ? "B/ptebp" : "C/ptebp+coord";
-
-        pd->hwbp_remove();
-        pd->ptebp_remove();
-        pd->hwbp_clear_records(-1);
-        pd->ptebp_clear_records(-1);
-
-        paradise_bp_point_config pt{};
-        pt.address  = (uint64_t)w2s;
-        pt.type     = PARADISE_HWBP_EXECUTE;
-        pt.length   = 4;                    /* one AArch64 instruction */
-        pt.scope    = PARADISE_HWBP_ALL_THREADS;
-        pt.reserved = (ph == PH_PTEBP_COORD)
-                        ? PARADISE_PTEBP_POINT_COORD_X0_Q0_Q1_Q2 : 0;
-
-        bool armed = (ph == PH_HWBP) ? pd->hwbp_set(&pt, 1)
-                                     : pd->ptebp_set(&pt, 1);
-        ix_probe_log("%s: arm at %016lx -> %s (reserved=%#x)",
-                     tag, (unsigned long)w2s, armed ? "true" : "false",
-                     pt.reserved);
-        if (!armed) return 0;
-
-        paradise_bp_config cfg{};
-        bool gotCfg = (ph == PH_HWBP) ? pd->hwbp_get_config(&cfg)
-                                      : pd->ptebp_get_config(&cfg);
-        if (gotCfg) log_cfg(tag, cfg);
-        else        ix_probe_log("%s: get_config -> false", tag);
-
-        uint64_t seen = 0;
-        uint64_t coordSeq = 0;
-        const int polls = seconds * 4;
-        for (int i = 0; i < polls && g_PdProbeRunning; ++i) {
-            paradise_bp_record recs[4]{};
-            uint32_t count = 0;
-            bool ok = (ph == PH_HWBP)
-                        ? pd->hwbp_get_records(0, 0, recs, 4, &count)
-                        : pd->ptebp_get_records(0, 0, recs, 4, &count);
-            if (!ok && i == 0) ix_probe_log("%s: get_records -> false", tag);
-
-            for (uint32_t k = 0; k < count && k < 4; ++k) {
-                float x = 0, y = 0, z = 0;
-                decode_vec(recs[k], x, y, z);
-                ix_probe_log("%s rec[%u] pc=%016lx hits=%llu "
-                             "vec(q0,q1,q2)=(%.3f, %.3f, %.3f) x0=%016lx x1=%016lx",
-                             tag, k, (unsigned long)recs[k].pc,
-                             (unsigned long long)recs[k].hit_count,
-                             x, y, z,
-                             (unsigned long)recs[k].x0,
-                             (unsigned long)recs[k].x1);
-                seen += recs[k].hit_count ? recs[k].hit_count : 1;
-            }
-
-            if (ph == PH_PTEBP_COORD) {
-                paradise_ptebp_coord_sample cs[8]{};
-                uint32_t cc = 0; uint64_t newest = 0;
-                if (pd->ptebp_get_coord_samples(coordSeq, cs, 8, &cc, &newest)) {
-                    for (uint32_t k = 0; k < cc && k < 8; ++k) {
-                        float x = 0, y = 0, z = 0;
-                        memcpy(&x, &cs[k].x_bits, 4);
-                        memcpy(&y, &cs[k].y_bits, 4);
-                        memcpy(&z, &cs[k].z_bits, 4);
-                        ix_probe_log("%s coord[%u] seq=%llu hits=%llu pc=%016lx "
-                                     "component=%#llx pos=(%.3f, %.3f, %.3f)",
-                                     tag, k,
-                                     (unsigned long long)cs[k].sequence,
-                                     (unsigned long long)cs[k].hit_count,
-                                     (unsigned long)cs[k].pc,
-                                     (unsigned long long)cs[k].component,
-                                     x, y, z);
-                        seen++;
-                    }
-                    if (newest) coordSeq = newest;
-                } else if (i == 0) {
-                    ix_probe_log("%s: ptebp_get_coord_samples -> false", tag);
-                }
-            }
-
-            if (seen) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-
-        ix_probe_log("%s: %s after %ds",
-                     tag, seen ? "GOT DATA" : "nothing", seconds);
-        return seen;
-    };
-
-    IxPhase live = PH_HWBP;
-    uint64_t got = 0;
-    for (int ph = 0; ph <= 2 && g_PdProbeRunning && !got; ++ph) {
-        live = (IxPhase)ph;
-        got  = run_phase(live, 20);
+    paradise_bp_point_config pts[8]{};
+    for (uint32_t i = 0; i < kPointCount; ++i) {
+        pts[i].address  = (uint64_t)(fn + kPoints[i].delta);
+        pts[i].type     = PARADISE_HWBP_EXECUTE;
+        pts[i].length   = 4;
+        pts[i].scope    = PARADISE_HWBP_ALL_THREADS;
+        pts[i].reserved = 0;
     }
 
-    if (!got) {
-        ix_probe_log("all three phases produced nothing. The address is "
-                     "verified executable, so either this function body does "
-                     "not run on this build (the WrappersManagerImpl.IsPatched "
-                     "gate at +0x100 routes to the hotfix wrapper) or neither "
-                     "backend can place an execute breakpoint here. The config "
-                     "lines above tell which: num_brps=0 means no hardware "
-                     "breakpoint registers are available at all.");
-        pd->hwbp_remove();
-        pd->ptebp_remove();
-        ix_probe_log("==== probe stop ====");
+    bool armed = pd->hwbp_set(pts, kPointCount);
+    ix_probe_log("hwbp_set(%u EXECUTE points) -> %s", kPointCount,
+                 armed ? "true" : "false");
+    for (uint32_t i = 0; i < kPointCount; ++i)
+        ix_probe_log("  point[%u] %016lx  +%#05llx  %s",
+                     i, (unsigned long)(fn + kPoints[i].delta),
+                     (unsigned long long)kPoints[i].delta, kPoints[i].name);
+    if (!armed) {
+        ix_probe_log("==== probe stop (arm failed) ====");
         return;
     }
 
-    ix_probe_log("mechanism that works: %s -- keeping it armed",
-                 live == PH_HWBP ? "hwbp" : (live == PH_PTEBP ? "ptebp" : "ptebp+coord"));
+    paradise_bp_config cfg{};
+    if (pd->hwbp_get_config(&cfg)) {
+        ix_probe_log("config: tgid=%d point_count=%u num_brps=%llu num_wrps=%llu",
+                     (int)cfg.tgid, cfg.point_count,
+                     (unsigned long long)cfg.num_brps,
+                     (unsigned long long)cfg.num_wrps);
+        for (uint32_t i = 0; i < cfg.point_count && i < 8; ++i)
+            ix_probe_log("  registered[%u] addr=%016llx type=%u len=%u scope=%u",
+                         i, (unsigned long long)cfg.points[i].address,
+                         cfg.points[i].type, cfg.points[i].length,
+                         cfg.points[i].scope);
+        if (cfg.point_count < kPointCount)
+            ix_probe_log("NOTE: only %u of %u points registered -- the rest did "
+                         "not fit, so their silence means nothing",
+                         cfg.point_count, kPointCount);
+    } else {
+        ix_probe_log("hwbp_get_config -> false");
+    }
 
-    /* ── steady state: keep logging, and run the override test once the
-     * trigger file appears. The override uses whichever backend worked. */
-    bool overrideDone = false;
-    uint64_t coordSeq = 0;
+    /* ── poll every point, report the first hit on each ──────────────── */
+    bool     reported[8] = {false};
+    uint64_t lastHits[8] = {0};
+    bool     anyHit      = false;
+    bool     overrideDone = false;
+    int      quietTicks  = 0;
+
     while (g_PdProbeRunning) {
-        paradise_bp_record recs[4]{};
-        uint32_t count = 0;
-        bool ok = (live == PH_HWBP)
-                    ? pd->hwbp_get_records(0, 0, recs, 4, &count)
-                    : pd->ptebp_get_records(0, 0, recs, 4, &count);
+        for (uint32_t i = 0; i < kPointCount; ++i) {
+            paradise_bp_record recs[2]{};
+            uint32_t count = 0;
+            if (!pd->hwbp_get_records(i, 0, recs, 2, &count)) continue;
+            if (count == 0) continue;
 
-        if (ok && count > 0) {
-            float x = 0, y = 0, z = 0;
-            decode_vec(recs[0], x, y, z);
-            ix_probe_log("live rec[0] pc=%016lx hits=%llu vec=(%.3f, %.3f, %.3f)",
-                         (unsigned long)recs[0].pc,
-                         (unsigned long long)recs[0].hit_count, x, y, z);
-        }
+            const paradise_bp_record& r = recs[0];
+            if (r.hit_count == lastHits[i] && reported[i]) continue;
+            lastHits[i] = r.hit_count;
+            anyHit = true;
 
-        if (live == PH_PTEBP_COORD) {
-            paradise_ptebp_coord_sample cs[8]{};
-            uint32_t cc = 0; uint64_t newest = 0;
-            if (pd->ptebp_get_coord_samples(coordSeq, cs, 8, &cc, &newest)) {
-                for (uint32_t k = 0; k < cc && k < 8; ++k) {
-                    float x = 0, y = 0, z = 0;
-                    memcpy(&x, &cs[k].x_bits, 4);
-                    memcpy(&y, &cs[k].y_bits, 4);
-                    memcpy(&z, &cs[k].z_bits, 4);
-                    ix_probe_log("live coord seq=%llu hits=%llu pos=(%.3f, %.3f, %.3f)",
-                                 (unsigned long long)cs[k].sequence,
-                                 (unsigned long long)cs[k].hit_count, x, y, z);
-                }
-                if (newest) coordSeq = newest;
+            uint32_t bx = (uint32_t)(uint64_t)r.q0;
+            uint32_t by = (uint32_t)(uint64_t)r.q1;
+            uint32_t bz = (uint32_t)(uint64_t)r.q2;
+            float x, y, z;
+            memcpy(&x, &bx, 4); memcpy(&y, &by, 4); memcpy(&z, &bz, 4);
+
+            ix_probe_log("HIT point[%u] %s  pc=%016lx hits=%llu  "
+                         "q0q1q2=(%.3f, %.3f, %.3f)  x0=%016lx x1=%016lx x19=%016lx",
+                         i, kPoints[i].name, (unsigned long)r.pc,
+                         (unsigned long long)r.hit_count, x, y, z,
+                         (unsigned long)r.x0, (unsigned long)r.x1,
+                         (unsigned long)r.x19);
+            reported[i] = true;
+
+            /* Override test, only on the aim-point instruction and only
+             * once the trigger file is there. Shifts Y by a large amount
+             * so the effect is unmistakable, and touches nothing else in
+             * the captured record. */
+            if (kPoints[i].delta == 0x710 && !overrideDone
+                && ix_probe_find_trigger("ix_probe_override.on")) {
+                const float delta = ix_probe_override_delta();
+                paradise_bp_record w = r;
+                float oldY = y;
+                float newY = oldY + delta;
+                uint32_t nb = 0;
+                memcpy(&nb, &newY, 4);
+                w.q1 = (w.q1 & ~(__uint128_t)0xffffffffull) | (__uint128_t)nb;
+                PARADISE_BP_SET_MASK(&w, PARADISE_REG_Q1, PARADISE_BP_OP_WRITE);
+                bool wok = pd->hwbp_set_record(i, 0, &w);
+                ix_probe_log("OVERRIDE: Y %.3f -> %.3f (delta %.3f), mask=WRITE on "
+                             "Q1, hwbp_set_record -> %s",
+                             oldY, newY, delta, wok ? "true" : "false");
+                ix_probe_log("OVERRIDE: watch the game. Aim/absorb point moves = "
+                             "this instruction drives the aim. Only a HUD marker "
+                             "moves = HUD only. Nothing moves = the mask-write "
+                             "path does not apply, which would also explain the "
+                             "existing Paradise SilentAimDir helpers never "
+                             "setting that mask.");
+                overrideDone = true;
             }
         }
 
-        if (!overrideDone && ix_probe_find_trigger("ix_probe_override.on")
-            && ok && count > 0) {
-            const float delta = ix_probe_override_delta();
-            paradise_bp_record w = recs[0];
-
-            uint32_t byBits = (uint32_t)(uint64_t)w.q1;
-            float oldY = 0.f;
-            memcpy(&oldY, &byBits, 4);
-            const float newY = oldY + delta;
-            uint32_t newBits = 0;
-            memcpy(&newBits, &newY, 4);
-
-            /* replace only s1 (low 32 bits of q1), keep the rest as captured */
-            w.q1 = (w.q1 & ~(__uint128_t)0xffffffffull) | (__uint128_t)newBits;
-            PARADISE_BP_SET_MASK(&w, PARADISE_REG_Q1, PARADISE_BP_OP_WRITE);
-
-            bool wok = (live == PH_HWBP) ? pd->hwbp_set_record(0, 0, &w)
-                                         : pd->ptebp_set_record(0, 0, &w);
-            ix_probe_log("OVERRIDE: Y %.3f -> %.3f (delta %.3f), mask=WRITE on Q1, "
-                         "set_record -> %s", oldY, newY, delta, wok ? "true" : "false");
-            ix_probe_log("OVERRIDE: watch the game. Aim/absorb point moves = this "
-                         "drives the aim. Only a HUD marker moves = HUD only. "
-                         "Nothing moves = the mask-write path does not apply, "
-                         "which would also explain the existing Paradise "
-                         "SilentAimDir helpers never setting that mask.");
-            overrideDone = true;
-        }
+        if (!anyHit && ++quietTicks % 80 == 0)
+            ix_probe_log("no point has hit yet (%ds). If even `entry` stays "
+                         "silent, this method is not being called in whatever "
+                         "is on screen right now -- it needs a live match with "
+                         "an enemy actually being aimed at.",
+                         quietTicks / 4);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
     pd->hwbp_remove();
-    pd->ptebp_remove();
     ix_probe_log("==== probe stop ====");
 }
 
