@@ -232,6 +232,16 @@ jobs:
           make
           ls -la inx_mem.kpm
           file inx_mem.kpm
+          echo "===== DIAG: undefined symbols (real gcc build) ====="
+          ${TARGET_COMPILE}nm -u inx_mem.kpm || true
+          echo "===== DIAG: all symbols ====="
+          ${TARGET_COMPILE}nm inx_mem.kpm || true
+          echo "===== DIAG: relocation types ====="
+          ${TARGET_COMPILE}readelf -r inx_mem.kpm | grep -oE 'R_AARCH64_[A-Z0-9_]+' | sort | uniq -c || true
+          echo "===== DIAG: sections ====="
+          ${TARGET_COMPILE}readelf -S inx_mem.kpm || true
+          echo "===== DIAG: .kpm.info ====="
+          ${TARGET_COMPILE}readelf -x .kpm.info inx_mem.kpm || true
 
       - name: Upload (consumed by the main build job)
         uses: actions/upload-artifact@v4
