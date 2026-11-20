@@ -2020,28 +2020,22 @@ void UpdateSilentAimFast(){
      * bullet lands on the head, same as plain Aim Silent.
      * Do not touch for Hardware BT (separate thread/logic).
      *
-     * [NEW] Driver-tier HWBP dispatch — same chain and convention as
-     * UpdateAimLockNewThread/UpdateAimbotFast: RT Hook (kernel GP-reg
-     * override on the game's own write) → Paradise HWBP → TwT HWBP →
-     * plain write-on-change fallback. See AimHookState::HwbpArmSilentDir
-     * / PdHwbpArmSilentDir / TwtHwbpArmSilentDir+TwtHwbpUpdateSilentDir
-     * above — each overrides SilentAimDir's X/Y/Z the moment the game
-     * itself writes it, instead of this thread writing it directly. */
+     * [CHANGED] Paradise-HWBP-only, no fallback. Explicitly requested:
+     * RT Hook tier, TwT tier and the plain-write fallback are all
+     * removed from this function — if the Paradise driver isn't
+     * present, or the HWBP arm itself fails, this thread does NOT
+     * write SilentAimDir directly (that direct write is the one path
+     * that's visible as an out-of-band memory write instead of the
+     * game's own write being overridden in place — removed on
+     * purpose, not left in as a safety net). See
+     * AimHookState::PdHwbpArmSilentDir/PdHwbpDisarm above. */
     static uintptr_t s_lastDirAddr   = 0;
-    static uint64_t  s_lastTwtHandle = 0;
 
     auto disarm_silent = [&](){
-        RtHookDriver*   rth = g_driver ? g_driver->GetRtHook()   : nullptr;
         paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-        TwtDriver*      twt = g_driver ? g_driver->GetTwT()      : nullptr;
-        if(rth && s_lastDirAddr)
-            rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
-        else if(pd && s_lastDirAddr)
+        if(pd && s_lastDirAddr)
             AimHookState::PdHwbpDisarm(pd);
-        if(twt && s_lastTwtHandle)
-            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
-        s_lastDirAddr   = 0;
-        s_lastTwtHandle = 0;
+        s_lastDirAddr = 0;
     };
 
     while(silentThreadRunning){
@@ -2089,56 +2083,23 @@ void UpdateSilentAimFast(){
                 dir.Z = targetPos.Z - startPos.Z;
 
                 uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
-                RtHookDriver*    rth = g_driver ? g_driver->GetRtHook()   : nullptr;
-                paradise_driver*  pd = g_driver ? g_driver->GetParadise() : nullptr;
-                TwtDriver*       twt = g_driver ? g_driver->GetTwT()      : nullptr;
+                paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
 
-                // ── RT Hook PTE tier (preferred — no debug registers touched) ──
-                // Only engages once ResolveSilentDirSetter() returns a real
-                // address (see the AimHookState comment above it for the
-                // exact missing input + recipe). Until then this is a no-op
-                // and falls straight through to the existing HWBP tier below.
-                uintptr_t silentDirSetter = rth ? AimHookState::ResolveSilentDirSetter() : 0;
-                if(rth && silentDirSetter){
-                    // Placeholder — not reachable yet (Resolve* returns 0).
-                    // Wire AimHookState::RthSetSilentDir(rth, dir) here once
-                    // that helper exists (see comment above).
-                    Write<Vector3>(dirAddr, dir);
-                } else if(rth){
-                    if(AimHookState::HwbpArmSilentDir(rth, dirAddr, dir)){
-                        s_lastDirAddr = dirAddr;
-                    } else {
-                        Write<Vector3>(dirAddr, dir); // kernel arm failed — plain write this frame
-                    }
-                } else if(pd){
+                // ── Paradise HWBP only. No RT Hook tier, no TwT tier,
+                // no plain-write fallback. If the Paradise driver
+                // isn't connected, or the HWBP arm fails, this frame
+                // is skipped on purpose instead of falling back to a
+                // direct write — SilentAimDir is left exactly as the
+                // game wrote it that frame. ──
+                if(pd){
                     bool need_rearm = (s_lastDirAddr != dirAddr);
                     if(need_rearm && s_lastDirAddr)
                         AimHookState::PdHwbpDisarm(pd);
                     if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
                         s_lastDirAddr = dirAddr;
                     } else {
-                        Write<Vector3>(dirAddr, dir);
-                        s_lastDirAddr = 0;
+                        s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                     }
-                } else if(twt){
-                    bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastTwtHandle == 0);
-                    if(need_rearm){
-                        if(s_lastTwtHandle)
-                            AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
-                        uint64_t handle = 0;
-                        if(AimHookState::TwtHwbpArmSilentDir(twt, g_driver->GetPid(), dirAddr, dir, handle)){
-                            s_lastTwtHandle = handle;
-                            s_lastDirAddr   = dirAddr;
-                        } else {
-                            Write<Vector3>(dirAddr, dir);
-                            s_lastTwtHandle = 0;
-                        }
-                    } else if(!AimHookState::TwtHwbpUpdateSilentDir(twt, s_lastTwtHandle, dir)) {
-                        Write<Vector3>(dirAddr, dir); // handle went stale — direct write this frame
-                    }
-                } else {
-                    // ── Fallback: no HWBP-capable driver — plain write ──
-                    Write<Vector3>(dirAddr, dir);
                 }
             }
         }
