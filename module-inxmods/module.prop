@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v3.7 Fixed Silent (Aim Silent + Hardware BT on Paradise HWBP: ARM64 watchpoint length, FP source register, per-PC records)
+version=v3.8 Fixed Silent (Z component now overridden — X/Y pair store + separate Z store both trapped)
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

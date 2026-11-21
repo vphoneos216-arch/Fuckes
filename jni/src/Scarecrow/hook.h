@@ -1968,19 +1968,62 @@ namespace AimHookState {
     // stur: a single 16-byte-store record fills X, Y and Z from one
     // register and leaves the 4th lane alone.
     //
-    // KNOWN LIMIT, stated rather than papered over: if this build
-    // compiled the write as three separate narrow stores
-    // (`str s0,[x8]` / `str s1,[x8,#4]` / `str s2,[x8,#8]`), a point on
-    // bytes 0-3 only traps the X store and Y/Z keep the game's own
-    // values. The diagnostic below prints the decoded shape on the first
-    // real hit, so that question gets answered with evidence off the
-    // device instead of another guess about point counts.
+    // FIX, v6 — TWO non-overlapping points per feature, from the device's
+    // own evidence. The v5 diagnostic came back as:
+    //
+    //   pc=0x6f38cd8594 insn=0x2d08310d FP rt=13,rt2=12 xfer=4B rn=8 imm=64
+    //   pc=0x6f38cda530 insn=0x2d08290b FP rt=11,rt2=10 xfer=4B rn=8 imm=64
+    //   pc=0x6f380ffd60 insn=0x2d080121 FP rt=1,rt2=0   xfer=4B rn=9 imm=64
+    //
+    // which decode as `stp s13, s12, [x8, #64]`, `stp s11, s10, [x8, #64]`
+    // and `stp s1, s0, [x9, #64]`. So this build writes the field as a
+    // PAIR of 32-bit FP registers: Rt lands on base+0 (X) and Rt2 on
+    // base+4 (Y). Three different call sites do it, two inlined copies in
+    // one function plus one elsewhere, each with its own register
+    // allocation — which is precisely why the source register had to be
+    // decoded per PC instead of assumed.
+    //
+    // The important part: that STP spans bytes 0..7 only. NOTHING in the
+    // capture writes bytes 8..11. Z is stored by a separate instruction
+    // that a point on bytes 0-3 never traps, so Z was never overridden —
+    // the game kept its own Z while X and Y were forced elsewhere, and a
+    // direction vector built from two hijacked components and one
+    // original one points off to the side. That is the reported "bullet
+    // right side ja raha hai, hit nahi kar raha".
+    //
+    // So: one point at base+0 (traps the X/Y pair store, already proven
+    // to work by the capture above) and a second at base+8 (traps
+    // whatever stores Z). These two watch byte ranges [0,4) and [8,12) —
+    // they share no byte with each other, and the STP's [0,8) footprint
+    // cannot reach the second point. That is the difference from the
+    // broken v4: there, three adjacent windows all sat inside one wide
+    // store's footprint, so a single instruction tripped all three and
+    // three hwbp_set_record calls fought over templating it. Here each
+    // point is tripped by a different instruction, so there is no shared
+    // store to race over.
+    //
+    // The lane mapping needs no change for this and is unchanged: it
+    // derives which component each source register carries from the
+    // instruction's own effective address and transfer size, not from
+    // which point caught the record, so a record captured by either
+    // point is mapped correctly on its own terms.
+    //
+    // (The capture also showed one stray record — pc=0x6f38cd429c,
+    // `stp q0, q0, [x20, #-64]`, a register-spill shape at a negative
+    // offset. Nothing is done about it on purpose: the lane check
+    // compares the instruction's computed effective address against the
+    // live base, so a record that does not actually land on this
+    // Vector3 gets no override and is skipped.)
     namespace ParadisePoints {
-        enum Slot { SLOT_SILENT = 0, SLOT_BT = 1, SLOT_COUNT = 2 };
+        enum Slot {
+            SLOT_SILENT_XY = 0, SLOT_SILENT_Z = 1,
+            SLOT_BT_XY     = 2, SLOT_BT_Z     = 3,
+            SLOT_COUNT     = 4
+        };
         static std::mutex                g_mtx;
         static paradise_bp_point_config  g_points[SLOT_COUNT];
-        static bool                      g_active[SLOT_COUNT]   = { false, false };
-        static int                       g_position[SLOT_COUNT] = { -1, -1 };
+        static bool                      g_active[SLOT_COUNT]   = { false, false, false, false };
+        static int                       g_position[SLOT_COUNT] = { -1, -1, -1, -1 };
 
         // Rebuilds g_position[] from g_active[] (stable order: lowest
         // Slot id first) and submits ONLY the active points, compacted,
@@ -2293,23 +2336,37 @@ namespace AimHookState {
         return any;
     }
 
-    // Arms a feature's single point on the Vector3's base address and
-    // pushes the current direction into whatever that point has captured
-    // so far. Returns false only if the arm itself failed — a true
-    // return does NOT mean an override is live yet, since a freshly
-    // armed point holds no record until the game next writes the field.
-    static bool PdHwbpArmDir(paradise_driver* pd, int slot,
+    // Arms a feature's two points — base+0 for the X/Y pair store and
+    // base+8 for the Z store — and pushes the current direction into
+    // whatever each has captured so far. `slot_xy` is the feature's
+    // first slot; its Z slot follows immediately.
+    //
+    // Returns false only if BOTH arms failed. A true return does NOT
+    // mean an override is live yet: a freshly armed point holds no
+    // record until the game next writes through it.
+    static bool PdHwbpArmDir(paradise_driver* pd, int slot_xy,
                               uintptr_t base, const Vector3& dir) {
-        if(!ParadisePoints::Arm(pd, slot, base, PARADISE_HWBP_WRITE,
-                                 4 /* ARM64 WRP lengths: 1/2/4/8 only */))
-            return false;
-        PushDirOverride(pd, slot, base, dir);
+        const int slot_z = slot_xy + 1;
+
+        // Non-overlapping by construction: [base+0, base+4) and
+        // [base+8, base+12). See the ParadisePoints comment for why the
+        // gap at [base+4, base+8) is correct and not a hole — the X/Y
+        // pair store spans 0..7, so it already trips the base point.
+        const bool xy = ParadisePoints::Arm(pd, slot_xy, base,
+                                             PARADISE_HWBP_WRITE, 4);
+        const bool z  = ParadisePoints::Arm(pd, slot_z,  base + 8u,
+                                             PARADISE_HWBP_WRITE, 4);
+        if(!xy && !z) return false;
+
+        if(xy) PushDirOverride(pd, slot_xy, base, dir);
+        if(z)  PushDirOverride(pd, slot_z,  base, dir);
         return true;
     }
 
-    static void PdHwbpDisarmDir(paradise_driver* pd, int slot) {
+    static void PdHwbpDisarmDir(paradise_driver* pd, int slot_xy) {
         if(!pd) return;
-        ParadisePoints::Disarm(pd, slot);
+        ParadisePoints::Disarm(pd, slot_xy);
+        ParadisePoints::Disarm(pd, slot_xy + 1);
     }
 
     // ── TwT HWBP helpers ───────────────────────────────────────────────
@@ -2485,7 +2542,7 @@ void UpdateSilentAimFast(){
             AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
         } else {
             paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_SILENT);
+            AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_SILENT_XY);
         }
         s_lastDirAddr = 0;
         s_lastViaKpm  = false;
@@ -2566,7 +2623,7 @@ void UpdateSilentAimFast(){
                     // no-op after the first, and the override push is
                     // what tracks the moving aim direction.
                     if(AimHookState::PdHwbpArmDir(
-                           pd, AimHookState::ParadisePoints::SLOT_SILENT, dirAddr, dir)){
+                           pd, AimHookState::ParadisePoints::SLOT_SILENT_XY, dirAddr, dir)){
                         s_lastDirAddr = dirAddr;
                         s_lastViaKpm  = false;
                     } else {
@@ -2577,7 +2634,7 @@ void UpdateSilentAimFast(){
                         // !s_lastDirAddr — a watchpoint stuck on a stale
                         // address after the feature is switched off.
                         // Release the whole group explicitly.
-                        AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_SILENT);
+                        AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_SILENT_XY);
                         s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                     }
                 } else if(kpm){
@@ -3223,7 +3280,7 @@ void UpdateHardwareBTFast(){
      * of thing the Aim Silent tier was explicitly built to avoid. Now
      * uses the same driver-selected HWBP dispatch as UpdateSilentAimFast:
      * Paradise connected -> always Paradise HWBP (its OWN slot,
-     * SLOT_BT, never SLOT_SILENT — see the ParadisePoints registry
+     * the SLOT_BT_* pair, never SLOT_SILENT_* — see the registry
      * comment above PdHwbpArmDir); Paradise
      * not connected + KPM connected -> always KPM HWBP tier. No runtime
      * fallback between them, and no plain-write fallback below either —
@@ -3240,7 +3297,7 @@ void UpdateHardwareBTFast(){
             AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
         } else {
             paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT);
+            AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT_XY);
         }
         s_lastDirAddr = 0;
         s_lastViaKpm  = false;
@@ -3328,13 +3385,13 @@ void UpdateHardwareBTFast(){
 
             if(pd){
                 if(AimHookState::PdHwbpArmDir(
-                       pd, AimHookState::ParadisePoints::SLOT_BT, dirAddr, dir)){
+                       pd, AimHookState::ParadisePoints::SLOT_BT_XY, dirAddr, dir)){
                     s_lastDirAddr = dirAddr;
                     s_lastViaKpm  = false;
                 } else {
                     // [FIX] Same stale-armed-group release as in
                     // UpdateSilentAimFast — see the comment there.
-                    AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT);
+                    AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT_XY);
                     s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                 }
             } else if(kpm){
