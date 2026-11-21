@@ -38,6 +38,14 @@ struct Bindings {
   bool* is3600 = nullptr;
   bool* showFovCircle = nullptr;
   int*  textSize = nullptr;
+  // ESP colours. The mode ints are the engine's boxColorMode /
+  // lineColorMode (0 Static, 1 Health, 2 Distance, 3 Rainbow); the
+  // colour pointers are &ImVec4.x, i.e. four consecutive floats, which
+  // is what the engine already stores in boxCustomColor/lineCustomColor.
+  int*   boxColorMode = nullptr;
+  float* boxColor = nullptr;
+  int*   lineColorMode = nullptr;
+  float* lineColor = nullptr;
 
   // Aim — Aim Silent and Hardware BT only, by request. The remaining
   // aim flags stay bound here so they can be put back on the page in

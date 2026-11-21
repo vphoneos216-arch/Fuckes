@@ -294,6 +294,14 @@ inline void RenderSingleMenuWindow() {
         ab.is3600        = &g_Cfg.is3600;
         ab.showFovCircle = &g_Cfg.showFovCircle;
         ab.textSize      = &g_Cfg.textSz;
+        // ESP colours. These four are hook.h globals, not g_Cfg fields --
+        // the engine reads them directly in BoxCol()/LineCol(), so there
+        // is nothing to mirror afterwards. ImVec4 is four consecutive
+        // floats, so &.x is the array the colour strip writes into.
+        ab.boxColorMode  = &boxColorMode;
+        ab.boxColor      = &boxCustomColor.x;
+        ab.lineColorMode = &lineColorMode;
+        ab.lineColor     = &lineCustomColor.x;
 
         ab.aimSilent     = &AimSilent;
         ab.hardwareBT    = &HardwareBT;

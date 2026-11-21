@@ -17,6 +17,15 @@ constexpr float TSZ = 1.92f;  // text scale: logical units -> pixels
 State g;
 Bindings gBind;
 
+// ── Info card text. Change these four lines and nothing else. ────────
+// Not read from anywhere at runtime: there is no seller field in this
+// build's config, so these are the strings the Settings > Info card
+// prints as-is.
+const char* kInfoProduct = "TESLA";
+const char* kInfoSeller  = "InvisibleX";
+const char* kInfoChannel = "t.me/RitmadaPrompt";
+const char* kInfoVersion = "TESLA UI 1.1";
+
 // ---------------------------------------------------------------- Projection
 float gS = 1.f;
 float gCx = 0.f, gCy = 0.f;
@@ -448,6 +457,36 @@ float BindSliderF(ImDrawList* dl, const char* id, float x, float y, float w,
   return 40.f;
 }
 
+// A fixed palette strip. col points at four consecutive floats, which is
+// exactly the layout of the engine's ImVec4 boxCustomColor/lineCustomColor,
+// so &c.x can be passed straight in.
+void Swatches(ImDrawList* dl, const char* id, float x, float y, float w, float* col) {
+  if (!col) return;
+  const Pal p = P();
+  static const float pal[8][3] = {
+      {1.00f, 1.00f, 1.00f}, {1.00f, 0.23f, 0.23f}, {1.00f, 0.60f, 0.10f},
+      {1.00f, 0.90f, 0.20f}, {0.30f, 0.90f, 0.40f}, {0.20f, 0.80f, 0.95f},
+      {0.35f, 0.55f, 1.00f}, {0.85f, 0.40f, 1.00f}};
+  const float cw = w / 8.f;
+  for (int i = 0; i < 8; ++i) {
+    const float x0 = x + cw * (float)i, x1 = x0 + cw - 4.f;
+    FillRR(dl, x0, y, x1, y + 18.f, 4.f,
+           Col((int)(pal[i][0] * 255.f), (int)(pal[i][1] * 255.f),
+               (int)(pal[i][2] * 255.f), 1.f));
+    const bool sel = fabsf(col[0] - pal[i][0]) < 0.02f &&
+                     fabsf(col[1] - pal[i][1]) < 0.02f &&
+                     fabsf(col[2] - pal[i][2]) < 0.02f;
+    StrokeRR(dl, x0, y, x1, y + 18.f, 4.f,
+             sel ? p.accent : Col(255, 255, 255, 0.45f), sel ? 2.0f : 1.f);
+    if (Click(H(id) + (uint32_t)i, x0, y, x1, y + 18.f)) {
+      col[0] = pal[i][0];
+      col[1] = pal[i][1];
+      col[2] = pal[i][2];
+      col[3] = 1.f;
+    }
+  }
+}
+
 // ================================================================ Icons
 void IconEye(ImDrawList* dl, float cx, float cy, ImU32 col, float s) {
   dl->AddEllipse(Pr(cx, cy), 7.4f * s * gS, 4.8f * s * gS, col, 0.f, 28, 1.3f);
@@ -503,7 +542,7 @@ void DrawSidebar(ImDrawList* dl) {
 
   const char* nav[PAGE_COUNT] = {"Visual", "Aim", "Exploit", "Settings", "Theme"};
   const char* sub[PAGE_COUNT] = {"ESP DRAWING", "SILENT / HW BT", "GHOST / RECOIL",
-                                 "SAVE / EXIT", "SKIN / ACCENT"};
+                                 "INFO / EXIT", "SKIN / ACCENT"};
   for (int i = 0; i < PAGE_COUNT; ++i) {
     const float y = 106.f + 42.f * (float)i;
     const bool act = (g.page == i);
@@ -527,7 +566,7 @@ void DrawSidebar(ImDrawList* dl) {
   dl->AddCircleFilled(Pr(22.f, 398.f), 2.0f * Ds(22.f, 398.f), Col(58, 208, 128, 0.95f), 12);
   Txt(28.f, 392.f, 4.8f, Col(56, 190, 120, 0.95f), "MENU READY", 0, 1.2f);
   Txt(20.f, 410.f, 4.5f, p.textFaint, "SurfaceFlinger overlay", 0);
-  Txt(20.f, 428.f, 4.2f, p.textFaint, "TESLA UI / 1.0", 0, 0.7f);
+  Txt(20.f, 428.f, 4.2f, p.textFaint, "TESLA UI / 1.1", 0, 0.7f);
 
   dl->AddLine(Pr(SIDEBAR, 0.f), Pr(SIDEBAR, PH), p.hair, 1.f);
 }
@@ -721,11 +760,11 @@ void PageVisual(ImDrawList* dl) {
 
   TxtB(X, 36.f, 15.5f, p.text, "Visual", 0);
   Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Box, skeleton, name, health, distance.", 0);
+  Txt(X, 78.f, 5.4f, p.textDim, "Drawing, overlay and colours.", 0);
 
-  const float y0 = 100.f, y1 = 382.f;
-  const float wCol = 360.f, gap = 26.f;
-  const float c1 = X, c2 = X + wCol + gap;
+  const float y0 = 100.f, y1 = 400.f;
+  const float wCol = 236.f, gap = 14.f;
+  const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
 
   CardBg(dl, c1, y0, c1 + wCol, y1);
   CardHead(c1 + 18.f, y0 + 16.f, "Draw", "ELEMENTS");
@@ -748,8 +787,41 @@ void PageVisual(ImDrawList* dl) {
     y += BindToggle(dl, "v.360",  c2 + 18.f, y, w, b.is3600,        "360 Alert");
     y += BindToggle(dl, "v.fovc", c2 + 18.f, y, w, b.showFovCircle, "FOV Circle");
     y += BindToggle(dl, "v.alin", c2 + 18.f, y, w, b.showAimLine,   "Aim Line");
-    y += 10.f;
-    y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50, "Text Size", "");
+    y += 8.f;
+    // Aim FOV lives here, next to the circle that draws it, instead of
+    // on the Aim page. Same flag the old menu's FOV Range slider wrote,
+    // same 1..360 range.
+    y += BindSliderF(dl, "v.fov", c2 + 18.f, y, w, b.aimFov, 1.f, 360.f,
+                     "Aim FOV", "%.0f");
+    y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50,
+                     "Text Size", "");
+  }
+
+  CardBg(dl, c3, y0, c3 + wCol, y1);
+  CardHead(c3 + 18.f, y0 + 16.f, "Colour", "BOX / LINE");
+  {
+    const float x = c3 + 18.f, w = wCol - 36.f;
+    // Mode indices are the engine's own: 0 Static, 1 Health, 2 Distance,
+    // 3 Rainbow. Only Static reads the swatch underneath it; the other
+    // three compute the colour per entity, so the swatch is left visible
+    // but simply has no effect there.
+    static const char* modes[4] = {"Flat", "HP", "Dist", "RGB"};
+
+    Txt(x, y0 + 52.f, 5.4f, p.textDim, "Box", 0);
+    if (b.boxColorMode) {
+      Segmented(dl, H("c.bm"), x, y0 + 68.f, w, 22.f, b.boxColorMode, modes, 4);
+      Swatches(dl, "c.bc", x, y0 + 98.f, w, b.boxColor);
+    }
+
+    Txt(x, y0 + 136.f, 5.4f, p.textDim, "ESP Line", 0);
+    if (b.lineColorMode) {
+      Segmented(dl, H("c.lm"), x, y0 + 152.f, w, 22.f, b.lineColorMode, modes, 4);
+      Swatches(dl, "c.lc", x, y0 + 182.f, w, b.lineColor);
+    }
+
+    TxtWrap(x, y0 + 214.f, w, 4.4f, p.textFaint,
+            "Flat uses the swatch. HP, Dist and RGB compute the colour per "
+            "player, so the swatch does nothing in those three.");
   }
 
   Txt(X, 440.f, 4.6f, p.textFaint,
@@ -757,10 +829,9 @@ void PageVisual(ImDrawList* dl) {
 }
 
 // ================================================================ Page: Aim
-// Aim Silent and Hardware BT only, as asked. Aimbot, FOV range, Body Kill,
-// Brutal BT, Drag Headshot, Body Kill HP and Chest Rate are no longer drawn
-// here. Their flags are still bound (AetherUI.h), so they keep whatever
-// value the saved config gives them -- they are off this page, not reset.
+// Aim Silent, Hardware BT and Hardware BT's own hit mode. Aimbot, Body
+// Kill, Brutal BT and Drag Headshot are still bound (AetherUI.h) but are
+// not drawn here, so the saved config keeps deciding them.
 void PageAim(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
@@ -770,16 +841,38 @@ void PageAim(ImDrawList* dl) {
   Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim, "Paradise EXECUTE breakpoint path.", 0);
 
-  const float y0 = 100.f, y1 = 248.f;
-  const float wCol = 360.f;
+  const float y0 = 100.f, wCol = 360.f;
 
-  CardBg(dl, X, y0, X + wCol, y1);
+  CardBg(dl, X, y0, X + wCol, 248.f);
   CardHead(X + 18.f, y0 + 16.f, "Primary", "AIM");
   {
     float y = y0 + 58.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "a.silent", X + 18.f, y, w, b.aimSilent,  "Aim Silent");
     y += BindToggle(dl, "a.hwbt",   X + 18.f, y, w, b.hardwareBT, "Hardware BT");
+  }
+
+  // Hardware BT's two extra modes, back as asked. These are the engine's
+  // chestRate values, which it clamps to 1..3 and forces to 1 whenever
+  // Hardware BT is off: 1 = head only, 2 = body, 3 = legit (70% body,
+  // 30% head). Shown as a 3-way because that is what the value is -- a
+  // mode, not a percentage, which is why the old 0..100 slider here was
+  // wrong.
+  const float m0 = 262.f;
+  CardBg(dl, X, m0, X + wCol, m0 + 118.f);
+  CardHead(X + 18.f, m0 + 16.f, "BT Mode", "HIT POINT");
+  if (b.chestRateSave) {
+    static const char* bt[3] = {"Head", "Body", "Legit"};
+    int idx = *b.chestRateSave - 1;
+    if (idx < 0) idx = 0;
+    if (idx > 2) idx = 2;
+    Segmented(dl, H("a.btmode"), X + 18.f, m0 + 48.f, wCol - 36.f, 26.f, &idx, bt, 3);
+    *b.chestRateSave = idx + 1;
+
+    const char* hint = "Head only";
+    if (idx == 1) hint = "Body, 100%";
+    else if (idx == 2) hint = "Legit: 70% body, 30% head";
+    Txt(X + 18.f, m0 + 86.f, 4.8f, p.textFaint, hint, 0);
   }
 
   Txt(X, 440.f, 4.6f, p.textFaint,
@@ -839,38 +932,51 @@ void PageExploit(ImDrawList* dl) {
 }
 
 // ================================================================ Page: Settings
-// Trimmed to what is real. Gone: "load config" and "connect data channel"
-// (neither was wired to anything), the driver-status row (no driver flag is
-// bound), the world-object row (it printed a hardcoded 0) and the about text
-// that described a config file this build never writes.
 void PageSettings(ImDrawList* dl) {
   const Pal p = P();
   const float X = SIDEBAR + 24.f;
 
   TxtB(X, 36.f, 15.5f, p.text, "Settings", 0);
-  Txt(X + TxtWU(15.5f, "Settings") + 10.f, 42.f, 4.6f, p.textFaint, "SAVE / EXIT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Write the current settings, or close the menu.", 0);
+  Txt(X + TxtWU(15.5f, "Settings") + 10.f, 42.f, 4.6f, p.textFaint, "INFO / EXIT", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Apply everything, close the menu, or read the build info.", 0);
 
-  CardBg(dl, X, 100.f, 978.f, 268.f);
-  CardHead(X + 18.f, 116.f, "Actions", "SAVE / EXIT");
+  CardBg(dl, X, 100.f, 978.f, 216.f);
+  CardHead(X + 18.f, 116.f, "Actions", "APPLY / EXIT");
 
-  if (Button(dl, H("save"), X + 18.f, 150.f, 200.f, 32.f, "Save Settings", true))
+  if (Button(dl, H("save"), X + 18.f, 148.f, 200.f, 32.f, "Apply Settings", true))
     g.requestSave = true;
-  if (Button(dl, H("exitbtn"), X + 230.f, 150.f, 200.f, 32.f, "Exit"))
+  if (Button(dl, H("exitbtn"), X + 230.f, 148.f, 200.f, 32.f, "Exit"))
     g.requestExit = true;
 
-  TxtWrap(X + 18.f, 198.f, 700.f, 4.7f, p.textDim,
-          "Save writes the same settings file the old menu wrote. Exit saves "
-          "first, then stops the overlay and the process.");
+  // Deliberately not called "Save": this build's SaveSettings() is an
+  // empty function, there is no settings file, and every toggle already
+  // reaches the engine on the frame it is flipped. Apply exists for the
+  // handful of values that only the engine's own sync routine pushes.
+  TxtWrap(X + 450.f, 150.f, 500.f, 4.6f, p.textDim,
+          "Nothing is written to disk -- this build keeps no settings file, so "
+          "everything starts off after a restart. Exit stops the overlay and "
+          "the process.");
 
-  CardBg(dl, X, 280.f, 978.f, 400.f);
-  CardHead(X + 18.f, 296.f, "About", "BUILD");
-  Txt(X + 18.f, 326.f, 5.6f, p.text, "TESLA UI 1.0", 0);
-  Txt(X + 18.f, 350.f, 4.8f, p.textDim, "ImGui overlay on its own SurfaceFlinger layer", 0);
+  // ── Info ───────────────────────────────────────────────────────────
+  CardBg(dl, X, 230.f, 978.f, 430.f);
+  CardHead(X + 18.f, 246.f, "Info", "BUILD / SELLER");
 
-  char fb[32];
-  snprintf(fb, sizeof(fb), "%d FPS", (int)ImGui::GetIO().Framerate);
-  Txt(978.f - 18.f, 326.f, 5.2f, p.text, fb, 2);
+  const char* k[4] = {"Product", "Seller", "Channel", "Version"};
+  const char* v[4] = {kInfoProduct, kInfoSeller, kInfoChannel, kInfoVersion};
+  for (int i = 0; i < 4; ++i) {
+    const float ry = 284.f + 26.f * (float)i;
+    Txt(X + 18.f, ry, 5.2f, p.textDim, k[i], 0);
+    Txt(X + 200.f, ry, 5.4f, i == 1 ? p.accent : p.text, v[i], 0);
+    if (i < 3) {
+      dl->AddLine(Pr(X + 18.f, ry + 19.f), Pr(960.f, ry + 19.f),
+                  Col(150, 168, 190, 0.22f), 1.f);
+    }
+  }
+
+  char fb[40];
+  snprintf(fb, sizeof(fb), "%d FPS  ·  ImGui overlay on its own layer",
+           (int)ImGui::GetIO().Framerate);
+  Txt(X + 18.f, 394.f, 4.6f, p.textFaint, fb, 0);
 }
 
 // ================================================================ Panel

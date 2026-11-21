@@ -283,14 +283,19 @@ bool  NoReload      = false;
 int   SilentAimPercentage = 100;  /* 100=head, 0=body — set from chestRate */
 bool  g_ExploitFloatUI = false;
 bool  g_ExploitFloatGhost = false;   /* floating exploit icons on screen */
-/* [NEW] Exploit tab toggle: "Normal Write (no breakpoint)".
- * OFF (default) -> Aim Silent / Hardware BT steer the game's own store
- * through the Paradise EXECUTE breakpoint, as before.
+/* Exploit tab toggle: "Normal Write (no breakpoint)".
+ * OFF -> Aim Silent / Hardware BT steer the game's own store through the
+ * Paradise EXECUTE breakpoint.
  * ON  -> both features release every breakpoint and write the direction
- * field directly instead. USER-SELECTED mode, not a runtime fallback:
- * nothing switches on its own, and while it is off the breakpoint path
- * is still the only path. */
-bool  g_DirNormalWrite = false;
+ * field directly instead.
+ *
+ * [CHANGED] Default is now ON. The breakpoint path has been reported not
+ * working across every round of fixes so far, while the direct write is
+ * the path these two features used before any breakpoint code existed.
+ * Defaulting to the one that works means the features work on a fresh
+ * install; turning this off still gives the breakpoint path and nothing
+ * switches on its own, so this is still a mode, not a fallback. */
+bool  g_DirNormalWrite = true;
 bool  BrutalBT     = false;
 bool  AimMagnet    = false;   /* pull enemy feet onto fire ray (XZ) while firing */
 bool  DownPlayer   = false;   /* magnet vertical pull-down while firing */
@@ -2350,7 +2355,17 @@ namespace AimHookState {
                 pts[i].type    = PARADISE_BP_EXECUTE;
                 pts[i].length  = 4;   // one AArch64 instruction
                 pts[i].scope   = PARADISE_BP_ALL_THREADS;
-                pts[i].reserved = g_sites[i].coord;
+                // [CHANGED] was g_sites[i].coord. That hint was always
+                // marked UNVERIFIED: nothing in paradise_api.h says the
+                // kernel reads `reserved` as a COORD bitmask, and those
+                // flags belong to ptebp_get_coord_samples(), which is a
+                // SAMPLING interface. If the kernel does read them, the
+                // most likely effect is putting the point into coordinate
+                // sampling rather than register override -- i.e. the hint
+                // could be the thing suppressing the override. Sending 0
+                // takes that guess back out of the picture. The shape is
+                // still computed and logged below, just not submitted.
+                pts[i].reserved = 0;
             }
             g_armed = pd->ptebp_set(pts, (size_t)g_nsites);
             g_committed = g_armed ? g_nsites : 0;
@@ -2358,8 +2373,12 @@ namespace AimHookState {
         }
 
         // Pushes the current direction into every armed site.
+        // out_hits (optional) receives the summed hit_count of the records
+        // this owner's points have captured -- the one number that says
+        // whether the EXECUTE breakpoints are trapping at all.
         static void PushLocked(paradise_driver* pd, int owner,
-                               const Vector3& dir) {
+                               const Vector3& dir, uint64_t* out_hits = nullptr,
+                               int* out_mine = nullptr) {
             if(!g_armed) return;
             const float comp[3] = { dir.X, dir.Y, dir.Z };
 
@@ -2380,8 +2399,11 @@ namespace AimHookState {
                 paradise_bp_record rec{};
                 paradise_bp_record cap[1]{};
                 uint32_t count = 0;
-                if(pd->ptebp_get_records((uint32_t)i, 0, cap, 1, &count) && count > 0)
+                if(pd->ptebp_get_records((uint32_t)i, 0, cap, 1, &count) && count > 0){
                     rec = cap[0];
+                    if(out_hits) *out_hits += rec.hit_count;
+                }
+                if(out_mine) (*out_mine)++;
                 __builtin_memset(rec.mask, 0, sizeof(rec.mask));
 
                 for(uint8_t l = 0; l < st.nlanes; l++){
@@ -2540,7 +2562,53 @@ namespace AimHookState {
 
         std::lock_guard<std::mutex> lk(DirExec::g_mtx);
         if(!DirExec::g_armed) return false;
-        DirExec::PushLocked(pd, owner, dir);
+
+        uint64_t hits = 0;
+        int mine = 0;
+        DirExec::PushLocked(pd, owner, dir, &hits, &mine);
+
+        // ── Does the override actually land? ───────────────────────
+        // Every round of fixes so far has ended with "armed fine, still
+        // does nothing", because nothing in this path ever checked the
+        // result. Two facts settle it, and both are cheap:
+        //
+        //   hit_count  -- 0 means the EXECUTE points are never trapping,
+        //                 so the problem is the point, not the override.
+        //   memory     -- read the Vector3 back. If the override is
+        //                 applied, the game's own store writes OUR value
+        //                 and memory matches what we pushed. If it does
+        //                 not match, the kernel took the record and
+        //                 ignored it.
+        //
+        // Throttled to once every 2s per owner so it cannot flood the
+        // log or cost anything in the aim loop.
+        {
+            static std::chrono::steady_clock::time_point s_last[4];
+            const int oi = (owner >= 0 && owner < 4) ? owner : 0;
+            const auto tnow = std::chrono::steady_clock::now();
+            if(std::chrono::duration_cast<std::chrono::milliseconds>(
+                   tnow - s_last[oi]).count() >= 2000){
+                s_last[oi] = tnow;
+                const Vector3 mem = Read<Vector3>(base);
+                auto same = [](float a, float b){
+                    const float d = a - b;
+                    return (d < 0.0005f) && (d > -0.0005f);
+                };
+                const bool landed = same(mem.X, dir.X) &&
+                                    same(mem.Y, dir.Y) &&
+                                    same(mem.Z, dir.Z);
+                printf("[INX] ptebp owner=%d sites=%d/%d hits=%llu "
+                       "pushed=(%.4f,%.4f,%.4f) mem=(%.4f,%.4f,%.4f) -> %s\n",
+                       owner, mine, DirExec::g_nsites,
+                       (unsigned long long)hits,
+                       dir.X, dir.Y, dir.Z, mem.X, mem.Y, mem.Z,
+                       hits == 0
+                           ? "EXECUTE points never trapped (hit_count=0)"
+                           : (landed ? "OVERRIDE LANDED"
+                                     : "override IGNORED by kernel"));
+                fflush(stdout);
+            }
+        }
         return true;
     }
 
