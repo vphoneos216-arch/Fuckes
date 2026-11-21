@@ -763,11 +763,12 @@ inline void RenderSingleMenuWindow() {
                        switch and its two lines of state underneath. */
 
                     ImVec2 c1Min = ImVec2(centerX - cardW * 0.5f, contentY);
-                    // Card grown 470 -> 610 to fit the [RE-ADDED] Hardware BT
-                    // checkbox (its own row) plus the Head/Body/Legit mode
-                    // selector block, on top of everything that was already
-                    // here (Body Kill included, unchanged).
-                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 500 * scale);
+                    // Card shrunk 500 -> 400 after removing the Drag
+                    // Headshot checkbox + its radius slider (~100*scale of
+                    // content). Still fits Aim Silent, Hardware BT, Show
+                    // FOV Circle, the FOV Range slider and the Head/Body/
+                    // Legit mode selector block below it.
+                    ImVec2 c1Max = ImVec2(centerX + cardW * 0.5f, contentY + 400 * scale);
                     dl->AddRectFilled(c1Min, c1Max, cardBg, cardRound);
 
                     float startX = c1Min.x + 25 * scale;
@@ -775,28 +776,27 @@ inline void RenderSingleMenuWindow() {
                     float row    = 48 * scale;
                     float col    = 236 * scale;  /* fits the content column */
 
-                    // Row 0 — Silent Aim | Aim Lock
+                    // Row 0 — Silent Aim
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY));
                     ImGui::Checkbox1("Aim Silent", &AimSilent);
                     g_Cfg.aimSilent = AimSilent;
-                    // [RENAMED — was "Collider Lock"] Now "Drag
-                    // Headshot": its own independent feature (see
-                    // UpdateDragHeadshotThread() in hook.h) — silently
-                    // redirects to the target's NECK bone, but only
-                    // while the player's own view is actively moving
-                    // (dragging). Does not reuse Collider Lock's old
-                    // AimLock/AimLockNew globals or its
-                    // UpdateAimLockNewThread() code at all — this slot
-                    // just now drives g_Cfg.dragHeadshot instead.
-                    ImGui::SetCursorScreenPos(ImVec2(startX + col, startY));
-                    ImGui::Checkbox1("Drag Headshot", &g_Cfg.dragHeadshot);
+                    // [REMOVED] Drag Headshot checkbox + its own radius
+                    // slider below — feature dropped from the menu per
+                    // explicit request. UpdateDragHeadshotThread() and
+                    // g_Cfg.dragHeadshot/dragHeadshotRadius are left
+                    // untouched in hook.h/ix_cfg.h (same unreachable-
+                    // but-not-deleted pattern already used for Body
+                    // Kill/Aimbot below), just force-cleared every frame
+                    // a few lines down so stale config.json can't bring
+                    // it back silently.
 
                     // Row 1 — Hardware BT | Show FOV Circle
                     // [SIMPLIFIED] Aim section now only carries Aim
-                    // Silent, Hardware BT, Drag Headshot and FOV Circle
-                    // — Body Kill and Aimbot checkboxes removed from
-                    // this page entirely. Their code (BodyKillBone(),
-                    // UpdateAimbotFast(), g_Cfg.bodyKill/Aimbot) is left
+                    // Silent, Hardware BT and FOV Circle — Drag
+                    // Headshot, Body Kill and Aimbot checkboxes removed
+                    // from this page entirely. Their code (BodyKillBone(),
+                    // UpdateAimbotFast(), UpdateDragHeadshotThread(),
+                    // g_Cfg.bodyKill/Aimbot/dragHeadshot) is left
                     // untouched in hook.h/main.cpp, just unreachable
                     // from any menu now — same approach already used
                     // for the old Collider Lock globals.
@@ -816,20 +816,9 @@ inline void RenderSingleMenuWindow() {
                     ImGui::SetNextItemWidth(cardW - 50 * scale);
                     ImGui::SliderFloat("##FOVRange", &g_Cfg.aimFovUI, 1.0f, 360.0f, "%.0f");
 
-                    // -- [NEW] Drag Headshot trigger-radius slider --
-                    // How close (as % of half-screen-height, resolution
-                    // independent) your own crosshair must get to the
-                    // enemy's neck on screen before the redirect fires.
-                    // Own slider, own circle on screen (DrawFOVCircle
-                    // call in hook.h, g_ShowDragHSCircle) — independent
-                    // of the FOV Range slider above.
-                    float dhY = fovLabelY + 30 * scale + 56 * scale;
-                    dl->AddText(NULL, 20.0f * scale,
-                                ImVec2(startX, dhY),
-                                COL_TXT_HI((int)(255 * uiAlpha)), "Drag Headshot Radius");
-                    ImGui::SetCursorScreenPos(ImVec2(startX, dhY + 30 * scale));
-                    ImGui::SetNextItemWidth(cardW - 50 * scale);
-                    ImGui::SliderFloat("##DragHSRadius", &g_Cfg.dragHeadshotRadius, 2.0f, 40.0f, "%.0f");
+                    // [REMOVED] Drag Headshot trigger-radius slider that
+                    // used to sit here — modeY now follows directly after
+                    // the FOV Range slider instead of after it.
 
                     // -- [RE-ADDED, NOW TOGGLE BOXES] Hardware BT mode --
                     // Head / Body / Legit. Was a slider (chestRateSlider);
@@ -839,7 +828,7 @@ inline void RenderSingleMenuWindow() {
                     // Legit's actual 70/30 split is still implemented in
                     // UpdateHardwareBTFast() in hook.h — this is only the
                     // picker for which of the three it runs.
-                    float modeY = dhY + 30 * scale + 56 * scale;
+                    float modeY = fovLabelY + 30 * scale + 56 * scale;
                     dl->AddText(NULL, 20.0f * scale,
                                 ImVec2(startX, modeY),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Hardware BT Mode");
@@ -892,13 +881,15 @@ inline void RenderSingleMenuWindow() {
                     g_ShowFovOverlay  = g_Cfg.showFovCircle;
                     AimFov            = g_Cfg.aimFovUI;
                     g_Cfg.aimSilent   = AimSilent;    // Aim Silent sync — unchanged, untouched by this fix
-                    // [RENAMED] Drag Headshot — was Collider Lock's slot.
+                    // [REMOVED] Drag Headshot — checkbox/slider gone from
+                    // the menu above; force-cleared every frame (same
+                    // pattern as AimMagnet/g_ExploitFloatUI below) so a
+                    // stale config.json can't silently re-enable it.
                     // AimLock/AimLockNew intentionally left alone here
                     // (always whatever they were last, effectively
-                    // unused now that nothing sets them from the menu);
-                    // this feature is entirely its own global.
-                    DragHeadshot      = g_Cfg.dragHeadshot;
-                    g_DragHSRadiusPct = g_Cfg.dragHeadshotRadius;
+                    // unused now that nothing sets them from the menu).
+                    DragHeadshot      = false;
+                    g_Cfg.dragHeadshot = false;
                     // [RE-ADDED] Aimbot — now synced from its own
                     // checkbox above instead of being forced off.
                     Aimbot            = g_Cfg.Aimbot;
@@ -923,12 +914,12 @@ inline void RenderSingleMenuWindow() {
                      * Body Kill has no thread of its own — its threshold
                      * check runs inline inside StartSilentAimThread's loop. */
                     StartSilentAimThread();
-                    // Aimbot's thread start kept (idempotent, guarded by
-                    // its own running flag). StartAimLockNewThread() is
-                    // no longer called from here — that checkbox slot
-                    // now drives Drag Headshot instead (see
-                    // StartDragHeadshotThread() below).
-                    StartDragHeadshotThread();
+                    // [REMOVED] StartDragHeadshotThread() call — Drag
+                    // Headshot has no checkbox left to enable it from, and
+                    // DragHeadshot is force-cleared above, so the thread
+                    // (if started elsewhere/left over) idles permanently
+                    // rather than being started fresh here. Aimbot's start
+                    // kept, unaffected by this.
                     StartAimbotThread();
                     StartHardwareBTThread();
                 }
@@ -1037,11 +1028,18 @@ inline void RenderSingleMenuWindow() {
 
                     InfoRow(3, "Expiry", sd.expiry.c_str(), COL_TXT_HI((int)(255 * uiAlpha)));
 
-                    // ── SETTINGS CARD (Mute + Collider inject + Exit) ──
-                    // [RE-ADDED SPACE] grown 130 -> 190 for Volume Off,
-                    // then -> 290 for the [NEW] internal-collider-lock
-                    // toggle + manual re-inject button below it.
-                    float cardH2      = 290 * scale;
+                    // ── SETTINGS CARD (Mute + Exit) ──
+                    // [REMOVED] "Inject Collider Stub"/"Re-Inject Collider
+                    // Stub" button and "Internal Collider Lock" checkbox —
+                    // the whole ptrace-injected collider_stub.so + shared-
+                    // memory IPC mechanism (collider_ipc.h, collider_stub.cpp,
+                    // ix_retry_collider_injection()) is being retired from
+                    // the menu; its SilentAimDir equivalent (Aim Silent) now
+                    // has its own Paradise-then-KPM HWBP tiers instead of a
+                    // separate injected stub for the collider field. Card
+                    // shrunk back down 290 -> 190 (Volume Off + Exit only,
+                    // same height as before the stub UI was added).
+                    float cardH2      = 190 * scale;
                     float cardSpacing = 20 * scale;
                     ImVec2 c2Min = ImVec2(centerX - cardW * 0.5f, contentY + cardH1 + cardSpacing);
                     ImVec2 c2Max = ImVec2(centerX + cardW * 0.5f, contentY + cardH1 + cardSpacing + cardH2);
@@ -1052,44 +1050,18 @@ inline void RenderSingleMenuWindow() {
                                 ImVec2(c2Min.x + 25 * scale, c2Min.y + 16 * scale),
                                 COL_TXT_HI((int)(255 * uiAlpha)), "Settings");
 
-                    // [NEW] Volume Off — mutes the menu's own click/toggle
-                    // sounds (ix_audio.h). Checkbox is the source of truth
-                    // (same pattern as Body Kill etc. above); applied every
-                    // frame so it takes effect immediately either way.
+                    // Volume Off — mutes the menu's own click/toggle sounds
+                    // (ix_audio.h). Checkbox is the source of truth (same
+                    // pattern as Body Kill etc. above); applied every frame
+                    // so it takes effect immediately either way.
                     ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 58 * scale));
                     ImGui::Checkbox1("Volume Off", &g_Cfg.soundMuted);
                     ix_sound_set_muted(g_Cfg.soundMuted);
 
-                    // [CHANGED — injection is manual-only now, per report
-                    // of the app crashing] Button always shows first. The
-                    // "Internal Collider Lock" toggle only appears AFTER
-                    // a successful injection (stub reports itself alive)
-                    // — nothing calls ix_retry_collider_injection() on its
-                    // own anymore, so the ptrace attach it does only ever
-                    // happens when this button is pressed, not on every
-                    // launch.
                     float btnW = 380 * scale;
                     float btnH = 45 * scale;
-                    bool stubAlive = g_ColliderIpc && g_ColliderIpc->stubAlive.load(std::memory_order_acquire);
 
-                    ImVec2 injBtnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 106 * scale);
-                    ImGui::SetCursorScreenPos(injBtnPos);
-                    if (ImGui::Button(stubAlive ? "Re-Inject Collider Stub (alive)" : "Inject Collider Stub",
-                                       ImVec2(btnW, btnH))) {
-                        ix_retry_collider_injection();
-                    }
-
-                    if (stubAlive) {
-                        // Only shown once the stub is confirmed alive —
-                        // before that there is nothing for this to
-                        // switch between (hook.h already falls back to
-                        // the direct in-process call whenever the stub
-                        // isn't up, toggle or no toggle).
-                        ImGui::SetCursorScreenPos(ImVec2(c2Min.x + 25 * scale, c2Min.y + 164 * scale));
-                        ImGui::Checkbox1("Internal Collider Lock", &g_ColliderInternalEnabled);
-                    }
-
-                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 212 * scale);
+                    ImVec2 btnPos = ImVec2(centerX - btnW * 0.5f, c2Min.y + 112 * scale);
                     ImGui::SetCursorScreenPos(btnPos);
                     if (ImGui::Button("Exit", ImVec2(btnW, btnH))) {
                         UpdateAndSaveSettings();

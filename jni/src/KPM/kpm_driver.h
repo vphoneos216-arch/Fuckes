@@ -133,6 +133,87 @@ public:
         return (uintptr_t)GetModuleBase(mod, (char *)"r-xp", sizeof(long) * 4);
     }
 
+    // ── Hardware-breakpoint override engine (kpm/inx_mem/inx_hwbp.h) ──
+    // Thin client for the kernel module's hbadd/hbset/hbdel/hbclr commands
+    // (see inx_mem.c's control0 protocol doc comment). Previously only the
+    // kernel side existed for this -- nothing in userspace called it, so
+    // this was never actually working end-to-end until now.
+    //
+    // bp_type: 'x' execute, 'w' write, 'r' read. bp_len: 1/2/4/8 bytes.
+    // Returns the slot index (>= 0) or -1 on failure.
+    int hwbp_add(uintptr_t addr, char bp_type, int bp_len) {
+        if (!ready_) return -1;
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "hbadd %d %lx %c %d",
+                 (int)pid_, (unsigned long)addr, bp_type, bp_len);
+        char reply[16] = {0};
+        long rc = sc_kpm_control(key_.c_str(), "hypervisor", cmd, reply, sizeof(reply));
+        if (rc < 0) return -1;
+        return (int)rc; // control0 returns the slot index itself, same as reply
+    }
+
+    // Overwrites slot's register-override list with exactly the GP regs
+    // given here (any previously-set regs/condition on this slot are
+    // cleared first, matching hbset's own "drop counts then rewrite"
+    // semantics). gp_idx[i] is the AArch64 x-register index (0..30),
+    // gp_val[i] its replacement value (bit-pattern, e.g. float bits for a
+    // float argument -- see float_bits-style helpers used elsewhere in
+    // this project for that conversion).
+    bool hwbp_set_gp(int slot, const uint32_t *gp_idx, const uint64_t *gp_val, int count) {
+        if (!ready_ || slot < 0 || count <= 0 || count > 8) return false;
+        char cmd[16 + 8 * 24];
+        int off = snprintf(cmd, sizeof(cmd), "hbset %d", slot);
+        for (int i = 0; i < count && off > 0 && (size_t)off < sizeof(cmd); i++) {
+            off += snprintf(cmd + off, sizeof(cmd) - off, " g%u=%llx",
+                             (unsigned)gp_idx[i], (unsigned long long)gp_val[i]);
+        }
+        long rc = sc_kpm_control(key_.c_str(), "hypervisor", cmd, nullptr, 0);
+        return rc == 0;
+    }
+
+    // One-shot convenience used by the aim hook helpers: arm a write
+    // watchpoint at `addr` (length `bp_len`, 1/2/4/8) and immediately set
+    // its GP register override in the same call, mirroring the
+    // Pd/Rth/Twt *HwbpArm* helpers' single-call shape in Scarecrow/hook.h.
+    // On failure the slot (if one was allocated) is released, so a failed
+    // arm never leaks a slot out of the kernel's tiny 8-slot budget.
+    bool hwbp_arm_write(uintptr_t addr, int bp_len,
+                         const uint32_t *gp_idx, const uint64_t *gp_val, int count,
+                         int &out_slot) {
+        int slot = hwbp_add(addr, 'w', bp_len);
+        if (slot < 0) { out_slot = -1; return false; }
+        if (!hwbp_set_gp(slot, gp_idx, gp_val, count)) {
+            hwbp_del(slot);
+            out_slot = -1;
+            return false;
+        }
+        out_slot = slot;
+        return true;
+    }
+
+    bool hwbp_del(int slot) {
+        if (!ready_ || slot < 0) return false;
+        char cmd[32];
+        snprintf(cmd, sizeof(cmd), "hbdel %d", slot);
+        long rc = sc_kpm_control(key_.c_str(), "hypervisor", cmd, nullptr, 0);
+        return rc == 0;
+    }
+
+    bool hwbp_clear_all() {
+        if (!ready_) return false;
+        long rc = sc_kpm_control(key_.c_str(), "hypervisor", "hbclr", nullptr, 0);
+        return rc == 0;
+    }
+
+    // "ready" / "not_ready" -- whether the kernel resolved the HWBP symbols
+    // on THIS build (independent of plain mem r/w readiness, see inx_mem.c).
+    bool hwbp_is_ready() {
+        if (!ready_) return false;
+        char reply[16] = {0};
+        long rc = sc_kpm_control(key_.c_str(), "hypervisor", "hbstatus", reply, sizeof(reply));
+        return rc == 0 && strncmp(reply, "ready", 5) == 0;
+    }
+
 private:
     static constexpr size_t kMaxCopy = 512; // matches inx_mem.c's INX_MAX_COPY
 
