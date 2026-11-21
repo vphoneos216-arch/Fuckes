@@ -1877,21 +1877,114 @@ namespace AimHookState {
         return rth->UpdateAndEnableHwBp(&info);
     }
     // ── Paradise HWBP helpers ──────────────────────────────────────────
-    // Arms a Paradise hardware write-breakpoint on a rotation field.
-    // paradise_bp_record.x0–x3 carry the new float values as GP register
-    // overrides; the driver overwrites the game's store in-kernel.
+    // Two real bugs fixed here, both confirmed directly from
+    // jni/src/Paradise/paradise_api.h's own documentation, not guessed:
+    //
+    // BUG 1 — missing register-override mask. paradise_bp_record has an
+    // 18-byte `mask` field; the header's own PARADISE_BP_SET_MASK macro
+    // comment says it is a "2-bit register-operation mask" and
+    // hwbp_set_record's comment says it writes back "a record AND its
+    // 2-bit mask". Every Pd*Arm* helper below used to build a
+    // `paradise_bp_record rec{}` and set rec.x0/x1/x2/x3 directly WITHOUT
+    // ever calling PARADISE_BP_SET_MASK — so every register's mask byte
+    // stayed 0 (PARADISE_BP_OP_NONE), meaning the driver was told "do not
+    // override this register" for every single register whose value we
+    // were setting. The breakpoint armed fine; the override simply never
+    // applied. This alone is enough to make Aim Silent (and Rotation,
+    // and Collider Lock) look like they silently do nothing.
+    //
+    // BUG 2 — shared point-table stomping. hwbp_set(points, count) is a
+    // REPLACE of the driver's whole point table (confirmed by its own
+    // comment: "设置最多16个...断点/观察点" — set [the] breakpoints, not
+    // "add one"), and hwbp_remove() "清理所有 CPU 调试寄存器" — clears
+    // ALL CPU debug registers for the whole process, not just the
+    // caller's own point. Rotation, SilentDir and Collider Lock each
+    // independently called `pd->hwbp_set(&pt, 1)` with their OWN lone
+    // point at index 0, and PdHwbpDisarm called `pd->hwbp_remove()`
+    // unconditionally — so whichever of those three features last
+    // (re)armed wiped out the other two's breakpoints process-wide, from
+    // a separate thread, with no coordination at all. Three features
+    // sharing one hardware resource with no registry is exactly "koi
+    // function not working jab doosra use karte ho".
+    //
+    // FIX: a small fixed-slot registry below. Each feature gets its own
+    // permanent point_index (0..3); the full SLOT_COUNT-sized array is
+    // submitted via ONE hwbp_set() call whenever a slot's address/type/
+    // length actually changes (inactive slots are submitted as
+    // PARADISE_HWBP_EMPTY so the OTHER slots' indices never shift), and
+    // register values are pushed via hwbp_set_record(slot, 0, &rec) with
+    // PARADISE_BP_SET_MASK correctly applied every frame after that —
+    // cheap, and never touches another feature's slot. Disarming a
+    // feature only empties ITS slot and resubmits the table; hwbp_remove()
+    // is no longer called by any per-feature helper.
+    namespace ParadisePoints {
+        enum Slot { SLOT_ROTATION = 0, SLOT_SILENTDIR = 1, SLOT_COLLIDER = 2,
+                    SLOT_HARDWAREBT = 3, SLOT_DRAGHEADSHOT = 4, SLOT_COUNT = 5 };
+        static std::mutex                g_mtx;
+        static paradise_bp_point_config  g_points[SLOT_COUNT];
+        static bool                      g_active[SLOT_COUNT] = { false, false, false, false, false };
+
+        // Submits ALL SLOT_COUNT entries every time (inactive -> EMPTY),
+        // so a slot's position — and therefore its point_index used by
+        // hwbp_set_record — never shifts depending on which OTHER
+        // features happen to be active right now.
+        static bool CommitLocked(paradise_driver* pd) {
+            paradise_bp_point_config snapshot[SLOT_COUNT];
+            for(int i = 0; i < SLOT_COUNT; i++) {
+                if(g_active[i]) {
+                    snapshot[i] = g_points[i];
+                } else {
+                    snapshot[i] = paradise_bp_point_config{};
+                    snapshot[i].type = PARADISE_HWBP_EMPTY;
+                }
+            }
+            return pd->hwbp_set(snapshot, SLOT_COUNT);
+        }
+
+        // Claims/updates `slot`'s point config. Only re-submits the whole
+        // table (CommitLocked) when this slot's address/type/length
+        // actually changed or it was previously inactive — a value-only
+        // update (same address, new direction/rotation) skips straight to
+        // the caller's hwbp_set_record and never touches hwbp_set at all.
+        static bool Arm(paradise_driver* pd, int slot, uintptr_t addr,
+                         uint32_t type, uint32_t len) {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            bool changed = !g_active[slot] ||
+                           g_points[slot].address != (uint64_t)addr ||
+                           g_points[slot].type    != type ||
+                           g_points[slot].length  != len;
+            paradise_bp_point_config pt{};
+            pt.address = (uint64_t)addr;
+            pt.type    = type;
+            pt.length  = len;
+            pt.scope   = PARADISE_HWBP_ALL_THREADS;
+            g_points[slot] = pt;
+            g_active[slot] = true;
+            if(!changed) return true; // table unchanged — caller just updates its record
+            return CommitLocked(pd);
+        }
+
+        static void Disarm(paradise_driver* pd, int slot) {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            if(!g_active[slot]) return;
+            g_active[slot] = false;
+            CommitLocked(pd);
+        }
+    } // namespace ParadisePoints
+
+    // Arms/updates a Paradise hardware write-breakpoint on a rotation
+    // field. paradise_bp_record.x0–x3 carry the new float values as GP
+    // register overrides — PARADISE_BP_SET_MASK(...,  PARADISE_BP_OP_WRITE)
+    // on each one is what actually tells the driver to apply them (see
+    // BUG 1 above; this is the fix).
     static bool PdHwbpArmRotation(paradise_driver* pd, uintptr_t rot_addr,
                                    const Quaternion& q) {
-        paradise_bp_point_config pt{};
-        pt.address  = (uint64_t)rot_addr;
-        pt.type     = PARADISE_HWBP_WRITE;
-        pt.length   = 16;  // Quaternion = 4 floats = 16 bytes
-        pt.scope    = PARADISE_HWBP_ALL_THREADS;
-        pt.reserved = 0;
-        if(!pd->hwbp_set(&pt, 1)) return false;
+        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_ROTATION, rot_addr,
+                                 PARADISE_HWBP_WRITE, 16 /* Quaternion = 4 floats */))
+            return false;
 
-        // Build an override record: pack x, y, z, w into GP regs x0–x3
-        // (ARM64 ABI: float args arrive in x0–x3 as bit-cast uint32).
+        // Pack x, y, z, w into GP regs x0–x3 (ARM64 ABI: float args arrive
+        // in x0–x3 as bit-cast uint32) and mark each one write-override.
         paradise_bp_record rec{};
         uint32_t bx, by, bz, bw;
         __builtin_memcpy(&bx, &q.X, 4);
@@ -1902,22 +1995,21 @@ namespace AimHookState {
         rec.x1 = (uint64_t)by;
         rec.x2 = (uint64_t)bz;
         rec.x3 = (uint64_t)bw;
-        pd->hwbp_set_record(0, 0, &rec);
-        return true;
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X3, PARADISE_BP_OP_WRITE);
+        return pd->hwbp_set_record(ParadisePoints::SLOT_ROTATION, 0, &rec);
     }
 
-    // Arms a Paradise hardware write-breakpoint on SilentAimDir. Same
-    // x0-x2 GP-register override convention as PdHwbpArmRotation above,
-    // one register fewer (Vector3 has no W).
+    // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir.
+    // Same x0-x2 GP-register override convention as PdHwbpArmRotation
+    // above, one register fewer (Vector3 has no W).
     static bool PdHwbpArmSilentDir(paradise_driver* pd, uintptr_t dir_addr,
                                     const Vector3& dir) {
-        paradise_bp_point_config pt{};
-        pt.address  = (uint64_t)dir_addr;
-        pt.type     = PARADISE_HWBP_WRITE;
-        pt.length   = 12;  // Vector3 = 3 floats = 12 bytes
-        pt.scope    = PARADISE_HWBP_ALL_THREADS;
-        pt.reserved = 0;
-        if(!pd->hwbp_set(&pt, 1)) return false;
+        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_SILENTDIR, dir_addr,
+                                 PARADISE_HWBP_WRITE, 12 /* Vector3 = 3 floats */))
+            return false;
 
         paradise_bp_record rec{};
         uint32_t bx, by, bz;
@@ -1927,29 +2019,78 @@ namespace AimHookState {
         rec.x0 = (uint64_t)bx;
         rec.x1 = (uint64_t)by;
         rec.x2 = (uint64_t)bz;
-        pd->hwbp_set_record(0, 0, &rec);
-        return true;
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
+        return pd->hwbp_set_record(ParadisePoints::SLOT_SILENTDIR, 0, &rec);
     }
 
     static bool PdHwbpArmCollider(paradise_driver* pd, uintptr_t collider_addr,
                                    uintptr_t head_collider_val) {
-        paradise_bp_point_config pt{};
-        pt.address  = (uint64_t)collider_addr;
-        pt.type     = PARADISE_HWBP_WRITE;
-        pt.length   = 8;   // pointer = 8 bytes
-        pt.scope    = PARADISE_HWBP_ALL_THREADS;
-        pt.reserved = 0;
-        if(!pd->hwbp_set(&pt, 1)) return false;
+        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_COLLIDER, collider_addr,
+                                 PARADISE_HWBP_WRITE, 8 /* pointer */))
+            return false;
 
         // Override x0 (the pointer the game is writing) with our head-collider
         paradise_bp_record rec{};
         rec.x0 = (uint64_t)head_collider_val;
-        pd->hwbp_set_record(0, 0, &rec);
-        return true;
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
+        return pd->hwbp_set_record(ParadisePoints::SLOT_COLLIDER, 0, &rec);
     }
 
-    static void PdHwbpDisarm(paradise_driver* pd) {
-        if(pd) pd->hwbp_remove();
+    // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir
+    // for the Hardware BT feature — its OWN slot (SLOT_HARDWAREBT), never
+    // SLOT_SILENTDIR, so Aim Silent and Hardware BT can each hold their
+    // own breakpoint on the same FIELD without fighting over the same
+    // table entry (they're still mutually exclusive in effect — only one
+    // of Aim Silent/Hardware BT should be enabled at a time, since both
+    // aim at the same bullet-direction field — but neither one's arm/
+    // disarm now silently destroys the other's unrelated breakpoint).
+    static bool PdHwbpArmHardwareBT(paradise_driver* pd, uintptr_t dir_addr,
+                                     const Vector3& dir) {
+        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_HARDWAREBT, dir_addr,
+                                 PARADISE_HWBP_WRITE, 12 /* Vector3 = 3 floats */))
+            return false;
+
+        paradise_bp_record rec{};
+        uint32_t bx, by, bz;
+        __builtin_memcpy(&bx, &dir.X, 4);
+        __builtin_memcpy(&by, &dir.Y, 4);
+        __builtin_memcpy(&bz, &dir.Z, 4);
+        rec.x0 = (uint64_t)bx;
+        rec.x1 = (uint64_t)by;
+        rec.x2 = (uint64_t)bz;
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
+        return pd->hwbp_set_record(ParadisePoints::SLOT_HARDWAREBT, 0, &rec);
+    }
+
+    static bool PdHwbpArmDragHeadshot(paradise_driver* pd, uintptr_t dir_addr,
+                                       const Vector3& dir) {
+        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_DRAGHEADSHOT, dir_addr,
+                                 PARADISE_HWBP_WRITE, 12 /* Vector3 = 3 floats */))
+            return false;
+
+        paradise_bp_record rec{};
+        uint32_t bx, by, bz;
+        __builtin_memcpy(&bx, &dir.X, 4);
+        __builtin_memcpy(&by, &dir.Y, 4);
+        __builtin_memcpy(&bz, &dir.Z, 4);
+        rec.x0 = (uint64_t)bx;
+        rec.x1 = (uint64_t)by;
+        rec.x2 = (uint64_t)bz;
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
+        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
+        return pd->hwbp_set_record(ParadisePoints::SLOT_DRAGHEADSHOT, 0, &rec);
+    }
+
+    // Disarms exactly ONE feature's slot and resubmits the shared table —
+    // never a global pd->hwbp_remove() (see BUG 2 above). `slot` is one
+    // of ParadisePoints::SLOT_*.
+    static void PdHwbpDisarm(paradise_driver* pd, int slot) {
+        if(pd) ParadisePoints::Disarm(pd, slot);
     }
 
     // ── TwT HWBP helpers ───────────────────────────────────────────────
@@ -2125,7 +2266,7 @@ void UpdateSilentAimFast(){
             AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
         } else {
             paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            if(pd) AimHookState::PdHwbpDisarm(pd);
+            if(pd) AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_SILENTDIR);
         }
         s_lastDirAddr = 0;
         s_lastViaKpm  = false;
@@ -2265,7 +2406,7 @@ void UpdateDragHeadshotThread(){
         if(rth && s_lastDirAddr)
             rth->DisableHwBp(g_driver->GetPid(), s_lastDirAddr);
         else if(pd && s_lastDirAddr)
-            AimHookState::PdHwbpDisarm(pd);
+            AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_DRAGHEADSHOT);
         if(twt && s_lastTwtHandle)
             AimHookState::TwtHwbpDisarm(twt, s_lastTwtHandle);
         s_lastDirAddr   = 0;
@@ -2392,10 +2533,14 @@ void UpdateDragHeadshotThread(){
                 Write<Vector3>(dirAddr, dir);
             }
         } else if(pd){
+            // Own slot (SLOT_DRAGHEADSHOT), not SLOT_SILENTDIR — this
+            // thread doesn't start anymore (see UI/SourceMenu.h removal
+            // notes), but if it ever did, it must never share Aim
+            // Silent's point-table entry.
             bool need_rearm = (s_lastDirAddr != dirAddr);
             if(need_rearm && s_lastDirAddr)
-                AimHookState::PdHwbpDisarm(pd);
-            if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
+                AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_DRAGHEADSHOT);
+            if(AimHookState::PdHwbpArmDragHeadshot(pd, dirAddr, dir)){
                 s_lastDirAddr = dirAddr;
             } else {
                 Write<Vector3>(dirAddr, dir);
@@ -2548,7 +2693,7 @@ void UpdateAimbotFast(){
                 if(need_rearm){
                     // Disarm previous point before re-arming (target may have changed)
                     if(AimHookState::ab_hook_armed.load())
-                        AimHookState::PdHwbpDisarm(pd);
+                        AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_ROTATION);
                     if(AimHookState::PdHwbpArmRotation(pd, rotAddr, nextRot)){
                         AimHookState::ab_hook_addr.store(rotAddr);
                         AimHookState::ab_hook_armed.store(true);
@@ -2617,7 +2762,7 @@ void UpdateAimLockNewThread(){
                 g_ColliderIpc->active = 0;
                 g_ColliderIpc->generation.fetch_add(1, std::memory_order_release);
             } else {
-                AimHookState::PdHwbpDisarm(pd);
+                AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_COLLIDER);
             }
         }
         if(twt && s_lastTwtHandle)
@@ -2785,7 +2930,7 @@ void UpdateAimLockNewThread(){
                                   (s_lastHwbpAddr == 0);
                 if(need_rearm){
                     if(s_lastHwbpAddr && !useStub)
-                        AimHookState::PdHwbpDisarm(pd);
+                        AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_COLLIDER);
 
                     bool armed;
                     if(useStub){
@@ -2881,8 +3026,37 @@ void UpdateAimLockNewThread(){
 static bool hwbtThreadRunning = false;
 
 void UpdateHardwareBTFast(){
+    /* [CHANGED] Was a plain Write<Vector3> directly into SilentAimDir —
+     * a visible, out-of-band memory write every frame, exactly the kind
+     * of thing the Aim Silent tier was explicitly built to avoid. Now
+     * uses the same driver-selected HWBP dispatch as UpdateSilentAimFast:
+     * Paradise connected -> always Paradise HWBP (its OWN slot,
+     * ParadisePoints::SLOT_HARDWAREBT, never SLOT_SILENTDIR — see the
+     * ParadisePoints registry comment above PdHwbpArmRotation); Paradise
+     * not connected + KPM connected -> always KPM HWBP tier. No runtime
+     * fallback between them, and no plain-write fallback below either —
+     * if the selected driver's arm fails this frame, the frame is
+     * skipped, full stop. */
+    static uintptr_t s_lastDirAddr = 0;
+    static bool      s_lastViaKpm  = false;
+    static int       s_kpmSlots[3] = { -1, -1, -1 };
+
+    auto disarm_bt = [&](){
+        if(!s_lastDirAddr) return;
+        if(s_lastViaKpm){
+            KpmDriver* kpm = g_driver ? g_driver->GetKpm() : nullptr;
+            AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
+        } else {
+            paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+            if(pd) AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_HARDWAREBT);
+        }
+        s_lastDirAddr = 0;
+        s_lastViaKpm  = false;
+    };
+
     while(hwbtThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !HardwareBT){
+            disarm_bt();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -2934,7 +3108,38 @@ void UpdateHardwareBTFast(){
             dir.X = targetPos.X - startPos.X;
             dir.Y = targetPos.Y - startPos.Y;
             dir.Z = targetPos.Z - startPos.Z;
-            Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
+
+            uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+            paradise_driver* pd  = g_driver ? g_driver->GetParadise() : nullptr;
+            KpmDriver*       kpm = g_driver ? g_driver->GetKpm()      : nullptr;
+
+            bool viaKpm = (!pd && kpm && kpm->is_ready());
+            bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastViaKpm != viaKpm);
+            if(need_rearm && s_lastDirAddr)
+                disarm_bt();
+
+            if(pd){
+                if(AimHookState::PdHwbpArmHardwareBT(pd, dirAddr, dir)){
+                    s_lastDirAddr = dirAddr;
+                    s_lastViaKpm  = false;
+                } else {
+                    s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
+                }
+            } else if(kpm){
+                bool justArmed = (s_lastDirAddr != dirAddr) || !s_lastViaKpm;
+                bool armed = justArmed
+                    ? AimHookState::KpmHwbpArmSilentDir(kpm, dirAddr, dir, s_kpmSlots)
+                    : AimHookState::KpmHwbpUpdateSilentDir(kpm, s_kpmSlots, dir);
+                if(armed){
+                    s_lastDirAddr = dirAddr;
+                    s_lastViaKpm  = true;
+                } else {
+                    AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
+                    s_lastDirAddr = 0; // arm/update failed this frame — skip, no fallback write
+                }
+            } else {
+                s_lastDirAddr = 0; // neither driver available this frame
+            }
         }
         std::this_thread::yield();
     }
