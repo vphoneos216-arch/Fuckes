@@ -34,23 +34,24 @@
 #include <ctime>
 #include "Scarecrow/oxorany_include.h"
 #include "Scarecrow/oxorany.h"
-// [NEW — internal collider aim-lock] Shared-memory handle to the
-// collider_stub.so injected into the game process. nullptr until the
-// injection in main() below succeeds (or if it fails/is skipped) —
-// hook.h's AimLock code checks this and falls back to its existing
-// direct in-process HWBP call whenever it's null, so the feature
-// never silently stops working because the stub wasn't loaded.
+// [REMOVED] The menu's "Inject Collider Stub"/"Re-Inject Collider Stub"
+// button and "Internal Collider Lock" checkbox are gone from
+// UI/SourceMenu.h's Settings card — that button was the ONLY thing that
+// ever called ix_retry_collider_injection() (nothing auto-triggers it),
+// so g_ColliderIpc now simply stays nullptr for the lifetime of the
+// process. hook.h's AimLock code already falls back to its direct
+// in-process HWBP call whenever g_ColliderIpc is null (that fallback
+// predates this change and is untouched), so this is a clean, safe
+// retirement of the stub at the functional level: the ptrace injection
+// path, collider_stub.cpp and collider_ipc.h are left in the tree
+// (still referenced by hook.h's IxColliderIpc type and the fallback
+// check) but nothing in this build ever triggers the injection again.
 IxColliderIpc* g_ColliderIpc = nullptr;
-// [NEW] Menu toggle — "Internal Collider Lock" on the Settings page.
-// On by default (matches what was asked: collider-lock should run via
-// the injected stub whenever possible). Switching it off makes
-// hook.h's AimLock code use the direct in-process HWBP call even if
-// the stub is alive, with no other effect on anything else.
-bool g_ColliderInternalEnabled = true;
+bool g_ColliderInternalEnabled = true; // unreachable now (no UI toggle); g_ColliderIpc being permanently null already forces the direct-call path regardless of this value
 
-// Forward-declared here, defined further down (needs game_pid, which
-// isn't known yet at this point in the file) — SourceMenu.h's "Inject
-// Collider Stub" button calls this directly.
+// Kept only because ix_extract_embedded_collider_stub()/Android.mk's
+// collider_stub module still reference it; no call site remains after
+// removing the menu button above.
 void ix_retry_collider_injection();
 
 #include "wanbai.h"
@@ -3043,13 +3044,11 @@ int main(int argc,char* argv[]){
             g_driver->initKey("InvisibleX");
             printf("[+] Driver attached to PID: %d\n",game_pid);
 
-            // [CHANGED — no longer automatic] The ptrace attach this
-            // needs stops a thread in the live game process; doing that
-            // unconditionally on every launch was reported crashing the
-            // app. Injection now only happens when the "Inject Collider
-            // Stub" button on the Settings page is pressed — g_ColliderIpc
-            // stays null until then, so hook.h's direct in-process HWBP
-            // call is what actually runs by default.
+            // [REMOVED] The "Inject Collider Stub" button that used to
+            // trigger this ptrace attach is gone from the Settings page
+            // (see the comment by g_ColliderIpc's declaration above) —
+            // g_ColliderIpc now simply stays null for the whole run, so
+            // hook.h's direct in-process HWBP call is always what runs.
         }
     }
 

@@ -2017,6 +2017,72 @@ namespace AimHookState {
         handle = 0;
     }
 
+    // ── inx_mem KPM HWBP tier (Option 16) ───────────────────────────────
+    // Same write-watchpoint + GP-register-override convention as the
+    // Paradise/RT-Hook/TwT tiers above, now actually wired end to end:
+    // kernel module (kpm/inx_mem/inx_hwbp.h) -> KpmDriver::hwbp_arm_write
+    // (jni/src/KPM/kpm_driver.h) -> here. 4-byte granule on the first
+    // float (x0=X), matching the RT Hook/TwT tiers' convention rather
+    // than Paradise's wider 12-byte region -- arm64 hardware watchpoints
+    // are only defined for power-of-two lengths up to 8 bytes, so a
+    // single 12-byte watchpoint was never a real hardware breakpoint to
+    // begin with; this tier arms three separate 4-byte watchpoints
+    // (one per component) exactly as a real debug register layout
+    // requires, tracked as three slots.
+    static bool KpmHwbpArmSilentDir(KpmDriver* kpm, uintptr_t dir_addr,
+                                     const Vector3& dir, int out_slots[3]) {
+        if(!kpm || !kpm->is_ready()) return false;
+
+        const uint32_t idx[1] = { 0 }; // x0 — the value about to be stored
+        const float    comps[3] = { dir.X, dir.Y, dir.Z };
+
+        for(int c = 0; c < 3; c++) {
+            uint64_t val = (uint64_t)RtHookDriver::float_bits(comps[c]);
+            if(!kpm->hwbp_arm_write(dir_addr + (uintptr_t)(c * 4), 4,
+                                     idx, &val, 1, out_slots[c])) {
+                // roll back whatever we already armed this call — never
+                // leave a partial set of watchpoints active
+                for(int k = 0; k < c; k++) {
+                    if(out_slots[k] >= 0) kpm->hwbp_del(out_slots[k]);
+                    out_slots[k] = -1;
+                }
+                out_slots[c] = -1;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Updates the register override on three ALREADY-armed slots (from a
+    // prior KpmHwbpArmSilentDir call) with a new direction — no re-add, no
+    // new kernel slot consumed. This is the per-frame hot path; the kernel
+    // only has an 8-slot HWBP budget total (inx_hwbp.h's INX_HWBP_SLOTS),
+    // so calling hwbp_add again every frame at ~90Hz would exhaust it in
+    // under a tenth of a second instead of reusing the 3 slots already
+    // held, exactly like Paradise's hwbp_set_record updates an
+    // already-armed point instead of re-registering it.
+    static bool KpmHwbpUpdateSilentDir(KpmDriver* kpm, const int slots[3],
+                                        const Vector3& dir) {
+        if(!kpm) return false;
+        const uint32_t idx[1] = { 0 };
+        const float    comps[3] = { dir.X, dir.Y, dir.Z };
+        bool ok = true;
+        for(int c = 0; c < 3; c++) {
+            if(slots[c] < 0) { ok = false; continue; }
+            uint64_t val = (uint64_t)RtHookDriver::float_bits(comps[c]);
+            if(!kpm->hwbp_set_gp(slots[c], idx, &val, 1)) ok = false;
+        }
+        return ok;
+    }
+
+    static void KpmHwbpDisarm(KpmDriver* kpm, int slots[3]) {
+        if(!kpm) return;
+        for(int i = 0; i < 3; i++) {
+            if(slots[i] >= 0) kpm->hwbp_del(slots[i]);
+            slots[i] = -1;
+        }
+    }
+
 } // namespace AimHookState
 
 void UpdateSilentAimFast(){
@@ -2027,22 +2093,42 @@ void UpdateSilentAimFast(){
      * bullet lands on the head, same as plain Aim Silent.
      * Do not touch for Hardware BT (separate thread/logic).
      *
-     * [CHANGED] Paradise-HWBP-only, no fallback. Explicitly requested:
-     * RT Hook tier, TwT tier and the plain-write fallback are all
-     * removed from this function — if the Paradise driver isn't
-     * present, or the HWBP arm itself fails, this thread does NOT
-     * write SilentAimDir directly (that direct write is the one path
-     * that's visible as an out-of-band memory write instead of the
-     * game's own write being overridden in place — removed on
-     * purpose, not left in as a safety net). See
-     * AimHookState::PdHwbpArmSilentDir/PdHwbpDisarm above. */
-    static uintptr_t s_lastDirAddr   = 0;
+     * [CHANGED] Driver-selected dispatch, NOT a runtime fallback chain:
+     *   - Paradise connected (g_driver->GetParadise() non-null)  -> ALWAYS
+     *     uses the Paradise HWBP tier. Full stop.
+     *   - Paradise not connected AND KPM (Option 16) connected   -> ALWAYS
+     *     uses the inx_mem KPM HWBP tier. Full stop.
+     *   - Neither connected                                      -> this
+     *     frame is skipped (no write at all).
+     * There is no "try Paradise, if it fails this frame fall back to KPM"
+     * logic, and no retry/streak/cross-switch logic of any kind — which
+     * tier runs is decided purely by which driver is selected for this
+     * run (c_driver::use_paradise / use_kpm from config.json's "driver"
+     * key), never by a per-frame success/failure count. If the selected
+     * driver's arm call itself fails on a given frame, that frame is
+     * skipped (SilentAimDir left exactly as the game wrote it) — it does
+     * NOT switch to the other tier. RT Hook tier, TwT tier and the plain
+     * direct-write fallback are all still removed (same reasoning as
+     * before: a direct write to SilentAimDir is visible as an
+     * out-of-band write instead of the game's own write being overridden
+     * in place, and is intentionally not restored). See
+     * AimHookState::PdHwbpArmSilentDir/PdHwbpDisarm and
+     * AimHookState::KpmHwbpArmSilentDir/KpmHwbpDisarm above. */
+    static uintptr_t s_lastDirAddr    = 0;
+    static bool      s_lastViaKpm     = false;
+    static int        s_kpmSlots[3]   = { -1, -1, -1 };
 
     auto disarm_silent = [&](){
-        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-        if(pd && s_lastDirAddr)
-            AimHookState::PdHwbpDisarm(pd);
+        if(!s_lastDirAddr) return;
+        if(s_lastViaKpm){
+            KpmDriver* kpm = g_driver ? g_driver->GetKpm() : nullptr;
+            AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
+        } else {
+            paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+            if(pd) AimHookState::PdHwbpDisarm(pd);
+        }
         s_lastDirAddr = 0;
+        s_lastViaKpm  = false;
     };
 
     while(silentThreadRunning){
@@ -2096,23 +2182,50 @@ void UpdateSilentAimFast(){
                 dir.Z = targetPos.Z - startPos.Z;
 
                 uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
-                paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+                paradise_driver* pd  = g_driver ? g_driver->GetParadise() : nullptr;
+                KpmDriver*       kpm = g_driver ? g_driver->GetKpm()      : nullptr;
 
-                // ── Paradise HWBP only. No RT Hook tier, no TwT tier,
-                // no plain-write fallback. If the Paradise driver
-                // isn't connected, or the HWBP arm fails, this frame
-                // is skipped on purpose instead of falling back to a
-                // direct write — SilentAimDir is left exactly as the
-                // game wrote it that frame. ──
+                // ── Driver-selected, not failure-driven: whichever of
+                // Paradise/KPM is actually the connected driver this run
+                // is the ONLY one ever tried, every frame. No runtime
+                // fallback between them. If that one driver's arm call
+                // fails on a given frame, the frame is skipped — it does
+                // NOT reach for the other tier. "viaKpm" only flips if
+                // which driver is connected changes (e.g. hot-swapped
+                // between runs); it is never toggled by an arm failure. ──
+                bool viaKpm = (!pd && kpm && kpm->is_ready());
+                bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastViaKpm != viaKpm);
+
+                if(need_rearm && s_lastDirAddr)
+                    disarm_silent();
+
                 if(pd){
-                    bool need_rearm = (s_lastDirAddr != dirAddr);
-                    if(need_rearm && s_lastDirAddr)
-                        AimHookState::PdHwbpDisarm(pd);
                     if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
                         s_lastDirAddr = dirAddr;
+                        s_lastViaKpm  = false;
                     } else {
                         s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                     }
+                } else if(kpm){
+                    // Only (re-)allocate the 3 kernel slots when the
+                    // address/tier actually changed this frame (need_rearm
+                    // already disarmed any stale slots above); otherwise
+                    // just push the new direction into the slots we
+                    // already hold — see KpmHwbpUpdateSilentDir's comment
+                    // for why re-adding every frame would be wrong here.
+                    bool justArmed = (s_lastDirAddr != dirAddr) || !s_lastViaKpm;
+                    bool armed = justArmed
+                        ? AimHookState::KpmHwbpArmSilentDir(kpm, dirAddr, dir, s_kpmSlots)
+                        : AimHookState::KpmHwbpUpdateSilentDir(kpm, s_kpmSlots, dir);
+                    if(armed){
+                        s_lastDirAddr = dirAddr;
+                        s_lastViaKpm  = true;
+                    } else {
+                        AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
+                        s_lastDirAddr = 0; // arm/update failed this frame — skip, no fallback write
+                    }
+                } else {
+                    s_lastDirAddr = 0; // neither driver available this frame
                 }
             }
         }

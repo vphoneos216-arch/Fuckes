@@ -133,8 +133,23 @@ struct inx_perf_event_attr {
 
 /* ---- fixed UAPI constants (not build-specific) ---- */
 #define INX_PERF_TYPE_BREAKPOINT   5u
+/* HW_BREAKPOINT_{R,W,X} from <uapi/linux/hw_breakpoint.h> -- stable kernel
+ * UAPI bitmask, identical on every arm64 build, not resolved/guessed. R and
+ * RW are defined for completeness; this engine only ever arms W or X. */
+#define INX_HW_BREAKPOINT_R        1u   /* read */
+#define INX_HW_BREAKPOINT_W        2u   /* write -- fires as a precise debug
+                                          * exception on the trapping store,
+                                          * BEFORE the store retires, so a GP
+                                          * register override here changes
+                                          * what gets written -- same effect
+                                          * as Paradise/RT-Hook/TwT's write
+                                          * watchpoint tiers already used
+                                          * elsewhere in this project. */
 #define INX_HW_BREAKPOINT_X        4u   /* execute */
+#define INX_HW_BREAKPOINT_LEN_1    1ull
+#define INX_HW_BREAKPOINT_LEN_2    2ull
 #define INX_HW_BREAKPOINT_LEN_4    4ull
+#define INX_HW_BREAKPOINT_LEN_8    8ull
 /* perf_event_attr flag bits */
 #define INX_PEA_DISABLED       (1ull << 0)
 #define INX_PEA_PINNED         (1ull << 2)
@@ -290,11 +305,17 @@ static void inx_hwbp_resolve(void)
             g_hwbp_ready);
 }
 
-/* ---- arm a breakpoint for (pid, addr), returning the slot index or <0 ----
+/* ---- arm a breakpoint for (pid, addr, type, len), returning the slot index
+ * or <0 on failure. `bp_type` is one of INX_HW_BREAKPOINT_{R,W,X}, `bp_len`
+ * one of the INX_HW_BREAKPOINT_LEN_* granules (hardware watchpoints on
+ * arm64 only support power-of-two lengths up to 8 bytes aligned to that
+ * length -- this is NOT validated against alignment here, a misaligned
+ * request simply fails in register_user_hw_breakpoint and inx_hwbp_add
+ * returns -EFAULT, same as any other arm failure).
  * The caller fills the override fields in the returned slot BEFORE or AFTER;
  * here we only create the perf_event. find_get_task_by_vpid / put_task_struct
  * are the ones already resolved in inx_mem.c. */
-static int inx_hwbp_add(pid_t pid, inx_u64 addr)
+static int inx_hwbp_add(pid_t pid, inx_u64 addr, inx_u32 bp_type, inx_u64 bp_len)
 {
     struct task_struct *task;
     struct perf_event *ev;
@@ -304,6 +325,12 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
     if (!g_hwbp_ready)
         return -ENOSYS;
     if (!addr)
+        return -EINVAL;
+    if (bp_type != INX_HW_BREAKPOINT_R && bp_type != INX_HW_BREAKPOINT_W &&
+        bp_type != INX_HW_BREAKPOINT_X)
+        return -EINVAL;
+    if (bp_len != INX_HW_BREAKPOINT_LEN_1 && bp_len != INX_HW_BREAKPOINT_LEN_2 &&
+        bp_len != INX_HW_BREAKPOINT_LEN_4 && bp_len != INX_HW_BREAKPOINT_LEN_8)
         return -EINVAL;
     if (!fn_find_get_task_by_vpid || !fn_put_task_struct)
         return -ENOSYS;
@@ -320,15 +347,19 @@ static int inx_hwbp_add(pid_t pid, inx_u64 addr)
         return -ESRCH;
 
     /* hw_breakpoint_init() equivalent, done by hand: zero, then set the
-     * execute-breakpoint attributes. */
+     * caller-requested breakpoint type/length. For a write watchpoint
+     * (bp_type == W) the arm64 debug exception is still precise and fires
+     * before the store retires -- inx_hwbp_handler's GP-register override
+     * below changes the value that lands, exactly like the execute-bp
+     * override path; no separate handler logic is needed per type. */
     inx_bzero(&attr, sizeof(attr));
     attr.type         = INX_PERF_TYPE_BREAKPOINT;
     attr.size         = sizeof(struct inx_perf_event_attr); /* 128 */
-    attr.bp_type      = INX_HW_BREAKPOINT_X;
+    attr.bp_type      = bp_type;
     attr.bp_addr      = addr;
-    attr.bp_len       = INX_HW_BREAKPOINT_LEN_4;
+    attr.bp_len       = bp_len;
     attr.sample_period = 1;
-    /* user-space execute bp, pinned, not disabled */
+    /* user-space bp, pinned, not disabled */
     attr.flags = INX_PEA_PINNED | INX_PEA_EXCLUDE_KERNEL | INX_PEA_EXCLUDE_HV;
 
     ev = p_register_user_hw_breakpoint(&attr, (void *)inx_hwbp_handler,

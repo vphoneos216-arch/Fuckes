@@ -235,6 +235,11 @@ static long inx_mem_init(const char *args, const char *event, void *__user reser
  *
  *   "w <pid_dec> <addr_hex> <hexbytes>"
  *     -> out_msg untouched, return value is the access_process_vm result
+ *
+ *   "hbstatus" / "hbadd ..." / "hbset ..." / "hbdel ..." / "hbclr"
+ *     -> hardware-breakpoint override engine (see inx_hwbp.h + the
+ *        per-command comments below). hbadd's type_char/len_dec args
+ *        were added for a write-watchpoint tier (previously execute-only).
  */
 static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
 {
@@ -355,8 +360,17 @@ static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
         return 0;
     }
 
-    /* "hbadd <pid_dec> <addr_hex>" -> out_msg = slot index (decimal string),
-     * return value is the slot index or a negative errno. */
+    /* "hbadd <pid_dec> <addr_hex> [type_char] [len_dec]" -> out_msg = slot
+     * index (decimal string), return value is the slot index or a negative
+     * errno.
+     *   type_char: 'x' = execute (default, back-compat with the original
+     *              2-arg form), 'w' = write, 'r' = read.
+     *   len_dec:   breakpoint length in bytes -- 1, 2, 4 (default) or 8.
+     * A write watchpoint on a target field plus an "hbset ... g0=<hex> ..."
+     * register override (see below) is what lets a client override a value
+     * the game itself is about to store, the same way the project's other
+     * drivers' write-breakpoint tiers already do -- this just does it
+     * in-kernel via this KPM instead of a third-party driver. */
     if (!strncmp(args, "hbadd ", 6)) {
         long pid_l = 0;
         unsigned long addr = 0;
@@ -364,13 +378,29 @@ static long inx_mem_control0(const char *args, char *__user out_msg, int outlen)
         int slot;
         char num[16];
         int ni = 0, v;
+        inx_u32 bp_type = INX_HW_BREAKPOINT_X;
+        inx_u64 bp_len  = INX_HW_BREAKPOINT_LEN_4;
 
         while (*p >= '0' && *p <= '9') { pid_l = pid_l * 10 + (*p - '0'); p++; }
         while (*p == ' ') p++;
         if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
         while (hexval(*p) >= 0) { addr = (addr << 4) | (unsigned long)hexval(*p); p++; }
+        while (*p == ' ') p++;
 
-        slot = inx_hwbp_add((pid_t)pid_l, (inx_u64)addr);
+        if (*p == 'x' || *p == 'w' || *p == 'r') {
+            bp_type = (*p == 'x') ? INX_HW_BREAKPOINT_X
+                     : (*p == 'w') ? INX_HW_BREAKPOINT_W
+                                   : INX_HW_BREAKPOINT_R;
+            p++;
+            while (*p == ' ') p++;
+            if (*p >= '0' && *p <= '9') {
+                long len_l = 0;
+                while (*p >= '0' && *p <= '9') { len_l = len_l * 10 + (*p - '0'); p++; }
+                bp_len = (inx_u64)len_l;
+            }
+        }
+
+        slot = inx_hwbp_add((pid_t)pid_l, (inx_u64)addr, bp_type, bp_len);
         if (slot < 0)
             return slot;
 
