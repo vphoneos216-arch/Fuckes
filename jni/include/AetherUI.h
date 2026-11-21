@@ -66,7 +66,10 @@ Bindings& GetBindings();
 struct State {
   int page = PAGE_VISUAL;
   bool darkSkin = false;  // false = light glass, true = dark glass
-  int themeIdx = 0;       // accent set, picked from the theme cards
+  // 1 = Mist, whose accent is exactly the blue/teal the menu shipped
+  // with, so the default look is unchanged and the other two cards are
+  // the actual alternatives.
+  int themeIdx = 1;
 
   float menuScale = 1.00f;
 

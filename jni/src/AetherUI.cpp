@@ -9,7 +9,7 @@ namespace AetherUI {
 namespace {
 
 constexpr float PW = 1000.f;  // panel logical width
-constexpr float PH = 620.f;   // panel logical height
+constexpr float PH = 470.f;   // panel logical height
 constexpr float SIDEBAR = 208.f;
 constexpr float PI = 3.14159265358979f;
 constexpr float TSZ = 1.92f;  // text scale: logical units -> pixels
@@ -524,10 +524,10 @@ void DrawSidebar(ImDrawList* dl) {
 
   // Footer status. The "3D rotate" drag pad that used to sit here is gone
   // along with the tilt it controlled.
-  dl->AddCircleFilled(Pr(22.f, 548.f), 2.0f * Ds(22.f, 548.f), Col(58, 208, 128, 0.95f), 12);
-  Txt(28.f, 542.f, 4.8f, Col(56, 190, 120, 0.95f), "MENU READY", 0, 1.2f);
-  Txt(20.f, 560.f, 4.5f, p.textFaint, "SurfaceFlinger overlay", 0);
-  Txt(20.f, 578.f, 4.2f, p.textFaint, "TESLA UI / 1.0", 0, 0.7f);
+  dl->AddCircleFilled(Pr(22.f, 398.f), 2.0f * Ds(22.f, 398.f), Col(58, 208, 128, 0.95f), 12);
+  Txt(28.f, 392.f, 4.8f, Col(56, 190, 120, 0.95f), "MENU READY", 0, 1.2f);
+  Txt(20.f, 410.f, 4.5f, p.textFaint, "SurfaceFlinger overlay", 0);
+  Txt(20.f, 428.f, 4.2f, p.textFaint, "TESLA UI / 1.0", 0, 0.7f);
 
   dl->AddLine(Pr(SIDEBAR, 0.f), Pr(SIDEBAR, PH), p.hair, 1.f);
 }
@@ -723,7 +723,7 @@ void PageVisual(ImDrawList* dl) {
   Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim, "Box, skeleton, name, health, distance.", 0);
 
-  const float y0 = 100.f, y1 = 520.f;
+  const float y0 = 100.f, y1 = 382.f;
   const float wCol = 360.f, gap = 26.f;
   const float c1 = X, c2 = X + wCol + gap;
 
@@ -752,7 +752,7 @@ void PageVisual(ImDrawList* dl) {
     y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50, "Text Size", "");
   }
 
-  Txt(X, 566.f, 4.6f, p.textFaint,
+  Txt(X, 440.f, 4.6f, p.textFaint,
       "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
@@ -782,7 +782,7 @@ void PageAim(ImDrawList* dl) {
     y += BindToggle(dl, "a.hwbt",   X + 18.f, y, w, b.hardwareBT, "Hardware BT");
   }
 
-  Txt(X, 566.f, 4.6f, p.textFaint,
+  Txt(X, 440.f, 4.6f, p.textFaint,
       "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
@@ -796,7 +796,7 @@ void PageExploit(ImDrawList* dl) {
   Txt(X + TxtWU(15.5f, "Exploit") + 10.f, 42.f, 4.6f, p.textFaint, "COMBAT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim, "Ghost, recoil, reload and write mode.", 0);
 
-  const float y0 = 100.f, y1 = 520.f;
+  const float y0 = 100.f, y1 = 400.f;
   const float wCol = 236.f, gap = 14.f;
   const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
 
@@ -834,7 +834,7 @@ void PageExploit(ImDrawList* dl) {
             "This is a mode you pick, not a fallback. It never switches itself.");
   }
 
-  Txt(X, 566.f, 4.6f, p.textFaint,
+  Txt(X, 440.f, 4.6f, p.textFaint,
       "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
