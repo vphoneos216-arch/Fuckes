@@ -158,6 +158,46 @@ static const char* ix_sigcode_name(int sig, int code) {
     return "";
 }
 
+// [NEW] "full dump written to crash.log" put the single most useful
+// fact — which mapping the fault address belongs to, and therefore
+// which binary or library the faulting code is in — in a file, so a
+// pasted terminal log could never answer it. These two resolve the
+// address against /proc/self/maps inside the handler and print the one
+// owning line on screen. Hand-rolled on purpose: strtoull/sscanf are
+// not async-signal-safe, and this runs in a process already in an
+// undefined state.
+static int ix_hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Parses the "7f1234a000-7f1234b000 " prefix of a maps line and reports
+// whether addr falls inside that half-open range.
+static bool ix_maps_line_covers(const char* line, uintptr_t addr) {
+    uintptr_t lo = 0, hi = 0;
+    int digits = 0;
+    const char* p = line;
+    for (; *p && *p != '-'; ++p) {
+        const int v = ix_hexval(*p);
+        if (v < 0) return false;
+        lo = (lo << 4) | (uintptr_t)v;
+        ++digits;
+    }
+    if (*p != '-' || digits == 0) return false;
+    ++p;
+    digits = 0;
+    for (; *p && *p != ' '; ++p) {
+        const int v = ix_hexval(*p);
+        if (v < 0) return false;
+        hi = (hi << 4) | (uintptr_t)v;
+        ++digits;
+    }
+    if (digits == 0) return false;
+    return addr >= lo && addr < hi;
+}
+
 static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
     // Always runs even if the log file failed to open — ix_write_raw()
     // mirrors to STDOUT_FILENO regardless, which is the whole point of
@@ -182,7 +222,11 @@ static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
 
     int mapsFd = open("/proc/self/maps", O_RDONLY);
     if (mapsFd >= 0) {
+        const uintptr_t fa = info ? (uintptr_t)info->si_addr : 0;
         char buf[4096];
+        char line[512];
+        size_t li = 0;
+        bool found = false;
         ssize_t n;
         while ((n = read(mapsFd, buf, sizeof(buf))) > 0) {
             // Maps dump is long — only the log file gets the full dump,
@@ -190,8 +234,30 @@ static void ix_crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
             // reason, fault address) stays the thing you actually read
             // at a glance.
             ix_write_raw_to(g_crashLogFd, buf, (size_t)n);
+
+            // Same bytes, scanned line by line, to find the one region
+            // that contains the fault address.
+            for (ssize_t k = 0; k < n; ++k) {
+                const char c = buf[k];
+                if (c != '\n') {
+                    if (li + 1 < sizeof(line)) line[li++] = c;
+                    continue;
+                }
+                line[li] = '\0';
+                if (!found && fa && ix_maps_line_covers(line, fa)) {
+                    found = true;
+                    ix_write_raw("fault address is inside this mapping:\n  ");
+                    ix_write_raw(line);
+                    ix_write_raw("\n");
+                }
+                li = 0;
+            }
         }
         close(mapsFd);
+        if (fa && !found) {
+            ix_write_raw("fault address is in NO mapping at all — a wild "
+                         "pointer, not an overrun of a live region\n");
+        }
     }
     ix_write_raw("--- end maps ---\n");
     if (g_crashLogFd >= 0) fsync(g_crashLogFd);

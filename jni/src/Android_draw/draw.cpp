@@ -8,6 +8,49 @@
 // Larger FontAwesome bake used by the bottom nav bar. Null until drawInit().
 ImFont* g_FontNavIcons = nullptr;
 
+// =====================================================================
+// [FIX — launch crash] FaFont.h's blob is NOT a raw .ttf. Its first
+// four bytes are 57 bc 00 00, i.e. the 0x57bC0000 magic that this
+// project's own imgui_draw.cpp stb_decompress() tests for, so it is an
+// stb_compress stream from ImGui's binary_to_compressed_c tool. A real
+// TTF starts with 00 01 00 00 instead — which is exactly what the two
+// 雨落 fonts in this same directory start with, and why those always
+// loaded fine while this one did not.
+//
+// Handing a compressed stream to AddFontFromMemoryTTF() makes
+// stb_truetype read the sfnt table directory out of compressed bytes,
+// so every table offset it computes points far outside the 124,568-byte
+// array. That is an unmapped read, and it is the
+// "SIGSEGV / SEGV_MAPERR" seen on launch.
+//
+// Checked at runtime rather than just swapping the call, so dropping in
+// a different font blob later cannot silently reintroduce this: whether
+// the bytes are compressed or raw, the matching loader is used.
+// =====================================================================
+static bool ix_is_stb_compressed(const void* data, size_t size) {
+    if (!data || size < 16) return false;
+    const unsigned char* b = (const unsigned char*)data;
+    const unsigned int magic = ((unsigned int)b[0] << 24) |
+                               ((unsigned int)b[1] << 16) |
+                               ((unsigned int)b[2] <<  8) |
+                                (unsigned int)b[3];
+    return magic == 0x57bC0000u;
+}
+
+static ImFont* ix_add_font_auto(ImFontAtlas* atlas,
+                                const void* data, int size, float px,
+                                const ImFontConfig* cfg,
+                                const ImWchar* ranges) {
+    if (!atlas || !data || size <= 0) return nullptr;
+    if (ix_is_stb_compressed(data, (size_t)size)) {
+        // Decompresses into a buffer the atlas allocates and owns, so
+        // FontDataOwnedByAtlas is forced true inside this call — a
+        // false in the caller's config is ignored by design.
+        return atlas->AddFontFromMemoryCompressedTTF(data, size, px, cfg, ranges);
+    }
+    return atlas->AddFontFromMemoryTTF((void*)data, size, px, cfg, ranges);
+}
+
 EGLDisplay display = EGL_NO_DISPLAY;
 EGLConfig config;
 EGLSurface surface = EGL_NO_SURFACE;
@@ -245,20 +288,18 @@ bool ImGui_init() {
     static const ImWchar fa_ranges[] = { 0xF000, 0xF8FF, 0 };
     ImFontConfig cfg_fa;
     cfg_fa.MergeMode = true;
-    cfg_fa.FontDataOwnedByAtlas = false;
     cfg_fa.GlyphMinAdvanceX = 21.0f;
-    io.Fonts->AddFontFromMemoryTTF(
-        (void *)font_awesome_data, (int)font_awesome_size, 21.0f,
+    ix_add_font_auto(io.Fonts,
+        (const void *)font_awesome_data, (int)font_awesome_size, 21.0f,
         &cfg_fa, fa_ranges);
 
     // Second, larger bake of FontAwesome on its own, for the bottom nav
     // bar's circular icons. A single 21px bake scaled up to ~34px is
     // visibly soft, which is exactly what the nav bar would show.
     ImFontConfig cfg_fa_big;
-    cfg_fa_big.FontDataOwnedByAtlas = false;
     cfg_fa_big.GlyphMinAdvanceX = 34.0f;
-    g_FontNavIcons = io.Fonts->AddFontFromMemoryTTF(
-        (void *)font_awesome_data, (int)font_awesome_size, 34.0f,
+    g_FontNavIcons = ix_add_font_auto(io.Fonts,
+        (const void *)font_awesome_data, (int)font_awesome_size, 34.0f,
         &cfg_fa_big, fa_ranges);
 
     io.Fonts->Build();
