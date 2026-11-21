@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v3.8 Fixed Silent (Z component now overridden — X/Y pair store + separate Z store both trapped)
+version=v3.9 Fixed Silent (write watchpoint discovers the store PCs, EXECUTE breakpoints apply the override)
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

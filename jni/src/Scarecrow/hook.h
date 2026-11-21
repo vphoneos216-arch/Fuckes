@@ -2164,7 +2164,7 @@ namespace AimHookState {
     static uint32_t InsnAt(uintptr_t pc) {
         struct Entry { uintptr_t pc; uint32_t w; };
         static std::mutex  s_mtx;
-        static Entry       s_cache[16] = {};
+        static Entry       s_cache[32] = {};
         static int         s_next = 0;
         {
             std::lock_guard<std::mutex> lk(s_mtx);
@@ -2174,8 +2174,7 @@ namespace AimHookState {
         uint32_t w = Read<uint32_t>(pc);
         if(w){
             std::lock_guard<std::mutex> lk(s_mtx);
-            s_cache[s_next % 16] = Entry{ pc, w };
-            s_next++;
+            if(s_next < 32) s_cache[s_next++] = Entry{ pc, w };
         }
         return w;
     }
@@ -2184,11 +2183,11 @@ namespace AimHookState {
     // an unsupported store form is identifiable instead of silent.
     static void LogUndecoded(uintptr_t pc, uint32_t w) {
         static std::mutex   s_mtx;
-        static uintptr_t    s_seen[8] = {};
+        static uintptr_t    s_seen[32] = {};
         static int          s_n = 0;
         std::lock_guard<std::mutex> lk(s_mtx);
         for(const auto& p : s_seen) if(p == pc) return;
-        s_seen[s_n % 8] = pc; s_n++;
+        if(s_n < 32) s_seen[s_n++] = pc; else return;
         printf("[INX] hwbp: store at pc=%p not decoded (insn=0x%08x) — no register "
                "override applied for it. Disassemble that word to identify the form.\n",
                (void*)pc, w);
@@ -2201,12 +2200,16 @@ namespace AimHookState {
     // means component-wise stores, and the PCs logged here will differ
     // for X, Y and Z.
     static void LogStoreShape(uintptr_t pc, uint32_t w, const IxArm64StoreInfo& si) {
+        // 32 entries, and it stops recording once full instead of
+        // wrapping: the 8-entry ring wrapped on this build's ~10
+        // distinct PCs, which is why the device log repeated the same
+        // lines forever.
         static std::mutex   s_mtx;
-        static uintptr_t    s_seen[8] = {};
+        static uintptr_t    s_seen[32] = {};
         static int          s_n = 0;
         std::lock_guard<std::mutex> lk(s_mtx);
         for(const auto& p : s_seen) if(p == pc) return;
-        s_seen[s_n % 8] = pc; s_n++;
+        if(s_n < 32) s_seen[s_n++] = pc; else return;
         char rt2buf[24] = "";
         if(si.is_pair) snprintf(rt2buf, sizeof(rt2buf), ",rt2=%u", si.rt2);
         printf("[INX] hwbp: dir store pc=%p insn=0x%08x regfile=%s rt=%u%s "
@@ -2221,10 +2224,150 @@ namespace AimHookState {
     // Builds the override for ONE captured record and writes it back.
     // `base` is the Vector3's address, `dir` the value we want stored.
     // Returns true if a register override was applied for this record.
-    static bool ApplyDirOverrideToRecord(paradise_driver* pd, int point_pos,
-                                         uint32_t rec_index,
-                                         paradise_bp_record rec,
-                                         uintptr_t base, const Vector3& dir) {
+    // ── ROOT CAUSE, v7 ────────────────────────────────────────────────
+    //
+    // v6 covered all 12 bytes: the X/Y pair store and the Z store were
+    // both trapped, confirmed by the device log (imm=64 pairs AND imm=72
+    // singles both appeared). The correct FP source registers were
+    // identified per PC. And the game still did not change at all.
+    //
+    // That rules out coverage and register selection, and leaves the
+    // mechanism. On ARM64 a WRITE WATCHPOINT debug exception for a store
+    // is reported AFTER the memory access completes. By the time a
+    // record exists the store has already committed and its source
+    // register is dead — overriding that register changes nothing.
+    // Writing values into the record of a write watchpoint can never
+    // steer a store, whichever register or lane it targets. That is why
+    // the old plain Write<Vector3> worked: it wrote MEMORY, not a
+    // register. ix_pd_probe.h flagged this exact uncertainty as its open
+    // question Q3 ("Does a Paradise record register override actually
+    // take effect?") and never answered it. It is answered now, and for
+    // a write watchpoint the answer is no.
+    //
+    // An EXECUTE breakpoint is the opposite: it traps BEFORE the
+    // instruction runs, so the source register is still live and an
+    // override decides what the store writes. That is exactly how this
+    // project's own probe was built — bp_update_exec_fp, "exec" plus FP
+    // register override.
+    //
+    // So the write watchpoint now does the one thing it provably does
+    // well: DISCOVERY. It reports which PCs write this field, and the
+    // decoder says which register carries which component. Those PCs
+    // then get EXECUTE breakpoints via ptebp_set ("PTE 执行断点：最多 16
+    // 个，type=EXECUTE、length=4" — up to 16, which fits the 4 call sites
+    // x 2 instructions the log showed), and the override rides on those.
+    // Nothing is hardcoded: the PCs are learned at runtime, so this
+    // survives ASLR and a new game build. An execute point also has
+    // exactly ONE trigger PC — its own — so record_index 0 is
+    // unambiguous, which removes the record-index guesswork too.
+
+    // One source-register lane carrying one of our components.
+    struct DirLane { uint8_t reg; uint8_t off; uint8_t comp; bool fp; };
+
+    // One instruction that writes this Vector3, and where its
+    // components live.
+    struct DirSite {
+        uintptr_t pc;
+        DirLane   lanes[8];
+        uint8_t   nlanes;
+        uint8_t   xfer;
+    };
+
+    namespace DirExec {
+        static std::mutex  g_mtx;
+        static DirSite     g_sites[PARADISE_BP_MAX_POINTS];
+        static int         g_nsites = 0;
+        static uintptr_t   g_base   = 0;
+        static bool        g_armed  = false;
+
+        // Drops everything learned for a previous address.
+        static void ResetLocked(paradise_driver* pd, uintptr_t new_base) {
+            if(g_armed && pd){
+                pd->ptebp_clear_records(-1);
+                pd->ptebp_remove();
+            }
+            g_nsites = 0;
+            g_base   = new_base;
+            g_armed  = false;
+        }
+
+        // Submits every known site as an EXECUTE point.
+        static bool CommitLocked(paradise_driver* pd) {
+            if(g_nsites <= 0) return false;
+            paradise_bp_point_config pts[PARADISE_BP_MAX_POINTS]{};
+            for(int i = 0; i < g_nsites; i++){
+                pts[i].address = (uint64_t)g_sites[i].pc;
+                pts[i].type    = PARADISE_BP_EXECUTE;
+                pts[i].length  = 4;   // one AArch64 instruction
+                pts[i].scope   = PARADISE_BP_ALL_THREADS;
+            }
+            g_armed = pd->ptebp_set(pts, (size_t)g_nsites);
+            return g_armed;
+        }
+
+        // Pushes the current direction into every armed site.
+        static void PushLocked(paradise_driver* pd, const Vector3& dir) {
+            if(!g_armed) return;
+            const float comp[3] = { dir.X, dir.Y, dir.Z };
+
+            for(int i = 0; i < g_nsites; i++){
+                const DirSite& st = g_sites[i];
+
+                // Start from whatever this point last captured so bytes
+                // we do not own keep the game's values. If it has not
+                // been hit yet there is nothing to preserve and a zeroed
+                // record is fine — the lanes set below are the only ones
+                // masked for write.
+                paradise_bp_record rec{};
+                paradise_bp_record cap[1]{};
+                uint32_t count = 0;
+                if(pd->ptebp_get_records((uint32_t)i, 0, cap, 1, &count) && count > 0)
+                    rec = cap[0];
+                __builtin_memset(rec.mask, 0, sizeof(rec.mask));
+
+                for(uint8_t l = 0; l < st.nlanes; l++){
+                    const DirLane& ln = st.lanes[l];
+                    if(ln.comp > 2) continue;
+                    uint32_t bits;
+                    __builtin_memcpy(&bits, &comp[ln.comp], 4);
+                    if(ln.fp){
+                        __uint128_t* fp = RecFpSlot(&rec, ln.reg);
+                        if(!fp || ln.off + 4u > 16u) continue;
+                        uint8_t buf[16];
+                        __builtin_memcpy(buf, fp, 16);
+                        __builtin_memcpy(buf + ln.off, &bits, 4);
+                        __builtin_memcpy(fp, buf, 16);
+                        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_Q0 + (int)ln.reg,
+                                             PARADISE_BP_OP_WRITE);
+                    } else {
+                        uint64_t* gp = RecGpSlot(&rec, ln.reg);
+                        if(!gp || ln.off + 4u > 8u) continue;
+                        uint8_t buf[8];
+                        __builtin_memcpy(buf, gp, 8);
+                        __builtin_memcpy(buf + ln.off, &bits, 4);
+                        __builtin_memcpy(gp, buf, 8);
+                        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0 + (int)ln.reg,
+                                             PARADISE_BP_OP_WRITE);
+                    }
+                }
+                pd->ptebp_set_record((uint32_t)i, 0, &rec);
+            }
+        }
+
+        static void DisarmAll(paradise_driver* pd) {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            ResetLocked(pd, 0);
+        }
+    } // namespace DirExec
+
+    // Turns one captured watchpoint record into a DirSite, if that
+    // instruction really does write into this Vector3. Returns false
+    // when the record belongs to something else (the stray
+    // register-spill shapes the log showed at negative offsets), which
+    // is how those get ignored instead of acted on.
+    static bool BuildDirSite(const paradise_bp_record& rec_in,
+                              uintptr_t base, DirSite& out) {
+        paradise_bp_record rec = rec_in;
         const uint32_t w = InsnAt((uintptr_t)rec.pc);
         if(!w) return false;
 
@@ -2233,19 +2376,8 @@ namespace AimHookState {
             LogUndecoded((uintptr_t)rec.pc, w);
             return false;
         }
-
-        // One line per distinct PC, the first time that instruction is
-        // actually seen writing the field. This is the measurement that
-        // settles whether the Vector3 goes out as ONE wide store or as
-        // separate narrow component stores — the single open question
-        // left in this path, and the thing that decides whether a point
-        // on the base address alone is sufficient. Read it off the
-        // device rather than reasoning about what the compiler probably
-        // did.
         LogStoreShape((uintptr_t)rec.pc, w, si);
 
-        // Effective address of the store, from the registers this very
-        // hit captured.
         const uint64_t* rn_p = RecGpSlot(&rec, si.rn);
         if(!rn_p) return false;
         uint64_t ea = *rn_p;
@@ -2256,64 +2388,34 @@ namespace AimHookState {
         } else if(si.addr_form == IX_ADDR_IMM){
             ea = (uint64_t)((int64_t)ea + si.imm);
         }
-        // IX_ADDR_POST stores to the un-updated base: ea stays as-is.
 
-        const float comp[3] = { dir.X, dir.Y, dir.Z };
-        bool touched = false;
+        out.pc     = (uintptr_t)rec.pc;
+        out.xfer   = si.xfer_bytes;
+        out.nlanes = 0;
 
-        // Walk each source register this instruction stores from, and
-        // patch any 4-byte lane of it that lands on one of the three
-        // Vector3 components. Start from the captured register value so
-        // bytes we do not own keep whatever the game had in them.
+        const unsigned nbytes = si.xfer_bytes > 16 ? 16 : si.xfer_bytes;
         const int nregs = si.is_pair ? 2 : 1;
         for(int k = 0; k < nregs; k++){
-            const unsigned regno   = (k == 0) ? si.rt : si.rt2;
-            const uint64_t reg_ea  = ea + (uint64_t)k * si.xfer_bytes;
-
-            uint8_t  buf[16] = {};
-            const unsigned nbytes = si.xfer_bytes > 16 ? 16 : si.xfer_bytes;
-
-            uint64_t*     gp = nullptr;
-            __uint128_t*  fp = nullptr;
-            if(si.regfile == IX_REGFILE_GP){
-                gp = RecGpSlot(&rec, regno);
-                if(!gp) continue;
-                __builtin_memcpy(buf, gp, nbytes > 8 ? 8 : nbytes);
-            } else {
-                fp = RecFpSlot(&rec, regno);
-                if(!fp) continue;
-                __builtin_memcpy(buf, fp, nbytes);
-            }
-
-            bool reg_touched = false;
+            const unsigned regno  = (k == 0) ? si.rt : si.rt2;
+            const uint64_t reg_ea = ea + (uint64_t)k * si.xfer_bytes;
             for(int c = 0; c < 3; c++){
                 const uint64_t caddr = (uint64_t)base + (uint64_t)c * 4u;
                 if(caddr < reg_ea) continue;
                 const uint64_t off = caddr - reg_ea;
-                if(off + 4u > nbytes) continue;      // lane not inside this register
-                uint32_t bits;
-                __builtin_memcpy(&bits, &comp[c], 4);
-                __builtin_memcpy(buf + off, &bits, 4);
-                reg_touched = true;
+                if(off + 4u > nbytes) continue;
+                if(out.nlanes >= 8) break;
+                out.lanes[out.nlanes++] = DirLane{
+                    (uint8_t)regno, (uint8_t)off, (uint8_t)c,
+                    si.regfile == IX_REGFILE_FP
+                };
             }
-            if(!reg_touched) continue;
-
-            if(si.regfile == IX_REGFILE_GP){
-                __builtin_memcpy(gp, buf, nbytes > 8 ? 8 : nbytes);
-                PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0 + (int)regno, PARADISE_BP_OP_WRITE);
-            } else {
-                __builtin_memcpy(fp, buf, nbytes);
-                PARADISE_BP_SET_MASK(&rec, PARADISE_REG_Q0 + (int)regno, PARADISE_BP_OP_WRITE);
-            }
-            touched = true;
         }
-
-        if(!touched) return false;
-        return pd->hwbp_set_record((uint32_t)point_pos, rec_index, &rec);
+        return out.nlanes > 0;
     }
 
-    // Reads every record captured for one point and pushes the override
-    // into each. Returns true if at least one record was overridden.
+    // Reads the discovery watchpoint's records, learns any new store
+    // site from them, and keeps the execute points armed and loaded
+    // with the current direction.
     static bool PushDirOverride(paradise_driver* pd, int slot,
                                  uintptr_t base, const Vector3& dir) {
         const int pos = ParadisePoints::GetPosition(slot);
@@ -2321,19 +2423,40 @@ namespace AimHookState {
 
         paradise_bp_record recs[8]{};
         uint32_t count = 0;
-        if(!pd->hwbp_get_records((uint32_t)pos, 0, recs,
-                                 (uint32_t)(sizeof(recs)/sizeof(recs[0])), &count))
-            return false;
-        if(count == 0) return false; // armed, not hit yet — nothing to override
+        if(pd->hwbp_get_records((uint32_t)pos, 0, recs,
+                                (uint32_t)(sizeof(recs)/sizeof(recs[0])), &count)){
+            if(count > sizeof(recs)/sizeof(recs[0]))
+                count = (uint32_t)(sizeof(recs)/sizeof(recs[0]));
 
-        if(count > sizeof(recs)/sizeof(recs[0]))
-            count = (uint32_t)(sizeof(recs)/sizeof(recs[0]));
+            std::lock_guard<std::mutex> lk(DirExec::g_mtx);
+            if(DirExec::g_base != base)
+                DirExec::ResetLocked(pd, base);
 
-        bool any = false;
-        for(uint32_t i = 0; i < count; i++)
-            if(ApplyDirOverrideToRecord(pd, pos, i, recs[i], base, dir))
-                any = true;
-        return any;
+            bool added = false;
+            for(uint32_t i = 0; i < count; i++){
+                DirSite st{};
+                if(!BuildDirSite(recs[i], base, st)) continue;
+
+                bool known = false;
+                for(int s = 0; s < DirExec::g_nsites; s++)
+                    if(DirExec::g_sites[s].pc == st.pc){ known = true; break; }
+                if(known) continue;
+                if(DirExec::g_nsites >= PARADISE_BP_MAX_POINTS) break;
+
+                DirExec::g_sites[DirExec::g_nsites++] = st;
+                added = true;
+                printf("[INX] hwbp: learned dir store site #%d pc=%p lanes=%u — "
+                       "arming EXECUTE breakpoint on it\n",
+                       DirExec::g_nsites - 1, (void*)st.pc, st.nlanes);
+                fflush(stdout);
+            }
+            if(added) DirExec::CommitLocked(pd);
+        }
+
+        std::lock_guard<std::mutex> lk(DirExec::g_mtx);
+        if(!DirExec::g_armed) return false;
+        DirExec::PushLocked(pd, dir);
+        return true;
     }
 
     // Arms a feature's two points — base+0 for the X/Y pair store and
@@ -2367,6 +2490,7 @@ namespace AimHookState {
         if(!pd) return;
         ParadisePoints::Disarm(pd, slot_xy);
         ParadisePoints::Disarm(pd, slot_xy + 1);
+        DirExec::DisarmAll(pd);   // and the execute points doing the work
     }
 
     // ── TwT HWBP helpers ───────────────────────────────────────────────
