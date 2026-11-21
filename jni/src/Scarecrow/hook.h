@@ -284,9 +284,12 @@ int   SilentAimPercentage = 100;  /* 100=head, 0=body — set from chestRate */
 bool  g_ExploitFloatUI = false;
 bool  g_ExploitFloatGhost = false;   /* floating exploit icons on screen */
 /* Exploit tab toggle: "Normal Write (no breakpoint)".
- * OFF -> Aim Silent / Hardware BT steer the game's own store through the
- * Paradise EXECUTE breakpoint.
- * ON  -> both features release every breakpoint and write the direction
+ * [SCOPE] Aim Silent only now. Hardware BT was restored to its original
+ * direct-write logic and no longer has a breakpoint path for this to
+ * switch away from.
+ * OFF -> Aim Silent steers the game's own store through the Paradise
+ * EXECUTE breakpoint.
+ * ON  -> Aim Silent releases every breakpoint and writes the direction
  * field directly instead.
  *
  * [CHANGED] Default is now ON. The breakpoint path has been reported not
@@ -3563,53 +3566,25 @@ void UpdateAimLockNewThread(){
 static bool hwbtThreadRunning = false;
 
 void UpdateHardwareBTFast(){
-    /* [CHANGED] Was a plain Write<Vector3> directly into SilentAimDir —
-     * a visible, out-of-band memory write every frame, exactly the kind
-     * of thing the Aim Silent tier was explicitly built to avoid. Now
-     * uses the same driver-selected HWBP dispatch as UpdateSilentAimFast:
-     * Paradise connected -> always Paradise HWBP (its OWN slot,
-     * the SLOT_BT_* pair, never SLOT_SILENT_* — see the registry
-     * comment above PdHwbpArmDir); Paradise
-     * not connected + KPM connected -> always KPM HWBP tier. No runtime
-     * fallback between them, and no plain-write fallback below either —
-     * if the selected driver's arm fails this frame, the frame is
-     * skipped, full stop. */
-    static uintptr_t s_lastDirAddr = 0;
-    static bool      s_lastViaKpm  = false;
-    static int       s_kpmSlots[3] = { -1, -1, -1 };
-
-    auto disarm_bt = [&](){
-        if(!s_lastDirAddr) return;
-        if(s_lastViaKpm){
-            KpmDriver* kpm = g_driver ? g_driver->GetKpm() : nullptr;
-            AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
-        } else {
-            paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT_XY);
-        }
-        s_lastDirAddr = 0;
-        s_lastViaKpm  = false;
-    };
-
+    /* [RESTORED] This is the pre-breakpoint Hardware BT, taken back
+     * verbatim from 4f68958 -- the last commit before f7f904a ("move
+     * Hardware BT off plain write onto HWBP"). Everything the breakpoint
+     * era added to this function is gone with it:
+     *
+     *   - the Paradise/KPM dispatch and the SLOT_BT_* arm/disarm calls
+     *   - the s_lastDirAddr / s_lastViaKpm / s_kpmSlots state
+     *   - the disarm_bt() lambda
+     *   - the "stand down while Aim Silent or Body Kill is on"
+     *     arbitration, which only existed because two hardware
+     *     watchpoints on one address fight each other; plain stores do
+     *     not, and the old logic never had it
+     *   - the g_DirNormalWrite branch, which now has nothing to switch
+     *     here: this path IS the direct write
+     *
+     * Body/Legit offsets and the once-per-target legit roll are
+     * unchanged from that commit. */
     while(hwbtThreadRunning){
         if(!ix_feat_aim() || !ix_rt_ready() || !HardwareBT){
-            disarm_bt();
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-        /* [FIX] Aim Silent and Hardware BT write the SAME field
-         * (aimingInfo + SilentAimDir()). Both arming a hardware
-         * watchpoint on one address means two debug registers on the
-         * same bytes, both firing, each overriding x0-x2 with its own
-         * direction — the last one to fire wins and the result is
-         * neither feature behaving predictably. ARM64 only has a handful
-         * of watchpoint registers, so it also burns one for nothing.
-         * Aim Silent owns that field when it is on; Hardware BT releases
-         * its own point and stands down until Aim Silent is off. This is
-         * arbitration over one shared address, not a driver fallback —
-         * the selected driver never changes. */
-        if(AimSilent || BodyKill){
-            disarm_bt();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -3636,17 +3611,15 @@ void UpdateHardwareBTFast(){
             } else if (chestRate == 2) {
                 targetPos.Y -= 0.08f;
             } else if (chestRate == 3) {
-                // [RE-ADDED] Legit Mode. This case fell through to no offset
-                // at all before — not a 70/30 split, nothing, which is why
-                // it never looked like anything was happening. A human
-                // player hits head most of the time and body the rest, not
-                // a fixed ratio repeated every shot on the same spot, so the
-                // split is decided ONCE per target lock and held — re-rolling
-                // it every tick would read as the aim point visibly
-                // twitching between head and chest, which is the opposite of
-                // "legit". Same offsets as the Head/Body modes above, so
-                // switching between modes mid-game doesn't change behaviour,
-                // only how it is chosen.
+                // Legit Mode. A human player hits head most of the time
+                // and body the rest, not a fixed ratio repeated every
+                // shot on the same spot, so the split is decided ONCE
+                // per target lock and held — re-rolling it every tick
+                // would read as the aim point visibly twitching between
+                // head and chest, which is the opposite of "legit". Same
+                // offsets as the Head/Body modes above, so switching
+                // between modes mid-game doesn't change behaviour, only
+                // how it is chosen.
                 static uintptr_t legitLastTarget = 0;
                 static bool      legitBodyThisTarget = false;
                 if (currentTarget != legitLastTarget) {
@@ -3661,53 +3634,7 @@ void UpdateHardwareBTFast(){
             dir.X = targetPos.X - startPos.X;
             dir.Y = targetPos.Y - startPos.Y;
             dir.Z = targetPos.Z - startPos.Z;
-
-            uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
-            
-            /* [NEW] Exploit tab -> "Normal Write (no breakpoint)".
-             * USER-SELECTED mode, not a failure fallback. Every
-             * breakpoint this feature owns is released first so the
-             * two mechanisms are never live on one field. */
-            if(g_DirNormalWrite){
-                disarm_bt();
-                Write<Vector3>(dirAddr, dir);
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
-            paradise_driver* pd  = g_driver ? g_driver->GetParadise() : nullptr;
-            KpmDriver*       kpm = g_driver ? g_driver->GetKpm()      : nullptr;
-
-            bool viaKpm = (!pd && kpm && kpm->is_ready());
-            bool need_rearm = (s_lastDirAddr != dirAddr) || (s_lastViaKpm != viaKpm);
-            if(need_rearm && s_lastDirAddr)
-                disarm_bt();
-
-            if(pd){
-                if(AimHookState::PdHwbpArmDir(
-                       pd, AimHookState::ParadisePoints::SLOT_BT_XY, dirAddr, dir)){
-                    s_lastDirAddr = dirAddr;
-                    s_lastViaKpm  = false;
-                } else {
-                    // [FIX] Same stale-armed-group release as in
-                    // UpdateSilentAimFast — see the comment there.
-                    AimHookState::PdHwbpDisarmDir(pd, AimHookState::ParadisePoints::SLOT_BT_XY);
-                    s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
-                }
-            } else if(kpm){
-                bool justArmed = (s_lastDirAddr != dirAddr) || !s_lastViaKpm;
-                bool armed = justArmed
-                    ? AimHookState::KpmHwbpArmSilentDir(kpm, dirAddr, dir, s_kpmSlots)
-                    : AimHookState::KpmHwbpUpdateSilentDir(kpm, s_kpmSlots, dir);
-                if(armed){
-                    s_lastDirAddr = dirAddr;
-                    s_lastViaKpm  = true;
-                } else {
-                    AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
-                    s_lastDirAddr = 0; // arm/update failed this frame — skip, no fallback write
-                }
-            } else {
-                s_lastDirAddr = 0; // neither driver available this frame
-            }
+            Write<Vector3>(aimingInfo + PlayerOffsets::SilentAimDir(), dir);
         }
         std::this_thread::yield();
     }

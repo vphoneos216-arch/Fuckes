@@ -839,7 +839,8 @@ void PageAim(ImDrawList* dl) {
 
   TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
   Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Paradise EXECUTE breakpoint path.", 0);
+  Txt(X, 78.f, 5.4f, p.textDim,
+      "Hardware BT writes directly. Aim Silent uses the breakpoint path.", 0);
 
   const float y0 = 100.f, wCol = 360.f;
 
@@ -914,17 +915,19 @@ void PageExploit(ImDrawList* dl) {
 
   // Moved here from the Aim page, which is where it was asked for.
   CardBg(dl, c3, y0, c3 + wCol, y1);
-  CardHead(c3 + 18.f, y0 + 16.f, "Write Mode", "SILENT / BT");
+  CardHead(c3 + 18.f, y0 + 16.f, "Write Mode", "AIM SILENT");
   {
     float y = y0 + 54.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "x.nw", c3 + 18.f, y, w, b.normalWrite, "Normal Write");
     TxtWrap(c3 + 18.f, y + 8.f, w, 4.6f, p.textDim,
-            "Off: Aim Silent and Hardware BT go through the Paradise EXECUTE "
-            "breakpoint, which rewrites the game's own store instruction.\n\n"
-            "On: both release their breakpoints first, then write the direction "
-            "field directly.\n\n"
-            "This is a mode you pick, not a fallback. It never switches itself.");
+            "Aim Silent only. Hardware BT was put back on its original direct "
+            "write and has no breakpoint path left to switch.\n\n"
+            "Off: Aim Silent goes through the Paradise EXECUTE breakpoint, "
+            "which rewrites the game's own store instruction.\n\n"
+            "On: it releases the breakpoints and writes the direction field "
+            "directly.\n\n"
+            "A mode you pick, not a fallback. It never switches itself.");
   }
 
   Txt(X, 440.f, 4.6f, p.textFaint,
