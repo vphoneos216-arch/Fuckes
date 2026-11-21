@@ -2,13 +2,18 @@
 
 #include "ImGui/imgui.h"
 
-// AETHER 玻璃拟态 3D 菜单（仿 B 站「Deepseek 写的 3D 悬浮窗」）
-// 纯 ImDrawList 绘制 + 透视投影，不依赖 FBO 与自定义着色器。
+// TESLA menu — glass panel drawn with plain ImDrawList calls, no FBO and
+// no custom shaders. Rendered flat (front-on): the original source tilted
+// the whole panel in perspective, which read as crooked on a phone, so the
+// view angles are pinned at zero and the projection collapses to identity.
+//
+// The namespace is still AetherUI: that is only the C++ name the engine
+// links against. Everything the user sees says TESLA.
 namespace AetherUI {
 
 enum Page : int {
   PAGE_VISUAL = 0,   // ESP
-  PAGE_AIM = 1,      // Aim Silent / Hardware BT / BodyKill
+  PAGE_AIM = 1,      // Aim Silent / Hardware BT
   PAGE_EXPLOIT = 2,  // Ghost / NoRecoil / NoReload / Normal Write
   PAGE_SETTINGS = 3,
   PAGE_THEME = 4,
@@ -34,7 +39,9 @@ struct Bindings {
   bool* showFovCircle = nullptr;
   int*  textSize = nullptr;
 
-  // Aim
+  // Aim — Aim Silent and Hardware BT only, by request. The remaining
+  // aim flags stay bound here so they can be put back on the page in
+  // one line, but nothing draws them right now.
   bool*  aimSilent = nullptr;
   bool*  hardwareBT = nullptr;
   bool*  bodyKill = nullptr;
@@ -52,56 +59,32 @@ struct Bindings {
   bool* floatGhost = nullptr;
   bool* normalWrite = nullptr;
   bool* soundMuted = nullptr;
-
-  // Settings
-  bool* driverLinked = nullptr;
 };
 
 Bindings& GetBindings();
 
-struct Theme {
-  const char* cn;
-  const char* en;
-  ImU32 c0, c1, c2;  // 封面渐变色
-};
-
 struct State {
-  // 页面 / 皮肤
   int page = PAGE_VISUAL;
-  bool darkSkin = false;   // false = 浅雾, true = 暗夜全息
-  int accentIdx = 0;       // 强调色索引
-  int themeIdx = 0;        // 当前主题卡
+  bool darkSkin = false;  // false = light glass, true = dark glass
+  int themeIdx = 0;       // accent set, picked from the theme cards
 
-  // 外观参数
   float menuScale = 1.00f;
-  float fontSize = 1.45f;
-  float menuAlpha = 1.00f;
-  float fpsTarget = 122.f;
-  bool rainFx = true;
-  bool use3D = true;
 
-  // 视觉页（纯 UI 演示，不接任何游戏数据）
-  bool drawBox = true, drawName = true, drawBone = false, drawHp = true;
-  bool drawRadar = true, drawAimLine = false;
-  float fovX = 300.f, fovY = 400.f, radarRange = 200.f;
-
-  // 设置页
-  bool driverLinked = false;
-
-  // 3D 姿态
-  float yaw = 0.f, pitch = 0.f;
-  float tYaw = 0.f, tPitch = 0.f;  // 目标姿态（松手回弹）
-
+  // Set by the menu, cleared by the owner once it has acted on them.
+  // The menu itself cannot save or kill the process -- both of those
+  // live in the engine, so it only asks.
   bool requestExit = false;
+  bool requestSave = false;
+
   bool open = true;
 };
 
 State& GetState();
 
-// 每帧调用；screenW/H 为整屏像素，uiScale 为整体缩放基准
+// Called every frame; screenW/H are full-screen pixels.
 void Draw(float screenW, float screenH, float uiScale);
 
-// 触摸命中：点是否落在面板（或收起后的小球）上
+// Touch hit test: does this point land on the panel (or the collapsed pill)?
 bool PointBlocksTouch(float x, float y);
 
 }  // namespace AetherUI

@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v5.1 Fixed launch crash (FontAwesome blob is stb-compressed, was loaded as raw TTF)
+version=v5.2 TESLA UI (English, flat panel, Aim = Silent + BT only, EXIT button)
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

@@ -8,16 +8,16 @@
 namespace AetherUI {
 namespace {
 
-constexpr float PW = 1000.f;  // 面板逻辑宽
-constexpr float PH = 620.f;   // 面板逻辑高
+constexpr float PW = 1000.f;  // panel logical width
+constexpr float PH = 620.f;   // panel logical height
 constexpr float SIDEBAR = 208.f;
 constexpr float PI = 3.14159265358979f;
-constexpr float TSZ = 1.92f;  // 字号系数：逻辑单位 -> 实际字号
+constexpr float TSZ = 1.92f;  // text scale: logical units -> pixels
 
 State g;
 Bindings gBind;
 
-// ---------------------------------------------------------------- 投影
+// ---------------------------------------------------------------- Projection
 float gS = 1.f;
 float gCx = 0.f, gCy = 0.f;
 float gDist = 1500.f;
@@ -61,6 +61,19 @@ struct Pal {
   ImU32 panel, panelEdge, track, knob, chipText;
 };
 
+// Accent RGB per theme card. Declared ahead of P() because P() reads it.
+// The original had a separate accent index that was written by the colour
+// dots and never read by anything, so the dots are gone and the three
+// theme cards carry the accent instead.
+void AccentRGB(int idx, int* r, int* g2, int* b) {
+  // 0 = SUNLIT, 1 = MIST, 2 = SAKURA
+  static const int lite[3][3] = {{198, 134, 40}, {45, 122, 246}, {220, 92, 146}};
+  static const int dark[3][3] = {{238, 198, 98}, {58, 224, 194}, {255, 148, 194}};
+  const int i = (idx % 3 + 3) % 3;
+  if (g.darkSkin) { *r = dark[i][0]; *g2 = dark[i][1]; *b = dark[i][2]; }
+  else            { *r = lite[i][0]; *g2 = lite[i][1]; *b = lite[i][2]; }
+}
+
 Pal P() {
   Pal p{};
   if (!g.darkSkin) {
@@ -92,10 +105,14 @@ Pal P() {
     p.knob = Col(238, 255, 251, 1.f);
     p.chipText = Col(10, 22, 24, 1.f);
   }
+  int ar = 0, ag2 = 0, ab = 0;
+  AccentRGB(g.themeIdx, &ar, &ag2, &ab);
+  p.accent = Col(ar, ag2, ab, 1.f);
+  p.accentWash = Col(ar, ag2, ab, g.darkSkin ? 0.13f : 0.14f);
   return p;
 }
 
-// ---------------------------------------------------------------- 图元
+// ---------------------------------------------------------------- Primitives
 void PathRR(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, float z = 0.f) {
   const float maxR = (x1 - x0) * 0.5f < (y1 - y0) * 0.5f ? (x1 - x0) * 0.5f : (y1 - y0) * 0.5f;
   if (r > maxR) r = maxR;
@@ -151,7 +168,7 @@ void QuadGrad(ImDrawList* dl, ImVec2 a, ImVec2 b, ImVec2 c, ImVec2 d, ImU32 ca, 
   dl->PrimWriteIdx((ImDrawIdx)(i + 3));
 }
 
-// 圆角矩形某一行（y 处）的左右边界
+// Left/right edge of a rounded rect at height y
 inline void RowSpan(float y, float y0, float y1, float x0, float x1, float r, float* lx,
                     float* rx) {
   float inset = 0.f;
@@ -168,7 +185,7 @@ inline void RowSpan(float y, float y0, float y1, float x0, float x1, float r, fl
   *rx = x1 - inset;
 }
 
-// ---------------------------------------------------------------- 文本（逐字投影，带透视伸缩）
+// ---------------------------------------------------------------- Text (projected per glyph)
 float GlyphW(float sizePx, const char* g0, int n) {
   char buf[8];
   memcpy(buf, g0, n);
@@ -272,7 +289,7 @@ void TxtWrap(float x, float y, float w, float size, ImU32 col, const char* s, fl
   flush();
 }
 
-// ---------------------------------------------------------------- 交互
+// ---------------------------------------------------------------- Input
 uint32_t gActive = 0;
 uint32_t H(const char* s) {
   uint32_t h = 2166136261u;
@@ -301,18 +318,7 @@ bool Held(uint32_t id, float x0, float y0, float x1, float y1) {
   return gActive == id && ImGui::IsMouseDown(0);
 }
 
-ImU32 AccentCol(int i) {
-  if (!g.darkSkin) {
-    const ImU32 c[3] = {IM_COL32(45, 122, 246, 255), IM_COL32(56, 186, 248, 255),
-                        IM_COL32(32, 96, 226, 255)};
-    return c[i % 3];
-  }
-  const ImU32 c[3] = {IM_COL32(58, 224, 194, 255), IM_COL32(120, 238, 255, 255),
-                      IM_COL32(170, 255, 205, 255)};
-  return c[i % 3];
-}
-
-// ================================================================ 控件
+// ================================================================ Widgets
 void Toggle(ImDrawList* dl, uint32_t id, float x, float y, bool* v, float sc = 1.f) {
   const Pal p = P();
   const float w = 34.f * sc, h = 18.f * sc;
@@ -396,7 +402,7 @@ void CheckRow(ImDrawList* dl, uint32_t id, float x, float y, float w, bool* v, c
   Txt(x + 18.f, y - 2.f, 8.0f, *v ? p.text : p.textDim, label, 0);
 }
 
-// ---------------------------------------------------------------- 绑定行
+// ---------------------------------------------------------------- Bound rows
 // Draws a labelled toggle row only when the flag is actually bound.
 // Returns the y advance so a column can pack only what exists.
 float BindRow(ImDrawList* dl, const char* id, float x, float y, float w,
@@ -442,7 +448,7 @@ float BindSliderF(ImDrawList* dl, const char* id, float x, float y, float w,
   return 40.f;
 }
 
-// ================================================================ 图标
+// ================================================================ Icons
 void IconEye(ImDrawList* dl, float cx, float cy, ImU32 col, float s) {
   dl->AddEllipse(Pr(cx, cy), 7.4f * s * gS, 4.8f * s * gS, col, 0.f, 28, 1.3f);
   dl->AddCircleFilled(Pr(cx, cy), 1.9f * s * Ds(cx, cy), col, 16);
@@ -480,7 +486,7 @@ void IconTheme(ImDrawList* dl, float cx, float cy, ImU32 col, float s) {
   dl->AddCircle(Pr(cx + 2.2f * s, cy + 1.8f * s), 2.8f * s * gS, col, 18, 1.3f);
 }
 
-// ================================================================ 侧栏
+// ================================================================ Sidebar
 void DrawSidebar(ImDrawList* dl) {
   const Pal p = P();
 
@@ -488,15 +494,16 @@ void DrawSidebar(ImDrawList* dl) {
   QuadGrad(dl, Pr(21.f, 21.f), Pr(63.f, 21.f), Pr(63.f, 63.f), Pr(21.f, 63.f),
            Col(255, 178, 152, 0.95f), Col(252, 150, 172, 0.95f), Col(122, 152, 236, 0.95f),
            Col(96, 136, 226, 0.95f));
-  Txt(42.f, 34.f, 10.5f, Col(255, 255, 255, 0.95f), "A", 1);
+  Txt(42.f, 34.f, 10.5f, Col(255, 255, 255, 0.95f), "T", 1);
 
-  TxtB(74.f, 20.f, 15.f, p.text, "AETHER", 0, 0.4f);
-  Txt(74.f, 48.f, 4.6f, p.textDim, "LS KERNEL EDITION", 0, 1.5f);
+  TxtB(74.f, 20.f, 15.f, p.text, "TESLA", 0, 0.4f);
+  Txt(74.f, 48.f, 4.6f, p.textDim, "KERNEL EDITION", 0, 1.5f);
 
   Txt(22.f, 88.f, 4.8f, p.textFaint, "NAVIGATION", 0, 1.8f);
 
-  const char* cn[PAGE_COUNT] = {"视觉", "瞄准", "功能", "设置", "主题"};
-  const char* en[PAGE_COUNT] = {"VISUAL", "AIM", "EXPLOIT", "SETTINGS", "THEME"};
+  const char* nav[PAGE_COUNT] = {"Visual", "Aim", "Exploit", "Settings", "Theme"};
+  const char* sub[PAGE_COUNT] = {"ESP DRAWING", "SILENT / HW BT", "GHOST / RECOIL",
+                                 "SAVE / EXIT", "SKIN / ACCENT"};
   for (int i = 0; i < PAGE_COUNT; ++i) {
     const float y = 106.f + 42.f * (float)i;
     const bool act = (g.page == i);
@@ -510,42 +517,22 @@ void DrawSidebar(ImDrawList* dl) {
     else if (i == PAGE_EXPLOIT) IconBolt(dl, 31.f, y + 16.f, ic, 0.95f);
     else if (i == PAGE_SETTINGS) IconGear(dl, 31.f, y + 16.f, ic, 0.95f);
     else IconTheme(dl, 31.f, y + 16.f, ic, 0.95f);
-    Txt(46.f, y + 3.f, 7.2f, act ? p.text : p.textDim, cn[i], 0);
-    Txt(46.f, y + 21.f, 4.3f, act ? p.accent : p.textFaint, en[i], 0, 1.3f);
-    if (Click(H(en[i]), 14.f, y, 194.f, y + 38.f)) g.page = i;
+    Txt(46.f, y + 3.f, 7.2f, act ? p.text : p.textDim, nav[i], 0);
+    Txt(46.f, y + 21.f, 4.3f, act ? p.accent : p.textFaint, sub[i], 0, 1.3f);
+    if (Click(H(sub[i]), 14.f, y, 194.f, y + 38.f)) g.page = i;
   }
 
-  // 3D 旋转手柄
-  Txt(20.f, 442.f, 5.4f, p.textFaint, "3D 旋转", 0, 1.0f);
-  const bool hov = Hover(14.f, 462.f, 194.f, 512.f);
-  const bool held = Held(H("3d.handle"), 14.f, 462.f, 194.f, 512.f);
-  StrokeRR(dl, 14.f, 462.f, 194.f, 512.f, 9.f,
-           held ? p.accent : (hov ? Col(110, 165, 240, 0.60f) : p.hair), 1.f);
-  if (held) FillRR(dl, 14.f, 462.f, 194.f, 512.f, 9.f, p.accentWash);
-  const float ix = 30.f, iy = 480.f;
-  dl->PathArcTo(Pr(ix, iy), 7.f * gS, 0.7f, 4.7f, 20);
-  dl->PathStroke(p.accent, 0, 1.5f);
-  dl->AddTriangleFilled(Pr(ix + 5.6f, iy - 5.6f), Pr(ix + 8.6f, iy - 1.0f), Pr(ix + 2.0f, iy - 0.6f),
-                        p.accent);
-  Txt(46.f, 470.f, 5.6f, p.textDim, "拖动旋转视角", 0);
-  Txt(46.f, 486.f, 4.8f, p.textFaint, "松手回弹", 0, 0.5f);
-  Txt(46.f, 498.f, 4.8f, p.textFaint, "双击复位", 0, 0.5f);
-
-  // 底部状态
+  // Footer status. The "3D rotate" drag pad that used to sit here is gone
+  // along with the tilt it controlled.
   dl->AddCircleFilled(Pr(22.f, 548.f), 2.0f * Ds(22.f, 548.f), Col(58, 208, 128, 0.95f), 12);
-  Txt(28.f, 542.f, 4.8f, Col(56, 190, 120, 0.95f), "LS MENU READY", 0, 1.2f);
+  Txt(28.f, 542.f, 4.8f, Col(56, 190, 120, 0.95f), "MENU READY", 0, 1.2f);
   Txt(20.f, 560.f, 4.5f, p.textFaint, "SurfaceFlinger overlay", 0);
-  Txt(20.f, 574.f, 4.5f, p.textFaint, "音量 + 打开菜单", 0);
-  Txt(20.f, 586.f, 4.5f, p.textFaint, "音量 - 隐藏菜单", 0);
-  Txt(20.f, 600.f, 4.2f, p.textFaint, "AETHER UI / 1.3", 0, 0.7f);
-
-  FillRR(dl, 178.f, 598.f, 194.f, 610.f, 3.f, Col(255, 255, 255, 0.28f));
-  Txt(186.f, 599.f, 4.2f, p.textDim, "VK", 1);
+  Txt(20.f, 578.f, 4.2f, p.textFaint, "TESLA UI / 1.0", 0, 0.7f);
 
   dl->AddLine(Pr(SIDEBAR, 0.f), Pr(SIDEBAR, PH), p.hair, 1.f);
 }
 
-// ================================================================ 卡片
+// ================================================================ Cards
 void CardBg(ImDrawList* dl, float x0, float y0, float x1, float y1, float r = 12.f) {
   const Pal p = P();
   FillRR(dl, x0, y0, x1, y1, r, p.card);
@@ -560,20 +547,21 @@ void CardHead(float x, float y, const char* cn, const char* en) {
   Txt(x + TxtWU(9.0f, cn) + 10.f, y + 2.4f, 4.5f, p.textFaint, en, 0, 1.3f);
 }
 
-// ================================================================ 封面（逐格采样，贴合圆角）
-// 用「天空 + 地平线 + 日光 + 光斑」的抽象构图代替插画，避免引入外部图片
+// ================================================================ Cover art
+// Sampled cell by cell so it follows the rounded corners. An abstract
+// sky / horizon / sun / bokeh composition rather than an imported image.
 void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, int idx) {
   const int ROWS = 40, COLS = 24;
   ImU32 sky0, sky1, field0, field1, sun, lite;
   float sunX = 0.30f, sunY = 0.36f, sunR = 0.34f;
-  if (idx == 0) {  // 晴绿
+  if (idx == 0) {  // sunlit
     sky0 = Col(255, 244, 206);
     sky1 = Col(196, 214, 160);
     field0 = Col(126, 156, 118);
     field1 = Col(74, 100, 82);
     sun = Col(255, 252, 226);
     lite = Col(255, 236, 176);
-  } else if (idx == 1) {  // 薄雾
+  } else if (idx == 1) {  // mist
     sky0 = Col(238, 243, 250);
     sky1 = Col(176, 190, 206);
     field0 = Col(138, 150, 166);
@@ -582,7 +570,7 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
     lite = Col(226, 236, 246);
     sunX = 0.62f;
     sunR = 0.40f;
-  } else {  // 樱白
+  } else {  // sakura
     sky0 = Col(255, 230, 236);
     sky1 = Col(236, 178, 198);
     field0 = Col(196, 146, 172);
@@ -602,7 +590,7 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
   };
   const float kHorizon = 0.62f;
   const ImU32 amask = ((ImU32)(255.f * gAlpha)) << 24;
-  // 固定光斑位置（每个主题不同，制造"景深"
+  // Fixed bokeh positions, different per theme, to fake depth of field
   const float bokeh[5][4] = {{0.20f, 0.16f, 0.055f, 0.55f},
                              {0.72f, 0.24f, 0.040f, 0.40f},
                              {0.86f, 0.52f, 0.070f, 0.30f},
@@ -619,20 +607,20 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
       const float xb = lx + (rx - lx) * (float)(cxi + 1) / (float)COLS;
       auto sample = [&](float sx2, float sy2) -> ImU32 {
         const float u = (sx2 - x0) / (x1 - x0), v = (sy2 - y0) / (y1 - y0);
-        // 天空 -> 地面，交界处柔和过渡
+        // sky -> ground, soft blend at the horizon
         const float tSk = v / kHorizon;
         ImU32 skyc = mix(sky0, sky1, tSk * tSk * 0.85f + u * 0.10f);
         ImU32 gnd = mix(field0, field1, (v - kHorizon) / (1.f - kHorizon));
         float bt = (v - kHorizon) / 0.10f + 0.5f;
         ImU32 c = mix(skyc, gnd, bt);
-        // 日光
+        // sun
         const float dx = (u - sunX) * 1.0f, dy = (v - sunY) * 1.25f;
         const float dd = sqrtf(dx * dx + dy * dy);
         if (dd < sunR) {
           const float g = 1.f - dd / sunR;
           c = mix(c, sun, powf(g, 2.2f) * 0.85f);
         }
-        // 光斑
+        // bokeh
         for (int b = 0; b < 5; ++b) {
           const float bd = sqrtf((u - bokeh[b][0]) * (u - bokeh[b][0]) * 2.0f +
                                  (v - bokeh[b][1]) * (v - bokeh[b][1]));
@@ -641,7 +629,7 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
             c = mix(c, lite, powf(g, 2.0f) * bokeh[b][3] * 0.55f);
           }
         }
-        // 底部轻微压暗
+        // slight darkening toward the bottom
         if (v > 0.82f) c = mix(c, IM_COL32(40, 48, 62, 255), (v - 0.82f) * 1.1f);
         return (c & 0x00FFFFFF) | amask;
       };
@@ -650,7 +638,7 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
       QuadGrad(dl, Pr(xa, ya), Pr(xb, ya), Pr(xb, yb), Pr(xa, yb), c00, c10, c11, c01);
     }
   }
-  // 底部压暗，保证白色标题可读
+  // Darken the bottom so the white title stays readable
   const int SN = 26;
   for (int i = 0; i < SN; ++i) {
     const float t = (float)i / (float)SN;
@@ -664,17 +652,20 @@ void CoverArt(ImDrawList* dl, float x0, float y0, float x1, float y1, float r, i
   }
 }
 
-// ================================================================ 页面：主题
-const char* kThemeCn[3] = {"晴绿", "薄雾", "樱白"};
-const char* kThemeEn[3] = {"SUNLIT", "MIST", "SAKURA"};
+// ================================================================ Page: Theme
+// Big name + the accent each card actually applies. Picking a card now
+// changes the menu's accent colour everywhere (see AccentRGB above); in
+// the original these cards only highlighted themselves.
+const char* kThemeName[3] = {"Sunlit", "Mist", "Sakura"};
+const char* kThemeTag[3] = {"AMBER", "BLUE", "PINK"};
 
 void PageTheme(ImDrawList* dl) {
   const Pal p = P();
   const float X = SIDEBAR + 24.f;
 
-  TxtB(X, 36.f, 15.5f, p.text, "主题", 0);
-  Txt(X + TxtWU(15.5f, "主题") + 8.f, 42.f, 4.6f, p.textFaint, "THEME", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "为整个菜单选择一套新的气氛。", 0);
+  TxtB(X, 36.f, 15.5f, p.text, "Theme", 0);
+  Txt(X + TxtWU(15.5f, "Theme") + 10.f, 42.f, 4.6f, p.textFaint, "LOOK", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Skin, accent and panel size.", 0);
 
   const float cy0 = 100.f, ch = 116.f, cw = 232.f, gap = 13.f;
   for (int i = 0; i < 3; ++i) {
@@ -685,102 +676,61 @@ void PageTheme(ImDrawList* dl) {
     CoverArt(dl, cx0, cy0, cx1, cy1, 12.f, i);
     StrokeRR(dl, cx0, cy0, cx1, cy1, 12.f, sel ? p.accent : Col(255, 255, 255, 0.45f),
              sel ? 1.8f : 1.f);
-    Txt(cx0 + 12.f, cy1 - 40.f, 8.2f, Col(255, 255, 255, 0.98f), kThemeCn[i], 0);
-    Txt(cx0 + 12.f, cy1 - 22.f, 4.2f, Col(255, 255, 255, 0.78f), kThemeEn[i], 0, 1.3f);
+    Txt(cx0 + 12.f, cy1 - 40.f, 8.2f, Col(255, 255, 255, 0.98f), kThemeName[i], 0);
+    Txt(cx0 + 12.f, cy1 - 22.f, 4.2f, Col(255, 255, 255, 0.78f), kThemeTag[i], 0, 1.3f);
     if (sel) {
-      FillRR(dl, cx1 - 54.f, cy1 - 26.f, cx1 - 10.f, cy1 - 11.f, 6.f, Col(255, 255, 255, 0.94f));
-      Txt(cx1 - 32.f, cy1 - 24.5f, 4.8f, Col(38, 58, 88, 0.95f), "使用中", 1);
+      FillRR(dl, cx1 - 62.f, cy1 - 26.f, cx1 - 10.f, cy1 - 11.f, 6.f, Col(255, 255, 255, 0.94f));
+      Txt(cx1 - 36.f, cy1 - 24.5f, 4.8f, Col(38, 58, 88, 0.95f), "IN USE", 1);
     }
-    if (Click(H(kThemeEn[i]), cx0, cy0, cx1, cy1)) g.themeIdx = i;
+    if (Click(H(kThemeTag[i]), cx0, cy0, cx1, cy1)) g.themeIdx = i;
   }
 
-  // 左卡：外观参数
-  const float lx0 = X, ly0 = 232.f, lx1 = X + 350.f, ly1 = 552.f;
-  CardBg(dl, lx0, ly0, lx1, ly1);
-  CardHead(lx0 + 18.f, ly0 + 16.f, "外观参数", "APPEARANCE");
+  // Only the two controls that actually do something are left. The
+  // original's rain toggle, font-size slider, menu-alpha slider, frame
+  // rate slider and accent dots were all written and never read by
+  // anything, so they were drawn controls that changed nothing.
+  const float ly0 = 232.f, ly1 = 420.f;
+  CardBg(dl, X, ly0, 978.f, ly1);
+  CardHead(X + 18.f, ly0 + 16.f, "Appearance", "SKIN / SIZE");
 
-  Txt(lx0 + 18.f, ly0 + 48.f, 5.4f, p.textDim, "强调色", 0);
-  for (int i = 0; i < 3; ++i) {
-    const float dx = lx0 + 118.f + 24.f * (float)i;
-    const bool sel = (g.accentIdx == i);
-    dl->AddCircleFilled(Pr(dx, ly0 + 53.f), 7.0f * Ds(dx, ly0), AccentCol(i), 20);
-    if (sel) dl->AddCircle(Pr(dx, ly0 + 53.f), 10.2f * Ds(dx, ly0), p.accent, 24, 1.2f);
-    if (Click(H(i == 0 ? "ac0" : i == 1 ? "ac1" : "ac2"), dx - 10.f, ly0 + 43.f, dx + 10.f,
-              ly0 + 63.f))
-      g.accentIdx = i;
-  }
-  Txt(lx0 + 196.f, ly0 + 48.f, 5.4f, p.textDim, "下雨特效", 0);
-  Toggle(dl, H("rain"), lx0 + 258.f, ly0 + 44.f, &g.rainFx);
-
-  Txt(lx0 + 18.f, ly0 + 84.f, 5.4f, p.textDim, "当前背景", 0);
-  Txt(lx0 + 332.f, ly0 + 84.f, 5.0f, p.accent, "壁纸", 2);
-  Txt(lx0 + 18.f, ly0 + 100.f, 4.3f, p.textFaint, "背景如透镜显示，不做高斯模糊", 0);
-
-  const char* names[3] = {"菜单大小", "字体大小", "菜单透明度"};
-  float* vals[3] = {&g.menuScale, &g.fontSize, &g.menuAlpha};
-  for (int i = 0; i < 3; ++i) {
-    const float ry = ly0 + 146.f + 44.f * (float)i;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d%%", (int)(*vals[i] * 100.f + 0.5f));
-    Txt(lx0 + 18.f, ry - 18.f, 5.4f, p.textDim, names[i], 0);
-    Txt(lx0 + 332.f, ry - 18.f, 5.0f, p.text, buf, 2);
-    float tmp = (*vals[i] - 0.7f) / 0.6f;
-    if (tmp < 0.f) tmp = 0.f;
-    if (tmp > 1.f) tmp = 1.f;
-    char sid[8] = {'s', (char)('0' + i), 0};
-    Slider(dl, H(sid), lx0 + 18.f, ry, 314.f, &tmp, 0.f, 1.f);
-    *vals[i] = 0.7f + tmp * 0.6f;
-  }
-
-  // 右卡：界面风格
-  const float rx0 = lx1 + 12.f, rx1 = 978.f;
-  CardBg(dl, rx0, ly0, rx1, ly1);
-  CardHead(rx0 + 18.f, ly0 + 16.f, "界面风格", "SKIN / EFFECTS");
-
-  const char* skins[2] = {"浅雾", "暗夜全息"};
+  const char* skins[2] = {"Light Glass", "Dark Glass"};
   int skinIdx = g.darkSkin ? 1 : 0;
-  Segmented(dl, H("skin"), rx0 + 18.f, ly0 + 40.f, rx1 - rx0 - 36.f, 24.f, &skinIdx, skins, 2);
+  Segmented(dl, H("skin"), X + 18.f, ly0 + 46.f, 320.f, 26.f, &skinIdx, skins, 2);
   g.darkSkin = (skinIdx == 1);
 
-  TxtWrap(rx0 + 18.f, ly0 + 76.f, rx1 - rx0 - 36.f, 4.7f, p.textDim,
-          g.darkSkin ? "深色玻璃质感，青绿描边，随视角读取深色星空。"
-                     : "浅色毛玻璃加薄雾，透镜更柔，更接近原生 AETHER。");
+  Txt(X + 18.f, ly0 + 92.f, 5.4f, p.textDim, "Menu Size", 0);
+  char mb[16];
+  snprintf(mb, sizeof(mb), "%d%%", (int)(g.menuScale * 100.f + 0.5f));
+  Txt(X + 338.f, ly0 + 92.f, 5.0f, p.text, mb, 2);
+  float ms = (g.menuScale - 0.7f) / 0.6f;
+  if (ms < 0.f) ms = 0.f;
+  if (ms > 1.f) ms = 1.f;
+  Slider(dl, H("msize"), X + 18.f, ly0 + 108.f, 320.f, &ms, 0.f, 1.f);
+  g.menuScale = 0.7f + ms * 0.6f;
 
-  Txt(rx0 + 18.f, ly0 + 118.f, 5.4f, p.text, "3D 立体", 0);
-  Toggle(dl, H("use3d"), rx0 + 74.f, ly0 + 113.f, &g.use3D);
-  TxtWrap(rx0 + 18.f, ly0 + 140.f, rx1 - rx0 - 36.f, 4.4f, p.textFaint,
-          "陀螺透视 + 边缘高光。左侧「3D 旋转」区域拖动可改视角。");
-
-  Txt(rx0 + 18.f, ly0 + 204.f, 5.4f, p.textDim, "菜单帧率", 0);
-  char fb[16];
-  snprintf(fb, sizeof(fb), "%d FPS", (int)g.fpsTarget);
-  Txt(rx1 - 18.f, ly0 + 204.f, 5.0f, p.text, fb, 2);
-  Slider(dl, H("fps"), rx0 + 18.f, ly0 + 218.f, rx1 - rx0 - 36.f, &g.fpsTarget, 60.f, 144.f);
-  TxtWrap(rx0 + 18.f, ly0 + 242.f, rx1 - rx0 - 36.f, 4.2f, p.textFaint,
-          "帧率越高越顺滑，但也越耗电。");
-
-  Txt(X, 566.f, 4.6f, p.textFaint, "写入 /data/local/AETHER/config.conf", 0);
+  TxtWrap(X + 380.f, ly0 + 46.f, 560.f, 4.7f, p.textDim,
+          "The panel is drawn front-on. The tilted perspective view and the "
+          "drag pad that span it were removed.");
 }
 
-// ================================================================ 页面：视觉
+// ================================================================ Page: Visual
 void PageVisual(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
 
-  TxtB(X, 36.f, 15.5f, p.text, "视觉", 0);
-  Txt(X + TxtWU(15.5f, "视觉") + 8.f, 42.f, 4.6f, p.textFaint, "VISUAL", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "ESP 绘制 · 提示 · 字号", 0);
+  TxtB(X, 36.f, 15.5f, p.text, "Visual", 0);
+  Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Box, skeleton, name, health, distance.", 0);
 
   const float y0 = 100.f, y1 = 520.f;
-  const float wCol = 236.f, gap = 14.f;
-  const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
+  const float wCol = 360.f, gap = 26.f;
+  const float c1 = X, c2 = X + wCol + gap;
 
-  // ---- 绘制元素 ----
   CardBg(dl, c1, y0, c1 + wCol, y1);
-  CardHead(c1 + 18.f, y0 + 16.f, "绘制元素", "DRAW");
+  CardHead(c1 + 18.f, y0 + 16.f, "Draw", "ELEMENTS");
   {
-    float y = y0 + 48.f;
+    float y = y0 + 54.f;
     const float w = wCol - 36.f;
     y += BindRow(dl, "v.box",  c1 + 18.f, y, w, b.showBox,      "Box ESP");
     y += BindRow(dl, "v.skel", c1 + 18.f, y, w, b.showSkeleton, "Skeleton");
@@ -790,106 +740,70 @@ void PageVisual(ImDrawList* dl) {
     y += BindRow(dl, "v.line", c1 + 18.f, y, w, b.showLine,     "ESP Line");
   }
 
-  // ---- 提示 ----
   CardBg(dl, c2, y0, c2 + wCol, y1);
-  CardHead(c2 + 18.f, y0 + 16.f, "提示", "ALERTS");
+  CardHead(c2 + 18.f, y0 + 16.f, "Overlay", "HUD");
   {
-    float y = y0 + 48.f;
+    float y = y0 + 54.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "v.360",  c2 + 18.f, y, w, b.is3600,        "360 Alert");
     y += BindToggle(dl, "v.fovc", c2 + 18.f, y, w, b.showFovCircle, "FOV Circle");
     y += BindToggle(dl, "v.alin", c2 + 18.f, y, w, b.showAimLine,   "Aim Line");
-    y += 8.f;
-    y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50,
-                     "Text Size", "");
+    y += 10.f;
+    y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50, "Text Size", "");
   }
 
-  // ---- 说明 ----
-  CardBg(dl, c3, y0, c3 + wCol, y1);
-  CardHead(c3 + 18.f, y0 + 16.f, "说明", "NOTES");
-  TxtWrap(c3 + 18.f, y0 + 52.f, wCol - 36.f, 4.6f, p.textDim,
-          "这些开关直接写入引擎自身的标志位，与旧菜单完全一致。\n\n"
-          "未接线的开关不会显示，所以这里看到的每一项都是真的在起作用。");
-
-  Txt(X, 566.f, 4.6f, p.textFaint, "绑定自引擎标志位 · 未绑定的控件不会绘制", 0);
+  Txt(X, 566.f, 4.6f, p.textFaint,
+      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
-// ================================================================ 页面：瞄准
+// ================================================================ Page: Aim
+// Aim Silent and Hardware BT only, as asked. Aimbot, FOV range, Body Kill,
+// Brutal BT, Drag Headshot, Body Kill HP and Chest Rate are no longer drawn
+// here. Their flags are still bound (AetherUI.h), so they keep whatever
+// value the saved config gives them -- they are off this page, not reset.
 void PageAim(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
 
-  TxtB(X, 36.f, 15.5f, p.text, "瞄准", 0);
-  Txt(X + TxtWU(15.5f, "瞄准") + 8.f, 42.f, 4.6f, p.textFaint, "AIM", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Aim Silent · Hardware BT · Body Kill", 0);
+  TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
+  Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Paradise EXECUTE breakpoint path.", 0);
 
-  const float y0 = 100.f, y1 = 520.f;
-  const float wCol = 236.f, gap = 14.f;
-  const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
+  const float y0 = 100.f, y1 = 248.f;
+  const float wCol = 360.f;
 
-  CardBg(dl, c1, y0, c1 + wCol, y1);
-  CardHead(c1 + 18.f, y0 + 16.f, "主要", "PRIMARY");
+  CardBg(dl, X, y0, X + wCol, y1);
+  CardHead(X + 18.f, y0 + 16.f, "Primary", "AIM");
   {
-    float y = y0 + 48.f;
+    float y = y0 + 58.f;
     const float w = wCol - 36.f;
-    y += BindToggle(dl, "a.silent", c1 + 18.f, y, w, b.aimSilent,  "Aim Silent");
-    y += BindToggle(dl, "a.hwbt",   c1 + 18.f, y, w, b.hardwareBT, "Hardware BT");
-    y += BindToggle(dl, "a.bot",    c1 + 18.f, y, w, b.aimbot,     "Aimbot");
-    y += 8.f;
-    y += BindSliderF(dl, "a.fov", c1 + 18.f, y, w, b.aimFov, 10.f, 600.f,
-                     "FOV Range", "%.0f");
+    y += BindToggle(dl, "a.silent", X + 18.f, y, w, b.aimSilent,  "Aim Silent");
+    y += BindToggle(dl, "a.hwbt",   X + 18.f, y, w, b.hardwareBT, "Hardware BT");
   }
 
-  CardBg(dl, c2, y0, c2 + wCol, y1);
-  CardHead(c2 + 18.f, y0 + 16.f, "Body Kill", "BODY");
-  {
-    float y = y0 + 48.f;
-    const float w = wCol - 36.f;
-    y += BindToggle(dl, "a.bk",   c2 + 18.f, y, w, b.bodyKill,     "Body Kill");
-    y += BindToggle(dl, "a.bbt",  c2 + 18.f, y, w, b.brutalBT,     "Brutal BT");
-    y += BindToggle(dl, "a.drag", c2 + 18.f, y, w, b.dragHeadshot, "Drag Headshot");
-    y += 8.f;
-    y += BindSliderF(dl, "a.bkhp", c2 + 18.f, y, w, b.bodyKillHP, 1.f, 200.f,
-                     "Body Kill HP", "%.0f");
-    y += BindSliderI(dl, "a.chest", c2 + 18.f, y, w, b.chestRateSave, 0, 100,
-                     "Chest Rate", "%");
-  }
-
-  CardBg(dl, c3, y0, c3 + wCol, y1);
-  CardHead(c3 + 18.f, y0 + 16.f, "写入方式", "WRITE MODE");
-  {
-    float y = y0 + 48.f;
-    const float w = wCol - 36.f;
-    y += BindToggle(dl, "a.nw", c3 + 18.f, y, w, b.normalWrite, "Normal Write");
-    TxtWrap(c3 + 18.f, y + 6.f, w, 4.6f, p.textDim,
-            "关闭时：Aim Silent 与 Hardware BT 走 Paradise EXECUTE 断点，"
-            "由断点改写游戏自己的那条 store 指令。\n\n"
-            "打开时：两者先释放各自的断点，再直接写方向字段。\n\n"
-            "这是手动选择的模式，不是失败回退 —— 不会自己切换。");
-  }
-
-  Txt(X, 566.f, 4.6f, p.textFaint, "绑定自引擎标志位 · 未绑定的控件不会绘制", 0);
+  Txt(X, 566.f, 4.6f, p.textFaint,
+      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
-// ================================================================ 页面：功能
+// ================================================================ Page: Exploit
 void PageExploit(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
 
-  TxtB(X, 36.f, 15.5f, p.text, "功能", 0);
-  Txt(X + TxtWU(15.5f, "功能") + 8.f, 42.f, 4.6f, p.textFaint, "EXPLOIT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Ghost · No Recoil · No Reload", 0);
+  TxtB(X, 36.f, 15.5f, p.text, "Exploit", 0);
+  Txt(X + TxtWU(15.5f, "Exploit") + 10.f, 42.f, 4.6f, p.textFaint, "COMBAT", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Ghost, recoil, reload and write mode.", 0);
 
   const float y0 = 100.f, y1 = 520.f;
   const float wCol = 236.f, gap = 14.f;
   const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
 
   CardBg(dl, c1, y0, c1 + wCol, y1);
-  CardHead(c1 + 18.f, y0 + 16.f, "战斗", "COMBAT");
+  CardHead(c1 + 18.f, y0 + 16.f, "Combat", "FIGHT");
   {
-    float y = y0 + 48.f;
+    float y = y0 + 54.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "x.ghost", c1 + 18.f, y, w, b.ghostHack, "Ghost Hack");
     y += BindToggle(dl, "x.recl",  c1 + 18.f, y, w, b.noRecoil,  "No Recoil");
@@ -897,80 +811,80 @@ void PageExploit(ImDrawList* dl) {
   }
 
   CardBg(dl, c2, y0, c2 + wCol, y1);
-  CardHead(c2 + 18.f, y0 + 16.f, "界面", "OVERLAY");
+  CardHead(c2 + 18.f, y0 + 16.f, "Overlay", "FLOAT");
   {
-    float y = y0 + 48.f;
+    float y = y0 + 54.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "x.float", c2 + 18.f, y, w, b.floatGhost, "Float: Ghost");
     y += BindToggle(dl, "x.mute",  c2 + 18.f, y, w, b.soundMuted, "Sound Muted");
   }
 
+  // Moved here from the Aim page, which is where it was asked for.
   CardBg(dl, c3, y0, c3 + wCol, y1);
-  CardHead(c3 + 18.f, y0 + 16.f, "说明", "NOTES");
-  TxtWrap(c3 + 18.f, y0 + 52.f, wCol - 36.f, 4.6f, p.textDim,
-          "这一页的开关与旧菜单 Exploit 标签页是同一组标志位，"
-          "没有新增任何功能，只是换了控件。");
+  CardHead(c3 + 18.f, y0 + 16.f, "Write Mode", "SILENT / BT");
+  {
+    float y = y0 + 54.f;
+    const float w = wCol - 36.f;
+    y += BindToggle(dl, "x.nw", c3 + 18.f, y, w, b.normalWrite, "Normal Write");
+    TxtWrap(c3 + 18.f, y + 8.f, w, 4.6f, p.textDim,
+            "Off: Aim Silent and Hardware BT go through the Paradise EXECUTE "
+            "breakpoint, which rewrites the game's own store instruction.\n\n"
+            "On: both release their breakpoints first, then write the direction "
+            "field directly.\n\n"
+            "This is a mode you pick, not a fallback. It never switches itself.");
+  }
 
-  Txt(X, 566.f, 4.6f, p.textFaint, "绑定自引擎标志位 · 未绑定的控件不会绘制", 0);
+  Txt(X, 566.f, 4.6f, p.textFaint,
+      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
-// ================================================================ 页面：设置
+// ================================================================ Page: Settings
+// Trimmed to what is real. Gone: "load config" and "connect data channel"
+// (neither was wired to anything), the driver-status row (no driver flag is
+// bound), the world-object row (it printed a hardcoded 0) and the about text
+// that described a config file this build never writes.
 void PageSettings(ImDrawList* dl) {
   const Pal p = P();
   const float X = SIDEBAR + 24.f;
 
-  TxtB(X, 36.f, 15.5f, p.text, "设置", 0);
-  Txt(X + TxtWU(15.5f, "设置") + 8.f, 42.f, 4.6f, p.textFaint, "SETTINGS", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "保存配置、数据通道与关于信息。", 0);
+  TxtB(X, 36.f, 15.5f, p.text, "Settings", 0);
+  Txt(X + TxtWU(15.5f, "Settings") + 10.f, 42.f, 4.6f, p.textFaint, "SAVE / EXIT", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Write the current settings, or close the menu.", 0);
 
-  CardBg(dl, X, 100.f, 978.f, 330.f);
-  CardHead(X + 18.f, 116.f, "操作", "ACTIONS");
+  CardBg(dl, X, 100.f, 978.f, 268.f);
+  CardHead(X + 18.f, 116.f, "Actions", "SAVE / EXIT");
 
-  Button(dl, H("save"), X + 18.f, 144.f, 152.f, 30.f, "保存全部配置", true);
-  Button(dl, H("load"), X + 182.f, 144.f, 152.f, 30.f, "读取配置");
-  if (Button(dl, H("link"), X + 18.f, 184.f, 316.f, 30.f, "连接数据通道"))
-    g.driverLinked = !g.driverLinked;
+  if (Button(dl, H("save"), X + 18.f, 150.f, 200.f, 32.f, "Save Settings", true))
+    g.requestSave = true;
+  if (Button(dl, H("exitbtn"), X + 230.f, 150.f, 200.f, 32.f, "Exit"))
+    g.requestExit = true;
 
-  const char* k[3] = {"驱动状态", "世界对象", "菜单帧率"};
-  char v0[32];
-  const bool linked = gBind.driverLinked ? *gBind.driverLinked : g.driverLinked;
-  snprintf(v0, sizeof(v0), "%s", linked ? "已连接" : "待连接");
-  char v1[16] = "0";
-  char v2[16];
-  snprintf(v2, sizeof(v2), "%d FPS", (int)g.fpsTarget);
-  const char* vals[3] = {v0, v1, v2};
-  for (int i = 0; i < 3; ++i) {
-    const float ry = 234.f + 22.f * (float)i;
-    Txt(X + 18.f, ry, 5.2f, p.textDim, k[i], 0);
-    Txt(978.f - 18.f, ry, 5.2f,
-        i == 0 ? (linked ? Col(46, 186, 118) : Col(210, 148, 58)) : p.text, vals[i], 2);
-  }
-  if (Button(dl, H("exit"), X + 18.f, 292.f, 316.f, 30.f, "退出程序")) g.requestExit = true;
+  TxtWrap(X + 18.f, 198.f, 700.f, 4.7f, p.textDim,
+          "Save writes the same settings file the old menu wrote. Exit saves "
+          "first, then stops the overlay and the process.");
 
-  CardBg(dl, X, 342.f, 978.f, 520.f);
-  CardHead(X + 18.f, 358.f, "关于", "ABOUT / NOTICE");
-  Txt(X + 18.f, 382.f, 5.6f, p.text, "AETHER UI 2.2 · LS", 0);
-  TxtWrap(X + 18.f, 404.f, 720.f, 5.0f, p.textDim,
-          "渲染：OpenGL ES 3.0 / ImGui 1.90.1 / SurfaceFlinger 独立图层\n"
-          "快捷键：音量+ 打开菜单 / 音量- 隐藏菜单 / 标题栏可拖动窗口\n"
-          "外观、页签与动效统一在「主题」与「视觉」页调整；3D 旋转在左侧栏。\n"
-          "菜单配置：/data/local/AETHER/config.conf");
+  CardBg(dl, X, 280.f, 978.f, 400.f);
+  CardHead(X + 18.f, 296.f, "About", "BUILD");
+  Txt(X + 18.f, 326.f, 5.6f, p.text, "TESLA UI 1.0", 0);
+  Txt(X + 18.f, 350.f, 4.8f, p.textDim, "ImGui overlay on its own SurfaceFlinger layer", 0);
 
-  Txt(X, 566.f, 4.6f, p.textFaint, "本界面仅作 UI 复刻演示，不含任何游戏读写逻辑。", 0);
+  char fb[32];
+  snprintf(fb, sizeof(fb), "%d FPS", (int)ImGui::GetIO().Framerate);
+  Txt(978.f - 18.f, 326.f, 5.2f, p.text, fb, 2);
 }
 
-// ================================================================ 面板
+// ================================================================ Panel
 void DrawPanel(ImDrawList* dl) {
   const Pal p = P();
 
-  // 背后玻璃薄片（视差层）
+  // Glass sheet behind the panel
   FillRR(dl, -18.f, 16.f, PW - 16.f, PH + 18.f, 24.f, Col(160, 196, 240, 0.13f), -30.f);
   StrokeRR(dl, -18.f, 16.f, PW - 16.f, PH + 18.f, 24.f, Col(255, 255, 255, 0.30f), 1.f, -30.f);
 
   DropShadow(dl, 0.f, 0.f, PW, PH, 29.f, 6.f, g.darkSkin ? 0.34f : 0.17f);
 
   FillRR(dl, 0.f, 0.f, PW, PH, 29.f, p.panel);
-  // 顶部柔光（逐条带渐变）
+  // Top sheen, banded gradient
   for (int i = 0; i < 10; ++i) {
     const float t = (float)i / 10.f;
     const ImU32 c = Col(255, 255, 255, (g.darkSkin ? 0.06f : 0.32f) * (1.f - t));
@@ -980,11 +894,24 @@ void DrawPanel(ImDrawList* dl) {
   StrokeRR(dl, 0.f, 0.f, PW, PH, 29.f, p.panelEdge, g.darkSkin ? 1.4f : 1.2f);
   StrokeRR(dl, 1.3f, 1.3f, PW - 1.3f, PH - 1.3f, 28.f, Col(255, 255, 255, 0.20f), 1.f);
 
-  // 顶栏
-  Txt(SIDEBAR + 24.f, 14.f, 4.4f, p.textFaint, "AETHER / LS KERNEL MENU", 0, 1.7f);
+  // Top bar
+  Txt(SIDEBAR + 24.f, 14.f, 4.4f, p.textFaint, "TESLA / KERNEL MENU", 0, 1.7f);
   char fps[40];
   snprintf(fps, sizeof(fps), "%d FPS / GPU OVERLAY", (int)ImGui::GetIO().Framerate);
-  Txt(944.f, 14.f, 4.2f, p.textFaint, fps, 2, 0.9f);
+  Txt(858.f, 14.f, 4.2f, p.textFaint, fps, 2, 0.9f);
+
+  // [NEW] Hard exit, reachable from every page instead of only the
+  // settings page. The menu cannot kill the process itself -- saving,
+  // stopping the threads and closing touch all live in the engine -- so
+  // it only raises the request and the owner runs that path.
+  {
+    const float ex0 = 866.f, ey0 = 7.f, ex1 = 940.f, ey1 = 29.f;
+    const bool eh = Hover(ex0, ey0, ex1, ey1);
+    FillRR(dl, ex0, ey0, ex1, ey1, 7.f,
+           eh ? Col(228, 76, 76, 0.94f) : Col(228, 76, 76, 0.60f));
+    Txt((ex0 + ex1) * 0.5f, 13.6f, 5.6f, Col(255, 255, 255, 0.97f), "EXIT", 1, 0.8f);
+    if (Click(H("hardexit"), ex0, ey0, ex1, ey1)) g.requestExit = true;
+  }
 
   if (Click(H("close"), 950.f, 6.f, 974.f, 30.f)) g.open = false;
   const bool xh = Hover(950.f, 6.f, 974.f, 30.f);
@@ -1008,7 +935,7 @@ void DrawPill() {
   ImDrawList* dl = DL();
   dl->AddCircleFilled(ImVec2(cx, cy), 20.f * gS, p.panel, 28);
   dl->AddCircle(ImVec2(cx, cy), 20.f * gS, p.panelEdge, 28, 1.4f);
-  dl->AddText(Fnt(), 17.f * gS, ImVec2(cx - 5.5f * gS, cy - 10.f * gS), p.text, "A");
+  dl->AddText(Fnt(), 17.f * gS, ImVec2(cx - 5.0f * gS, cy - 10.f * gS), p.text, "T");
 }
 
 void BuildR(float yaw, float pitch) {
@@ -1045,9 +972,12 @@ bool Unproject(const ImVec2& s, float* ox, float* oy) {
 }
 
 float gOpenT = 1.f;
-float gBaseYaw = -0.300f, gBasePitch = -0.050f;
-bool gDragging = false;
-float gDragX0 = 0.f, gDragY0 = 0.f, gYaw0 = 0.f, gPitch0 = 0.f;
+// [CHANGED] Was -0.300 / -0.050, i.e. the panel sat rotated ~17 degrees in
+// yaw with a slight downward pitch. On a phone that just looks crooked, so
+// the panel is now drawn front-on: with both angles zero BuildR() produces
+// the identity matrix and Pr() reduces to a straight 2D map. The drag
+// handle that let you spin it is gone with it.
+float gYaw = 0.f, gPitch = 0.f;
 
 }  // namespace
 
@@ -1073,14 +1003,7 @@ void Draw(float screenW, float screenH, float uiScale) {
   if (gOpenT > 1.f) gOpenT = 1.f;
   gAlpha = gOpenT < 1.f ? (0.25f + 0.75f * gOpenT) : 1.f;
 
-  if (!g.use3D) {
-    g.yaw += (0.f - g.yaw) * 0.15f;
-    g.pitch += (0.f - g.pitch) * 0.15f;
-  } else {
-    g.yaw += (gBaseYaw - g.yaw) * 0.12f;
-    g.pitch += (gBasePitch - g.pitch) * 0.12f;
-  }
-  BuildR(g.yaw, g.pitch);
+  BuildR(gYaw, gPitch);
 
   gMouseOK = Unproject(io.MousePos, &gMouse.x, &gMouse.y);
 
@@ -1094,35 +1017,6 @@ void Draw(float screenW, float screenH, float uiScale) {
       gOpenT = 0.f;
     }
     return;
-  }
-
-  // 3D 旋转手柄
-  if (g.use3D && gMouseOK && ImGui::IsMouseClicked(0) && gMouse.x >= 14.f && gMouse.x <= 194.f &&
-      gMouse.y >= 458.f && gMouse.y <= 528.f) {
-    gDragging = true;
-    gDragX0 = io.MousePos.x;
-    gDragY0 = io.MousePos.y;
-    gYaw0 = g.yaw;
-    gPitch0 = g.pitch;
-  }
-  // 双击手柄复位
-  if (gMouseOK && ImGui::IsMouseDoubleClicked(0) && gMouse.x >= 14.f && gMouse.x <= 194.f &&
-      gMouse.y >= 462.f && gMouse.y <= 512.f) {
-    gYaw0 = g.yaw = gBaseYaw;
-    gPitch0 = g.pitch = gBasePitch;
-    gDragging = false;
-  }
-  if (gDragging) {
-    if (!ImGui::IsMouseDown(0)) {
-      gDragging = false;
-    } else {
-      g.yaw = gYaw0 + (io.MousePos.x - gDragX0) * 0.0024f;
-      g.pitch = gPitch0 + (io.MousePos.y - gDragY0) * 0.0017f;
-      if (g.yaw < -0.44f) g.yaw = -0.44f;
-      if (g.yaw > 0.44f) g.yaw = 0.44f;
-      if (g.pitch < -0.22f) g.pitch = -0.22f;
-      if (g.pitch > 0.22f) g.pitch = 0.22f;
-    }
   }
 
   DrawPanel(dl);

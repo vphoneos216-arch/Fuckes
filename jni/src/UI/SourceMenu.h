@@ -314,20 +314,73 @@ inline void RenderSingleMenuWindow() {
 
         AetherUI::Draw(scrW, scrH, 1.0f);
 
-        // Push straight back into the globals the features read, the
-        // same assignments the old tabs made (SourceMenu.h:771-772,
-        // main.cpp:2076) -- otherwise a flag flipped here would sit in
-        // g_Cfg and change nothing on screen.
+        // ── SYNC → the globals the hook threads actually read ──────
+        // [FIX] In the old menu these assignments sat *inside* the ESP
+        // and AIM page bodies ("Sync" / "Sync -> hook globals" further
+        // down this file), so they only ran while that page was open.
+        // This block returns before either of those is ever reached,
+        // which meant 360 Alert, FOV Circle, Aim Line, Sound Muted and
+        // the ESP master Enable were drawn but applied nowhere -- the
+        // toggle moved and nothing happened on screen. Same assignments
+        // and the same order as the originals, now unconditional.
         g_Cfg.aimSilent  = AimSilent;
         g_Cfg.hardwareBT = HardwareBT;
-        showBox          = g_Cfg.showBox;
-        showSkeleton     = g_Cfg.showSkeleton;
-        showName         = g_Cfg.showName;
-        showHealth       = g_Cfg.showHealth;
-        showDistance     = g_Cfg.showDistance;
-        showLine         = g_Cfg.showLine;
+
+        showBox      = g_Cfg.showBox;
+        showSkeleton = g_Cfg.showSkeleton;
+        showName     = g_Cfg.showName;
+        showHealth   = g_Cfg.showHealth;
+        showDistance = g_Cfg.showDistance;
+        showLine     = g_Cfg.showLine;
+        is3600       = g_Cfg.is3600;
+        showAimLine  = g_Cfg.showAimLine;
+        textSize     = g_Cfg.textSz;
+        Enable = (showLine || showBox || showSkeleton || showName ||
+                  showHealth || showDistance || showCount);
+
+        g_ShowFovOverlay = g_Cfg.showFovCircle;
+        AimFov           = g_Cfg.aimFovUI;
         Aimbot           = g_Cfg.Aimbot;
-        textSize         = g_Cfg.textSz;
+        BrutalBT         = g_Cfg.brutalBT;
+        HardwareBT       = g_Cfg.hardwareBT;
+        BodyKill         = g_Cfg.bodyKill;
+        BodyKillHP       = g_Cfg.bodyKillHP;
+        if (!g_Cfg.hardwareBT) g_Cfg.chestRateSave = 1;
+        chestRate = g_Cfg.chestRateSave;
+        if (chestRate < 1) chestRate = 1;
+        if (chestRate > 3) chestRate = 3;
+
+        // The same force-clears the old AIM page did every frame, kept
+        // for the same reason: these have no control any more, so a
+        // stale config.json must not be able to switch them back on.
+        DragHeadshot       = false;
+        g_Cfg.dragHeadshot = false;
+        AimMagnet          = false;
+        g_ExploitFloatUI   = false;
+        aimBotBoneIndex    = 0;
+
+        ix_sound_set_muted(g_Cfg.soundMuted);
+
+        // ── Save / Exit asked for by the menu ──────────────────────
+        // AetherUI cannot do either itself: saving and the shutdown
+        // path both live in the engine. It raises a flag, this clears
+        // it and runs the real thing -- the same sequence the old
+        // menu's Exit button used.
+        {
+            AetherUI::State& ast = AetherUI::GetState();
+            if (ast.requestSave) {
+                ast.requestSave = false;
+                UpdateAndSaveSettings();
+            }
+            if (ast.requestExit) {
+                ast.requestExit = false;
+                UpdateAndSaveSettings();
+                main_thread_flag = false;
+                shutdown();
+                Touch_Close();
+                _exit(0);
+            }
+        }
         return;
     }
 
