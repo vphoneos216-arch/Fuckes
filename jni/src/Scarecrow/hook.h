@@ -7,7 +7,9 @@
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
 #include "../ix_aob.h"
+#include "../ix_arm64_store.h"
 #include <string>
+#include <cstddef>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -1939,12 +1941,36 @@ namespace AimHookState {
     // Headshot's UI/feature is gone. With exactly two possible
     // occupants, there are at most two points in the table, both owned
     // here, and nothing else in the process can shift or wipe them.
+    // FIX, v4 — [CHANGED] each feature now owns THREE points, one per
+    // Vector3 component (base+0, +4, +8), instead of one.
+    //
+    // A watchpoint only fires for a store that actually touches ITS
+    // bytes. If the compiler emitted the Vector3 write as one
+    // instruction (`str q0, [x8]`, or `stp d0, d1, [x8]`) a single point
+    // at the base address catches it. But if it emitted three separate
+    // component stores (`str s0, [x8]` / `str s1, [x8,#4]` /
+    // `str s2, [x8,#8]`) then a point at the base address catches ONLY
+    // the X store — Y and Z go through untouched, which looks exactly
+    // like "the breakpoint is set but nothing happens". Covering all
+    // three component addresses handles both shapes without needing to
+    // know which one this build compiled to.
+    //
+    // Only one feature's group is ever armed at a time (Aim Silent and
+    // Hardware BT are arbitrated — they write the same field), so the
+    // live point count stays at 3, within the 4 watchpoints ARM64
+    // implementations typically provide. ArmGroup consults the CPU's own
+    // num_wrps via hwbp_get_config and never asks for more points than
+    // the hardware reports.
     namespace ParadisePoints {
-        enum Slot { SLOT_SILENTDIR = 0, SLOT_HARDWAREBT = 1, SLOT_COUNT = 2 };
+        enum Slot {
+            SLOT_SILENT_X = 0, SLOT_SILENT_Y = 1, SLOT_SILENT_Z = 2,
+            SLOT_BT_X     = 3, SLOT_BT_Y     = 4, SLOT_BT_Z     = 5,
+            SLOT_COUNT    = 6
+        };
         static std::mutex                g_mtx;
         static paradise_bp_point_config  g_points[SLOT_COUNT];
-        static bool                      g_active[SLOT_COUNT]   = { false, false };
-        static int                       g_position[SLOT_COUNT] = { -1, -1 };
+        static bool                      g_active[SLOT_COUNT]   = { false, false, false, false, false, false };
+        static int                       g_position[SLOT_COUNT] = { -1, -1, -1, -1, -1, -1 };
 
         // Rebuilds g_position[] from g_active[] (stable order: lowest
         // Slot id first) and submits ONLY the active points, compacted,
@@ -2012,94 +2038,271 @@ namespace AimHookState {
         }
 
         // Current array position for `slot`'s point in the LAST
-        // hwbp_set() call, or -1 if it isn't active. This is what every
-        // PdHwbpArm* helper must pass to hwbp_set_record — never the raw
-        // Slot enum value, since compaction can move it.
+        // hwbp_set() call, or -1 if it isn't active. This is what the
+        // caller must pass to hwbp_set_record/hwbp_get_records — never
+        // the raw Slot enum value, since compaction can move it.
         static int GetPosition(int slot) {
             std::lock_guard<std::mutex> lk(g_mtx);
             return g_position[slot];
         }
+
+        // How many write watchpoints this CPU actually has, straight
+        // from the driver ("获取当前配置以及 CPU 支持的 BRP/WRP 数量" —
+        // get the current config and the CPU's supported BRP/WRP
+        // counts). Queried once; if the query fails we do NOT invent a
+        // number, we just report 0 and the caller arms a single point at
+        // the base address, which is always safe.
+        static int WrpCount(paradise_driver* pd) {
+            static std::atomic<int> s_cached{-1};
+            int c = s_cached.load(std::memory_order_acquire);
+            if(c >= 0) return c;
+            paradise_bp_config cfg{};
+            c = pd->hwbp_get_config(&cfg) ? (int)cfg.num_wrps : 0;
+            s_cached.store(c, std::memory_order_release);
+            return c;
+        }
     } // namespace ParadisePoints
 
-    // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir.
-    // paradise_bp_record.x0–x2 carry the new float values as GP register
-    // overrides — PARADISE_BP_SET_MASK(..., PARADISE_BP_OP_WRITE) on
-    // each one is what actually tells the driver to apply them (see
-    // BUG 1 above; this is the fix).
-    static bool PdHwbpArmSilentDir(paradise_driver* pd, uintptr_t dir_addr,
-                                    const Vector3& dir) {
-        // [ROOT-CAUSE FIX] length was 12 (sizeof(Vector3)). These are
-        // real ARM64 access watchpoints — paradise_api.h calls them
-        // exactly that ("设置最多 16 个 ARM64 执行断点/访问观察点") and
-        // hwbp_get_config hands back the CPU's own num_brps/num_wrps —
-        // so the length has to be something DBGWCR.BAS can actually
-        // encode: 1, 2, 4 or 8 bytes. There is no 12-byte watchpoint on
-        // ARM64, so every arm here was asking the driver to program an
-        // impossible watchpoint. That is why Aim Silent never did
-        // anything on Paradise, and why Hardware BT broke the moment it
-        // was moved off its plain write onto this same 12-byte point.
-        //
-        // 4 bytes at the base address is valid (a float field is 4-byte
-        // aligned by definition) and still catches the write: whatever
-        // instruction stores this Vector3 necessarily touches its first
-        // 4 bytes, so the watchpoint fires and the record's register
-        // overrides are applied on that hit.
-        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_SILENTDIR, dir_addr,
-                                 PARADISE_HWBP_WRITE, 4 /* ARM64 WRP: 1/2/4/8 only */))
-            return false;
+    // ── Vector3 write-override engine ──────────────────────────────────
+    //
+    // BUG 3 — the override targeted the wrong registers. The old helpers
+    // put the three floats in rec.x0/x1/x2. x0-x2 is the AAPCS slot for
+    // an integer argument; a Vector3 is a homogeneous floating-point
+    // aggregate, so even as an argument it travels in s0/s1/s2 — the low
+    // 32 bits of q0/q1/q2. ix_pd_probe.h has this straight off the
+    // device: "Vector3 argument (AAPCS HFA: s0=X s1=Y s2=Z)". And for a
+    // STORE none of that applies anyway: the source register is whatever
+    // the compiler allocated at that instruction. Writing floats into
+    // x0/x1/x2 therefore did two wrong things at once — it failed to
+    // change the stored value, and it clobbered three live
+    // general-purpose registers (likely pointers) on every hit.
+    //
+    // BUG 4 — the record index was hardcoded to 0. hwbp_get_records is
+    // documented as "分段读取指定点位按触发 PC 聚合的现场记录" — records
+    // for a point are aggregated BY TRIGGER PC, so record_index selects
+    // WHICH instruction's capture you are overriding. Writing record 0
+    // unconditionally means that if more than one instruction writes the
+    // field, at most one of them is ever overridden, and before the
+    // point has been hit at all there is no record 0 to write to.
+    //
+    // So the override is now derived instead of assumed: read the point's
+    // records, decode the instruction at each record's PC, work out the
+    // effective address it stores to and which register bytes land on
+    // which Vector3 component, then patch exactly those bytes — starting
+    // from the register values the record itself captured, so nothing
+    // else in the register is disturbed — and write that record back at
+    // its own index. An instruction the decoder does not recognise gets
+    // NO override at all, because overriding a register a store does not
+    // read is how you corrupt the game instead of steering it.
 
-        paradise_bp_record rec{};
-        uint32_t bx, by, bz;
-        __builtin_memcpy(&bx, &dir.X, 4);
-        __builtin_memcpy(&by, &dir.Y, 4);
-        __builtin_memcpy(&bz, &dir.Z, 4);
-        rec.x0 = (uint64_t)bx;
-        rec.x1 = (uint64_t)by;
-        rec.x2 = (uint64_t)bz;
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
-        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_SILENTDIR);
-        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
-        return pd->hwbp_set_record(pos, 0, &rec);
+    // paradise_bp_record declares x0..x29 and q0..q31 as separate
+    // consecutive members of one type each. These static_asserts pin
+    // that layout down so indexing across them is safe; if the vendor
+    // ever reorders the struct this stops compiling instead of silently
+    // reading the wrong register.
+    static_assert(offsetof(paradise_bp_record, x1) - offsetof(paradise_bp_record, x0) == sizeof(uint64_t),
+                  "paradise_bp_record x-registers are not contiguous");
+    static_assert(offsetof(paradise_bp_record, x29) - offsetof(paradise_bp_record, x0) == 29 * sizeof(uint64_t),
+                  "paradise_bp_record x-register span is not 30 consecutive slots");
+    static_assert(offsetof(paradise_bp_record, q1) - offsetof(paradise_bp_record, q0) == sizeof(__uint128_t),
+                  "paradise_bp_record q-registers are not contiguous");
+    static_assert(offsetof(paradise_bp_record, q31) - offsetof(paradise_bp_record, q0) == 31 * sizeof(__uint128_t),
+                  "paradise_bp_record q-register span is not 32 consecutive slots");
+
+    static inline uint64_t* RecGpSlot(paradise_bp_record* r, unsigned n) {
+        if(n <= 29) return reinterpret_cast<uint64_t*>(&r->x0) + n;
+        if(n == 30) return &r->lr;   // x30
+        if(n == 31) return &r->sp;   // SP in the base-register position
+        return nullptr;
+    }
+    static inline __uint128_t* RecFpSlot(paradise_bp_record* r, unsigned n) {
+        if(n <= 31) return reinterpret_cast<__uint128_t*>(&r->q0) + n;
+        return nullptr;
     }
 
-    // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir
-    // for the Hardware BT feature — its OWN slot (SLOT_HARDWAREBT), never
-    // SLOT_SILENTDIR, so neither feature's arm/disarm can destroy the
-    // other's point. They both target the SAME field, so they are also
-    // arbitrated in UpdateHardwareBTFast: Aim Silent owns the field when
-    // it is on and Hardware BT stands down, rather than both programming
-    // a watchpoint on the same bytes and overriding each other.
-    // Same 4-byte ARM64 watchpoint length as PdHwbpArmSilentDir — see
-    // the root-cause comment there.
-    static bool PdHwbpArmHardwareBT(paradise_driver* pd, uintptr_t dir_addr,
-                                     const Vector3& dir) {
-        if(!ParadisePoints::Arm(pd, ParadisePoints::SLOT_HARDWAREBT, dir_addr,
-                                 PARADISE_HWBP_WRITE, 4 /* ARM64 WRP: 1/2/4/8 only */))
-            return false;
-
-        paradise_bp_record rec{};
-        uint32_t bx, by, bz;
-        __builtin_memcpy(&bx, &dir.X, 4);
-        __builtin_memcpy(&by, &dir.Y, 4);
-        __builtin_memcpy(&bz, &dir.Z, 4);
-        rec.x0 = (uint64_t)bx;
-        rec.x1 = (uint64_t)by;
-        rec.x2 = (uint64_t)bz;
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
-        PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
-        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_HARDWAREBT);
-        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
-        return pd->hwbp_set_record(pos, 0, &rec);
+    // Instruction word at a PC, cached: the code at a given PC does not
+    // change, so this is read once per distinct trigger PC rather than
+    // every frame.
+    static uint32_t InsnAt(uintptr_t pc) {
+        struct Entry { uintptr_t pc; uint32_t w; };
+        static std::mutex  s_mtx;
+        static Entry       s_cache[16] = {};
+        static int         s_next = 0;
+        {
+            std::lock_guard<std::mutex> lk(s_mtx);
+            for(const auto& e : s_cache)
+                if(e.pc == pc) return e.w;
+        }
+        uint32_t w = Read<uint32_t>(pc);
+        if(w){
+            std::lock_guard<std::mutex> lk(s_mtx);
+            s_cache[s_next % 16] = Entry{ pc, w };
+            s_next++;
+        }
+        return w;
     }
 
-    // Disarms exactly ONE feature's slot and resubmits the shared table —
-    // never a global pd->hwbp_remove() (see BUG 2 above). `slot` is one
-    // of ParadisePoints::SLOT_*.
-    static void PdHwbpDisarm(paradise_driver* pd, int slot) {
-        if(pd) ParadisePoints::Disarm(pd, slot);
+    // Logs an instruction the decoder could not handle, once per PC, so
+    // an unsupported store form is identifiable instead of silent.
+    static void LogUndecoded(uintptr_t pc, uint32_t w) {
+        static std::mutex   s_mtx;
+        static uintptr_t    s_seen[8] = {};
+        static int          s_n = 0;
+        std::lock_guard<std::mutex> lk(s_mtx);
+        for(const auto& p : s_seen) if(p == pc) return;
+        s_seen[s_n % 8] = pc; s_n++;
+        printf("[INX] hwbp: store at pc=%p not decoded (insn=0x%08x) — no register "
+               "override applied for it. Disassemble that word to identify the form.\n",
+               (void*)pc, w);
+        fflush(stdout);
+    }
+
+    // Builds the override for ONE captured record and writes it back.
+    // `base` is the Vector3's address, `dir` the value we want stored.
+    // Returns true if a register override was applied for this record.
+    static bool ApplyDirOverrideToRecord(paradise_driver* pd, int point_pos,
+                                         uint32_t rec_index,
+                                         paradise_bp_record rec,
+                                         uintptr_t base, const Vector3& dir) {
+        const uint32_t w = InsnAt((uintptr_t)rec.pc);
+        if(!w) return false;
+
+        const IxArm64StoreInfo si = ix_arm64_decode_store(w);
+        if(!si.decoded){
+            LogUndecoded((uintptr_t)rec.pc, w);
+            return false;
+        }
+
+        // Effective address of the store, from the registers this very
+        // hit captured.
+        const uint64_t* rn_p = RecGpSlot(&rec, si.rn);
+        if(!rn_p) return false;
+        uint64_t ea = *rn_p;
+        if(si.addr_form == IX_ADDR_REG){
+            const uint64_t* rm_p = RecGpSlot(&rec, si.rm);
+            if(!rm_p) return false;
+            ea += ix_arm64_extend_reg(*rm_p, si.extend_option, si.extend_shift);
+        } else if(si.addr_form == IX_ADDR_IMM){
+            ea = (uint64_t)((int64_t)ea + si.imm);
+        }
+        // IX_ADDR_POST stores to the un-updated base: ea stays as-is.
+
+        const float comp[3] = { dir.X, dir.Y, dir.Z };
+        bool touched = false;
+
+        // Walk each source register this instruction stores from, and
+        // patch any 4-byte lane of it that lands on one of the three
+        // Vector3 components. Start from the captured register value so
+        // bytes we do not own keep whatever the game had in them.
+        const int nregs = si.is_pair ? 2 : 1;
+        for(int k = 0; k < nregs; k++){
+            const unsigned regno   = (k == 0) ? si.rt : si.rt2;
+            const uint64_t reg_ea  = ea + (uint64_t)k * si.xfer_bytes;
+
+            uint8_t  buf[16] = {};
+            const unsigned nbytes = si.xfer_bytes > 16 ? 16 : si.xfer_bytes;
+
+            uint64_t*     gp = nullptr;
+            __uint128_t*  fp = nullptr;
+            if(si.regfile == IX_REGFILE_GP){
+                gp = RecGpSlot(&rec, regno);
+                if(!gp) continue;
+                __builtin_memcpy(buf, gp, nbytes > 8 ? 8 : nbytes);
+            } else {
+                fp = RecFpSlot(&rec, regno);
+                if(!fp) continue;
+                __builtin_memcpy(buf, fp, nbytes);
+            }
+
+            bool reg_touched = false;
+            for(int c = 0; c < 3; c++){
+                const uint64_t caddr = (uint64_t)base + (uint64_t)c * 4u;
+                if(caddr < reg_ea) continue;
+                const uint64_t off = caddr - reg_ea;
+                if(off + 4u > nbytes) continue;      // lane not inside this register
+                uint32_t bits;
+                __builtin_memcpy(&bits, &comp[c], 4);
+                __builtin_memcpy(buf + off, &bits, 4);
+                reg_touched = true;
+            }
+            if(!reg_touched) continue;
+
+            if(si.regfile == IX_REGFILE_GP){
+                __builtin_memcpy(gp, buf, nbytes > 8 ? 8 : nbytes);
+                PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0 + (int)regno, PARADISE_BP_OP_WRITE);
+            } else {
+                __builtin_memcpy(fp, buf, nbytes);
+                PARADISE_BP_SET_MASK(&rec, PARADISE_REG_Q0 + (int)regno, PARADISE_BP_OP_WRITE);
+            }
+            touched = true;
+        }
+
+        if(!touched) return false;
+        return pd->hwbp_set_record((uint32_t)point_pos, rec_index, &rec);
+    }
+
+    // Reads every record captured for one point and pushes the override
+    // into each. Returns true if at least one record was overridden.
+    static bool PushDirOverride(paradise_driver* pd, int slot,
+                                 uintptr_t base, const Vector3& dir) {
+        const int pos = ParadisePoints::GetPosition(slot);
+        if(pos < 0) return false;    // raced with a Disarm — skip this frame
+
+        paradise_bp_record recs[8]{};
+        uint32_t count = 0;
+        if(!pd->hwbp_get_records((uint32_t)pos, 0, recs,
+                                 (uint32_t)(sizeof(recs)/sizeof(recs[0])), &count))
+            return false;
+        if(count == 0) return false; // armed, not hit yet — nothing to override
+
+        if(count > sizeof(recs)/sizeof(recs[0]))
+            count = (uint32_t)(sizeof(recs)/sizeof(recs[0]));
+
+        bool any = false;
+        for(uint32_t i = 0; i < count; i++)
+            if(ApplyDirOverrideToRecord(pd, pos, i, recs[i], base, dir))
+                any = true;
+        return any;
+    }
+
+    // Arms a feature's component group on `base` and pushes the current
+    // direction into whatever has been captured so far.
+    //
+    // `first_slot` is the group's X slot; Y and Z follow it. Returns
+    // false only if the arm itself failed — a true return does NOT mean
+    // an override is live yet, since a freshly armed point has no
+    // captured record until the game next writes the field.
+    static bool PdHwbpArmDirGroup(paradise_driver* pd, int first_slot,
+                                   uintptr_t base, const Vector3& dir) {
+        // Never ask for more points than the CPU has write watchpoints.
+        // 0 means the query failed, in which case one point at the base
+        // address is the safe choice.
+        const int wrps  = ParadisePoints::WrpCount(pd);
+        const int want  = (wrps >= 3) ? 3 : (wrps >= 1 ? wrps : 1);
+
+        bool armed_any = false;
+        for(int c = 0; c < 3; c++){
+            const int slot = first_slot + c;
+            if(c < want){
+                if(ParadisePoints::Arm(pd, slot, base + (uintptr_t)c * 4u,
+                                        PARADISE_HWBP_WRITE,
+                                        4 /* ARM64 WRP lengths: 1/2/4/8 only */))
+                    armed_any = true;
+            } else {
+                ParadisePoints::Disarm(pd, slot);
+            }
+        }
+        if(!armed_any) return false;
+
+        for(int c = 0; c < want; c++)
+            PushDirOverride(pd, first_slot + c, base, dir);
+        return true;
+    }
+
+    static void PdHwbpDisarmDirGroup(paradise_driver* pd, int first_slot) {
+        if(!pd) return;
+        for(int c = 0; c < 3; c++)
+            ParadisePoints::Disarm(pd, first_slot + c);
     }
 
     // ── TwT HWBP helpers ───────────────────────────────────────────────
@@ -2262,7 +2465,7 @@ void UpdateSilentAimFast(){
      * before: a direct write to SilentAimDir is visible as an
      * out-of-band write instead of the game's own write being overridden
      * in place, and is intentionally not restored). See
-     * AimHookState::PdHwbpArmSilentDir/PdHwbpDisarm and
+     * AimHookState::PdHwbpArmDirGroup/PdHwbpDisarmDirGroup and
      * AimHookState::KpmHwbpArmSilentDir/KpmHwbpDisarm above. */
     static uintptr_t s_lastDirAddr    = 0;
     static bool      s_lastViaKpm     = false;
@@ -2275,7 +2478,7 @@ void UpdateSilentAimFast(){
             AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
         } else {
             paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            if(pd) AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_SILENTDIR);
+            AimHookState::PdHwbpDisarmDirGroup(pd, AimHookState::ParadisePoints::SLOT_SILENT_X);
         }
         s_lastDirAddr = 0;
         s_lastViaKpm  = false;
@@ -2350,18 +2553,24 @@ void UpdateSilentAimFast(){
                     disarm_silent();
 
                 if(pd){
-                    if(AimHookState::PdHwbpArmSilentDir(pd, dirAddr, dir)){
+                    // Arm (idempotent once the address is unchanged) and
+                    // push the override into every record captured so
+                    // far. Both happen every frame: the arm call is a
+                    // no-op after the first, and the override push is
+                    // what tracks the moving aim direction.
+                    if(AimHookState::PdHwbpArmDirGroup(
+                           pd, AimHookState::ParadisePoints::SLOT_SILENT_X, dirAddr, dir)){
                         s_lastDirAddr = dirAddr;
                         s_lastViaKpm  = false;
                     } else {
-                        // [FIX] Arm() may already have claimed the slot
-                        // before the record push failed. Zeroing
-                        // s_lastDirAddr alone would leave that point
-                        // armed in the registry while disarm_silent()
-                        // early-returns on !s_lastDirAddr — i.e. a
-                        // breakpoint stuck on a stale address after the
-                        // feature is switched off. Release it explicitly.
-                        AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_SILENTDIR);
+                        // [FIX] Arm() may already have claimed a slot
+                        // before a later one failed. Zeroing
+                        // s_lastDirAddr alone would leave those points
+                        // armed while disarm_silent() early-returns on
+                        // !s_lastDirAddr — a watchpoint stuck on a stale
+                        // address after the feature is switched off.
+                        // Release the whole group explicitly.
+                        AimHookState::PdHwbpDisarmDirGroup(pd, AimHookState::ParadisePoints::SLOT_SILENT_X);
                         s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                     }
                 } else if(kpm){
@@ -3007,8 +3216,8 @@ void UpdateHardwareBTFast(){
      * of thing the Aim Silent tier was explicitly built to avoid. Now
      * uses the same driver-selected HWBP dispatch as UpdateSilentAimFast:
      * Paradise connected -> always Paradise HWBP (its OWN slot,
-     * ParadisePoints::SLOT_HARDWAREBT, never SLOT_SILENTDIR — see the
-     * ParadisePoints registry comment above PdHwbpArmSilentDir); Paradise
+     * the SLOT_BT_* group, never the SLOT_SILENT_* one — see the
+     * ParadisePoints registry comment above PdHwbpArmDirGroup); Paradise
      * not connected + KPM connected -> always KPM HWBP tier. No runtime
      * fallback between them, and no plain-write fallback below either —
      * if the selected driver's arm fails this frame, the frame is
@@ -3024,7 +3233,7 @@ void UpdateHardwareBTFast(){
             AimHookState::KpmHwbpDisarm(kpm, s_kpmSlots);
         } else {
             paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
-            if(pd) AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_HARDWAREBT);
+            AimHookState::PdHwbpDisarmDirGroup(pd, AimHookState::ParadisePoints::SLOT_BT_X);
         }
         s_lastDirAddr = 0;
         s_lastViaKpm  = false;
@@ -3111,13 +3320,14 @@ void UpdateHardwareBTFast(){
                 disarm_bt();
 
             if(pd){
-                if(AimHookState::PdHwbpArmHardwareBT(pd, dirAddr, dir)){
+                if(AimHookState::PdHwbpArmDirGroup(
+                       pd, AimHookState::ParadisePoints::SLOT_BT_X, dirAddr, dir)){
                     s_lastDirAddr = dirAddr;
                     s_lastViaKpm  = false;
                 } else {
-                    // [FIX] Same stale-armed-slot release as in
+                    // [FIX] Same stale-armed-group release as in
                     // UpdateSilentAimFast — see the comment there.
-                    AimHookState::PdHwbpDisarm(pd, AimHookState::ParadisePoints::SLOT_HARDWAREBT);
+                    AimHookState::PdHwbpDisarmDirGroup(pd, AimHookState::ParadisePoints::SLOT_BT_X);
                     s_lastDirAddr = 0; // arm failed this frame — skip, no fallback write
                 }
             } else if(kpm){

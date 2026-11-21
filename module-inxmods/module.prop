@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v3.6 (Hardware BT + Legit mode re-added, Volume Off, screen-rec null-focus fix)
+version=v3.7 Fixed Silent (Aim Silent + Hardware BT on Paradise HWBP: ARM64 watchpoint length, FP source register, per-PC records)
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki
