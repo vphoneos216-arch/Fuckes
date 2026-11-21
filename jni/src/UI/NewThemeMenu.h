@@ -137,6 +137,7 @@ static void RenderNewThemeUI(){
         ImGui::Checkbox1("No Recoil",  &NoRecoil);
         ImGui::Checkbox1("No Reload",  &NoReload);
         ImGui::Checkbox1("Float: Ghost", &g_ExploitFloatGhost);
+        ImGui::Checkbox1("Normal Write (no breakpoint)", &g_DirNormalWrite);
 
         ImGui::Dummy(ImVec2(0, 10));
 

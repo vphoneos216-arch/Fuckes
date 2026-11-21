@@ -975,6 +975,7 @@ inline void RenderSingleMenuWindow() {
                     // g_ExploitFloatUI force-cleared below for the same reason.
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row * 2));
                     ImGui::Checkbox1("Float: Ghost", &g_ExploitFloatGhost);
+                    ImGui::Checkbox1("Normal Write (no breakpoint)", &g_DirNormalWrite);
 
                     // [REMOVED] "Pull Range" slider — no longer needed, Pull removed.
                 }

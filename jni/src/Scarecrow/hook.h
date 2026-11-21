@@ -283,6 +283,14 @@ bool  NoReload      = false;
 int   SilentAimPercentage = 100;  /* 100=head, 0=body — set from chestRate */
 bool  g_ExploitFloatUI = false;
 bool  g_ExploitFloatGhost = false;   /* floating exploit icons on screen */
+/* [NEW] Exploit tab toggle: "Normal Write (no breakpoint)".
+ * OFF (default) -> Aim Silent / Hardware BT steer the game's own store
+ * through the Paradise EXECUTE breakpoint, as before.
+ * ON  -> both features release every breakpoint and write the direction
+ * field directly instead. USER-SELECTED mode, not a runtime fallback:
+ * nothing switches on its own, and while it is off the breakpoint path
+ * is still the only path. */
+bool  g_DirNormalWrite = false;
 bool  BrutalBT     = false;
 bool  AimMagnet    = false;   /* pull enemy feet onto fire ray (XZ) while firing */
 bool  DownPlayer   = false;   /* magnet vertical pull-down while firing */
@@ -2272,7 +2280,36 @@ namespace AimHookState {
         uint8_t   nlanes;
         uint8_t   xfer;
         uint8_t   owner;   // which feature learned it (its slot_xy)
+        uint32_t  coord;   // PARADISE_PTEBP_POINT_COORD_* hint, 0 if none
     };
+
+    // paradise_api.h names five coordinate store shapes by the base
+    // registers they use. Disassembling ptebp_set() in libparadise_api.a
+    // shows it validates only address!=0, type==4, length==4, scope<=2 and
+    // then forwards `scope` and `reserved` to the kernel as one 8-byte
+    // store -- `reserved` itself is never checked, so passing a shape hint
+    // there cannot make the arm call fail.
+    //
+    // UNVERIFIED: that the kernel reads `reserved` as this bitmask is an
+    // inference from the flag names matching our decoded base registers
+    // (rn=20, rn=8, rn=9), not something the header states. A wrong or
+    // ignored value costs nothing -- the record override below is still
+    // what carries the direction.
+    static uint32_t CoordHintForBase(unsigned rn) {
+        switch(rn){
+            case 0:  return PARADISE_PTEBP_POINT_COORD_X0_Q0_Q1_Q2;
+            case 19: return PARADISE_PTEBP_POINT_COORD_X19_XY_X9_Z_X8 |
+                            PARADISE_PTEBP_POINT_COORD_X19_Q0_Q1_Q2;
+            case 20: return PARADISE_PTEBP_POINT_COORD_X20_XY_X8_Z_X9;
+            case 22: return PARADISE_PTEBP_POINT_COORD_X22_XY_X8_Z_X10;
+            // x8/x9/x10 appear as the secondary (Z) base in three shapes.
+            case 8:  case 9: case 10:
+                     return PARADISE_PTEBP_POINT_COORD_X20_XY_X8_Z_X9 |
+                            PARADISE_PTEBP_POINT_COORD_X19_XY_X9_Z_X8 |
+                            PARADISE_PTEBP_POINT_COORD_X22_XY_X8_Z_X10;
+            default: return 0;
+        }
+    }
 
     namespace DirExec {
         static std::mutex  g_mtx;
@@ -2313,6 +2350,7 @@ namespace AimHookState {
                 pts[i].type    = PARADISE_BP_EXECUTE;
                 pts[i].length  = 4;   // one AArch64 instruction
                 pts[i].scope   = PARADISE_BP_ALL_THREADS;
+                pts[i].reserved = g_sites[i].coord;
             }
             g_armed = pd->ptebp_set(pts, (size_t)g_nsites);
             g_committed = g_armed ? g_nsites : 0;
@@ -2439,6 +2477,7 @@ namespace AimHookState {
         out.pc     = (uintptr_t)rec.pc;
         out.xfer   = si.xfer_bytes;
         out.nlanes = 0;
+        out.coord  = CoordHintForBase(si.rn);
 
         const unsigned nbytes = si.xfer_bytes > 16 ? 16 : si.xfer_bytes;
         const int nregs = si.is_pair ? 2 : 1;
@@ -2769,6 +2808,17 @@ void UpdateSilentAimFast(){
                 dir.Z = targetPos.Z - startPos.Z;
 
                 uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+                
+                /* [NEW] Exploit tab -> "Normal Write (no breakpoint)".
+                 * USER-SELECTED mode, not a failure fallback. Every
+                 * breakpoint this feature owns is released first so the
+                 * two mechanisms are never live on one field. */
+                if(g_DirNormalWrite){
+                    disarm_silent();
+                    Write<Vector3>(dirAddr, dir);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
+                }
                 paradise_driver* pd  = g_driver ? g_driver->GetParadise() : nullptr;
                 KpmDriver*       kpm = g_driver ? g_driver->GetKpm()      : nullptr;
 
@@ -3545,6 +3595,17 @@ void UpdateHardwareBTFast(){
             dir.Z = targetPos.Z - startPos.Z;
 
             uintptr_t dirAddr = aimingInfo + PlayerOffsets::SilentAimDir();
+            
+            /* [NEW] Exploit tab -> "Normal Write (no breakpoint)".
+             * USER-SELECTED mode, not a failure fallback. Every
+             * breakpoint this feature owns is released first so the
+             * two mechanisms are never live on one field. */
+            if(g_DirNormalWrite){
+                disarm_bt();
+                Write<Vector3>(dirAddr, dir);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
             paradise_driver* pd  = g_driver ? g_driver->GetParadise() : nullptr;
             KpmDriver*       kpm = g_driver ? g_driver->GetKpm()      : nullptr;
 

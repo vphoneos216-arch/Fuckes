@@ -601,6 +601,7 @@ inline void RenderSingleMenuWindow() {
                     ImGui::Checkbox1("Float: pull", &g_ExploitFloatUI);
                     ImGui::SetCursorScreenPos(ImVec2(startX + col, startY + row * 2));
                     ImGui::Checkbox1("Float: Ghost", &g_ExploitFloatGhost);
+                    ImGui::Checkbox1("Normal Write (no breakpoint)", &g_DirNormalWrite);
 
                     /* Row 3 — slider */
                     ImGui::SetCursorScreenPos(ImVec2(startX, startY + row * 3));
