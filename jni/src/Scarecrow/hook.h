@@ -1907,45 +1907,75 @@ namespace AimHookState {
     // sharing one hardware resource with no registry is exactly "koi
     // function not working jab doosra use karte ho".
     //
-    // FIX: a small fixed-slot registry below. Each feature gets its own
-    // permanent point_index (0..3); the full SLOT_COUNT-sized array is
-    // submitted via ONE hwbp_set() call whenever a slot's address/type/
-    // length actually changes (inactive slots are submitted as
-    // PARADISE_HWBP_EMPTY so the OTHER slots' indices never shift), and
-    // register values are pushed via hwbp_set_record(slot, 0, &rec) with
-    // PARADISE_BP_SET_MASK correctly applied every frame after that —
-    // cheap, and never touches another feature's slot. Disarming a
-    // feature only empties ITS slot and resubmits the table; hwbp_remove()
-    // is no longer called by any per-feature helper.
+    // FIX, v2 — [CHANGED] v1 padded the array passed to hwbp_set() with
+    // PARADISE_HWBP_EMPTY placeholder entries for inactive slots so each
+    // feature's point_index would stay fixed regardless of what else was
+    // active. That assumed the driver accepts/ignores EMPTY entries
+    // mixed into an otherwise-real point array — nothing in
+    // paradise_api.h actually documents that, it was an unverified guess,
+    // and after it shipped BOTH Aim Silent and Hardware BT stopped
+    // working (where Hardware BT's old plain-write path used to work
+    // fine before this registry existed) — consistent with hwbp_set()
+    // now failing outright, or silently misbehaving, on a table full of
+    // zeroed/EMPTY entries it was never meant to receive.
+    //
+    // v2 never sends a placeholder entry: only the currently-ACTIVE
+    // slots are compacted into the array passed to hwbp_set(), count =
+    // however many are active, exactly matching the one thing the header
+    // actually documents ("set up to 16 points"). Because compacting
+    // means a slot's position in that array can shift when some OTHER
+    // slot joins or leaves, g_position[] tracks, per slot, where it
+    // currently lives — recomputed on every CommitLocked() call — and
+    // callers must use ParadisePoints::GetPosition(slot) for
+    // hwbp_set_record, never the raw Slot enum value.
     namespace ParadisePoints {
         enum Slot { SLOT_ROTATION = 0, SLOT_SILENTDIR = 1, SLOT_COLLIDER = 2,
                     SLOT_HARDWAREBT = 3, SLOT_DRAGHEADSHOT = 4, SLOT_COUNT = 5 };
         static std::mutex                g_mtx;
         static paradise_bp_point_config  g_points[SLOT_COUNT];
-        static bool                      g_active[SLOT_COUNT] = { false, false, false, false, false };
+        static bool                      g_active[SLOT_COUNT]   = { false, false, false, false, false };
+        static int                       g_position[SLOT_COUNT] = { -1, -1, -1, -1, -1 };
 
-        // Submits ALL SLOT_COUNT entries every time (inactive -> EMPTY),
-        // so a slot's position — and therefore its point_index used by
-        // hwbp_set_record — never shifts depending on which OTHER
-        // features happen to be active right now.
+        // Rebuilds g_position[] from g_active[] (stable order: lowest
+        // Slot id first) and submits ONLY the active points, compacted,
+        // count = number active (count is never 0 here — the only path
+        // that reaches 0 is Disarm() on the last remaining slot, handled
+        // as its own documented case below via hwbp_remove(), since
+        // passing an empty/null array to hwbp_set() isn't anything
+        // paradise_api.h actually documents and isn't worth guessing at).
         static bool CommitLocked(paradise_driver* pd) {
             paradise_bp_point_config snapshot[SLOT_COUNT];
+            int n = 0;
             for(int i = 0; i < SLOT_COUNT; i++) {
                 if(g_active[i]) {
-                    snapshot[i] = g_points[i];
+                    snapshot[n] = g_points[i];
+                    g_position[i] = n;
+                    n++;
                 } else {
-                    snapshot[i] = paradise_bp_point_config{};
-                    snapshot[i].type = PARADISE_HWBP_EMPTY;
+                    g_position[i] = -1;
                 }
             }
-            return pd->hwbp_set(snapshot, SLOT_COUNT);
+            if(n == 0) {
+                // Nobody active: this is exactly what hwbp_remove() is
+                // documented for ("删除当前硬件断点/观察点并清理所有 CPU
+                // 调试寄存器" — remove current breakpoints and clean up
+                // all CPU debug registers). Safe here specifically
+                // because nothing is active, so there is nothing else to
+                // wipe out.
+                return pd->hwbp_remove();
+            }
+            return pd->hwbp_set(snapshot, n);
         }
 
-        // Claims/updates `slot`'s point config. Only re-submits the whole
-        // table (CommitLocked) when this slot's address/type/length
-        // actually changed or it was previously inactive — a value-only
-        // update (same address, new direction/rotation) skips straight to
-        // the caller's hwbp_set_record and never touches hwbp_set at all.
+        // Claims/updates `slot`'s point config. Re-submits the compacted
+        // table (CommitLocked) whenever this slot's address/type/length
+        // changed, it was previously inactive, or the active SET itself
+        // just changed as a side effect of another slot's own Arm/Disarm
+        // call racing in on another thread (g_position[slot] == -1 while
+        // g_active[slot] is about to become true is exactly that case) —
+        // a value-only update (same address, new direction/rotation, no
+        // membership change anywhere) skips straight to the caller's
+        // hwbp_set_record and never touches hwbp_set at all.
         static bool Arm(paradise_driver* pd, int slot, uintptr_t addr,
                          uint32_t type, uint32_t len) {
             std::lock_guard<std::mutex> lk(g_mtx);
@@ -1969,6 +1999,15 @@ namespace AimHookState {
             if(!g_active[slot]) return;
             g_active[slot] = false;
             CommitLocked(pd);
+        }
+
+        // Current array position for `slot`'s point in the LAST
+        // hwbp_set() call, or -1 if it isn't active. This is what every
+        // PdHwbpArm* helper must pass to hwbp_set_record — never the raw
+        // Slot enum value, since compaction can move it.
+        static int GetPosition(int slot) {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            return g_position[slot];
         }
     } // namespace ParadisePoints
 
@@ -1999,7 +2038,9 @@ namespace AimHookState {
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X3, PARADISE_BP_OP_WRITE);
-        return pd->hwbp_set_record(ParadisePoints::SLOT_ROTATION, 0, &rec);
+        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_ROTATION);
+        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
+        return pd->hwbp_set_record(pos, 0, &rec);
     }
 
     // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir.
@@ -2022,7 +2063,9 @@ namespace AimHookState {
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
-        return pd->hwbp_set_record(ParadisePoints::SLOT_SILENTDIR, 0, &rec);
+        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_SILENTDIR);
+        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
+        return pd->hwbp_set_record(pos, 0, &rec);
     }
 
     static bool PdHwbpArmCollider(paradise_driver* pd, uintptr_t collider_addr,
@@ -2035,7 +2078,9 @@ namespace AimHookState {
         paradise_bp_record rec{};
         rec.x0 = (uint64_t)head_collider_val;
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
-        return pd->hwbp_set_record(ParadisePoints::SLOT_COLLIDER, 0, &rec);
+        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_COLLIDER);
+        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
+        return pd->hwbp_set_record(pos, 0, &rec);
     }
 
     // Arms/updates a Paradise hardware write-breakpoint on SilentAimDir
@@ -2063,7 +2108,9 @@ namespace AimHookState {
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
-        return pd->hwbp_set_record(ParadisePoints::SLOT_HARDWAREBT, 0, &rec);
+        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_HARDWAREBT);
+        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
+        return pd->hwbp_set_record(pos, 0, &rec);
     }
 
     static bool PdHwbpArmDragHeadshot(paradise_driver* pd, uintptr_t dir_addr,
@@ -2083,7 +2130,9 @@ namespace AimHookState {
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X0, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X1, PARADISE_BP_OP_WRITE);
         PARADISE_BP_SET_MASK(&rec, PARADISE_REG_X2, PARADISE_BP_OP_WRITE);
-        return pd->hwbp_set_record(ParadisePoints::SLOT_DRAGHEADSHOT, 0, &rec);
+        int pos = ParadisePoints::GetPosition(ParadisePoints::SLOT_DRAGHEADSHOT);
+        if(pos < 0) return false; // lost the race with a concurrent Disarm -- skip this frame
+        return pd->hwbp_set_record(pos, 0, &rec);
     }
 
     // Disarms exactly ONE feature's slot and resubmits the shared table —
