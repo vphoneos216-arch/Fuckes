@@ -152,6 +152,7 @@ static inline void SM_DrawInxMark(ImDrawList* dl, ImVec2 center, float size, flo
 static int   现在页面     = 0;
 
 #include "UI/NoticeUI.h"   // 致用户 card + floating nav bar (screenshot rebuild)
+#include "AetherUI.h"      // AETHER glass menu (ported from the supplied UI_1 source)
 static bool  已初始化随机 = false;
 
 enum 动画阶段 {
@@ -274,6 +275,60 @@ inline void RenderSingleMenuWindow() {
     if (scrW < 1.0f || scrH < 1.0f) {            // last-resort fallback
         scrW = io.DisplaySize.x;
         scrH = io.DisplaySize.y;
+    }
+
+    // ── AETHER UI ────────────────────────────────────────────
+    // The supplied AetherUI, driving this engine's own flags. Its pages
+    // render through a pointer table, so nothing here is a new feature
+    // -- every control is one of the flags the old menu already had,
+    // and an unbound control is not drawn at all.
+    {
+        AetherUI::Bindings& ab = AetherUI::GetBindings();
+        ab.showBox       = &g_Cfg.showBox;
+        ab.showSkeleton  = &g_Cfg.showSkeleton;
+        ab.showName      = &g_Cfg.showName;
+        ab.showHealth    = &g_Cfg.showHealth;
+        ab.showDistance  = &g_Cfg.showDistance;
+        ab.showLine      = &g_Cfg.showLine;
+        ab.showAimLine   = &g_Cfg.showAimLine;
+        ab.is3600        = &g_Cfg.is3600;
+        ab.showFovCircle = &g_Cfg.showFovCircle;
+        ab.textSize      = &g_Cfg.textSz;
+
+        ab.aimSilent     = &AimSilent;
+        ab.hardwareBT    = &HardwareBT;
+        ab.bodyKill      = &g_Cfg.bodyKill;
+        ab.brutalBT      = &g_Cfg.brutalBT;
+        ab.dragHeadshot  = &g_Cfg.dragHeadshot;
+        ab.aimbot        = &g_Cfg.Aimbot;
+        ab.aimFov        = &g_Cfg.aimFovUI;
+        ab.bodyKillHP    = &g_Cfg.bodyKillHP;
+        ab.chestRateSave = &g_Cfg.chestRateSave;
+
+        ab.ghostHack     = &GhostHack;
+        ab.noRecoil      = &NoRecoil;
+        ab.noReload      = &NoReload;
+        ab.floatGhost    = &g_ExploitFloatGhost;
+        ab.normalWrite   = &g_DirNormalWrite;
+        ab.soundMuted    = &g_Cfg.soundMuted;
+
+        AetherUI::Draw(scrW, scrH, 1.0f);
+
+        // Push straight back into the globals the features read, the
+        // same assignments the old tabs made (SourceMenu.h:771-772,
+        // main.cpp:2076) -- otherwise a flag flipped here would sit in
+        // g_Cfg and change nothing on screen.
+        g_Cfg.aimSilent  = AimSilent;
+        g_Cfg.hardwareBT = HardwareBT;
+        showBox          = g_Cfg.showBox;
+        showSkeleton     = g_Cfg.showSkeleton;
+        showName         = g_Cfg.showName;
+        showHealth       = g_Cfg.showHealth;
+        showDistance     = g_Cfg.showDistance;
+        showLine         = g_Cfg.showLine;
+        Aimbot           = g_Cfg.Aimbot;
+        textSize         = g_Cfg.textSz;
+        return;
     }
 
     // ── NEW SHELL ────────────────────────────────────────────
