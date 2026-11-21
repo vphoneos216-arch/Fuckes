@@ -483,6 +483,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/src/Paradise
 # =====================================================================
 LOCAL_SRC_FILES := \
     src/main.cpp \
+    src/AetherUI.cpp \
     src/wanbai_statics.cpp \
     src/UI/bar.cpp \
     src/Scarecrow/oxorany.cpp \
