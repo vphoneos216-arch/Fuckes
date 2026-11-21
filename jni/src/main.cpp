@@ -838,7 +838,16 @@ struct SavedSettings {
     bool  aimCollider=false; // Aimbot Collider — OG aim lock
     bool  dragHeadshot=false; // [NEW] Drag Headshot — own silent redirect to Neck bone, only while actively dragging. Independent of aimCollider/aimSilent/Aimbot above.
     float dragHeadshotRadius=12.f; // [NEW] trigger radius, % of half-screen-height
-    bool  showFovCircle=false; float aimFovUI=10.f; int chestRateSave=1;
+    // [FIX] Was 10.f. fovRadius = (AimFov/180)*(screenH/2), so 10 gives a
+    // ~30px selection circle on a 1080p screen -- an enemy bone has to
+    // project within 30 px of screen centre to ever be picked. The AimFov
+    // global itself defaults to 150 (hook.h), and the two disagreeing was
+    // harmless only while nothing pushed this field into it every frame.
+    // The menu's per-frame sync does exactly that, so AimFov was being
+    // pinned to 10 and bestE_SA was almost never set -- which starves
+    // g_CurrentBestTarget, and with it Hardware BT, Aim Silent, Aimbot,
+    // Body Kill and Drag Headshot alike. 150 matches the working global.
+    bool  showFovCircle=false; float aimFovUI=150.f; int chestRateSave=1;
     bool  showAimLine=false; int selectedBone=0;
     float AimFovGlobal=150.f; int textSz=15; bool is3600=false;
     // Body Kill — deal fixed HP damage on aim-silent hit
@@ -2809,8 +2818,14 @@ static void ix_pull_remote_controls() {
     HardwareBT          = c.aim_hwbt;
     if (c.aim_mode >= 1 && c.aim_mode <= 3) g_Cfg.chestRateSave = c.aim_mode;
     g_Cfg.showFovCircle = c.aim_fovcircle;
-    g_Cfg.chestRateSave = 1;
-    g_Cfg.aimFovUI      = c.aim_fov;
+    // [FIX] An unconditional "g_Cfg.chestRateSave = 1;" sat here, one line
+    // after the conditional assignment above, so the remote config forced
+    // the BT hit mode back to Head every time it ran and the line above it
+    // was dead code. That is Body and Legit silently disabled.
+    // [FIX] aim_fov was copied in raw. A 0 or missing field maps to a
+    // zero-radius FOV, which selects no target at all and switches off
+    // every aim feature at once. Only a usable value is taken.
+    if (c.aim_fov >= 1.f && c.aim_fov <= 180.f) g_Cfg.aimFovUI = c.aim_fov;
 
     // [REMOVED] Pull / Float-Pull — force false regardless of remote-control
     // state (c.exp_pull / c.exp_floatpull) so the WebUI/daemon control path

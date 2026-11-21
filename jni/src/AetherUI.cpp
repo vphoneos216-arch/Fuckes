@@ -737,15 +737,29 @@ void PageTheme(ImDrawList* dl) {
   Segmented(dl, H("skin"), X + 18.f, ly0 + 46.f, 320.f, 26.f, &skinIdx, skins, 2);
   g.darkSkin = (skinIdx == 1);
 
+  // 40%..130%. The old 70% floor could not make the panel meaningfully
+  // smaller, which is the direction this is actually wanted in.
   Txt(X + 18.f, ly0 + 92.f, 5.4f, p.textDim, "Menu Size", 0);
   char mb[16];
   snprintf(mb, sizeof(mb), "%d%%", (int)(g.menuScale * 100.f + 0.5f));
   Txt(X + 338.f, ly0 + 92.f, 5.0f, p.text, mb, 2);
-  float ms = (g.menuScale - 0.7f) / 0.6f;
+  float ms = (g.menuScale - 0.40f) / 0.90f;
   if (ms < 0.f) ms = 0.f;
   if (ms > 1.f) ms = 1.f;
   Slider(dl, H("msize"), X + 18.f, ly0 + 108.f, 320.f, &ms, 0.f, 1.f);
-  g.menuScale = 0.7f + ms * 0.6f;
+  g.menuScale = 0.40f + ms * 0.90f;
+
+  // Four taps for the common sizes, since dragging a slider to an exact
+  // value on a phone is fiddly.
+  static const struct { const char* l; float v; } kSz[4] = {
+      {"40%", 0.40f}, {"60%", 0.60f}, {"80%", 0.80f}, {"100%", 1.00f}};
+  for (int i = 0; i < 4; ++i) {
+    const float bx = X + 18.f + 78.f * (float)i;
+    const bool on = (g.menuScale > kSz[i].v - 0.005f) &&
+                    (g.menuScale < kSz[i].v + 0.005f);
+    if (Button(dl, H(kSz[i].l), bx, ly0 + 128.f, 70.f, 26.f, kSz[i].l, on))
+      g.menuScale = kSz[i].v;
+  }
 
   TxtWrap(X + 380.f, ly0 + 46.f, 560.f, 4.7f, p.textDim,
           "The panel is drawn front-on. The tilted perspective view and the "
@@ -791,7 +805,9 @@ void PageVisual(ImDrawList* dl) {
     // Aim FOV lives here, next to the circle that draws it, instead of
     // on the Aim page. Same flag the old menu's FOV Range slider wrote,
     // same 1..360 range.
-    y += BindSliderF(dl, "v.fov", c2 + 18.f, y, w, b.aimFov, 1.f, 360.f,
+    // 1..180: fovRadius = (AimFov/180)*(screenH/2), so 180 already is
+    // half the screen and the 360 this used to allow was off the scale.
+    y += BindSliderF(dl, "v.fov", c2 + 18.f, y, w, b.aimFov, 1.f, 180.f,
                      "Aim FOV", "%.0f");
     y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50,
                      "Text Size", "");
@@ -1102,7 +1118,11 @@ void Draw(float screenW, float screenH, float uiScale) {
   const float fitW = screenW * 0.94f / PW;
   const float fitH = screenH * 0.74f / PH;
   float base = fitW < fitH ? fitW : fitH;
-  base *= 0.94f + 0.06f * g.menuScale;
+  // [FIX] Was 0.94 + 0.06*menuScale. Across the slider's whole travel
+  // that is a 1.8% change -- the Menu Size control was visually a no-op.
+  // The scale is applied directly now, so the range below is the range
+  // you actually get.
+  base *= g.menuScale;
   base *= (0.88f + 0.12f * gOpenT);
   gS = base;
   gCx = screenW * 0.5f;
