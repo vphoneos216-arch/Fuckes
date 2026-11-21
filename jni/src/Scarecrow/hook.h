@@ -2276,24 +2276,36 @@ namespace AimHookState {
     namespace DirExec {
         static std::mutex  g_mtx;
         static DirSite     g_sites[PARADISE_BP_MAX_POINTS];
-        static int         g_nsites = 0;
-        static uintptr_t   g_base   = 0;
-        static bool        g_armed  = false;
+        static int         g_nsites    = 0;
+        static int         g_committed = 0;      // how many are in the driver
+        static bool        g_armed     = false;
 
-        // Drops everything learned for a previous address.
-        static void ResetLocked(paradise_driver* pd, uintptr_t new_base) {
+        // A store site is a property of the GAME CODE, not of whichever
+        // entity we are aiming at right now. The target's Vector3 address
+        // changes every frame (different bot, different entity slot) but
+        // the instruction that writes it does not. So this set is NEVER
+        // dropped on an address change. Doing that tore the whole PTE
+        // table down every single frame, and a point that is re-armed
+        // every frame holds no record for ptebp_set_record() to land in,
+        // which is exactly why the override had no effect at all. Only an
+        // explicit disarm clears it.
+        static void ResetLocked(paradise_driver* pd) {
             if(g_armed && pd){
                 pd->ptebp_clear_records(-1);
                 pd->ptebp_remove();
             }
-            g_nsites = 0;
-            g_base   = new_base;
-            g_armed  = false;
+            g_nsites    = 0;
+            g_committed = 0;
+            g_armed     = false;
         }
 
         // Submits every known site as an EXECUTE point.
+        // ptebp_set() replaces the whole table, so every call throws away
+        // the records already captured on the points that were fine.
+        // Only call it when the site set has actually grown.
         static bool CommitLocked(paradise_driver* pd) {
             if(g_nsites <= 0) return false;
+            if(g_armed && g_committed == g_nsites) return true;
             paradise_bp_point_config pts[PARADISE_BP_MAX_POINTS]{};
             for(int i = 0; i < g_nsites; i++){
                 pts[i].address = (uint64_t)g_sites[i].pc;
@@ -2302,6 +2314,7 @@ namespace AimHookState {
                 pts[i].scope   = PARADISE_BP_ALL_THREADS;
             }
             g_armed = pd->ptebp_set(pts, (size_t)g_nsites);
+            g_committed = g_armed ? g_nsites : 0;
             return g_armed;
         }
 
@@ -2313,11 +2326,13 @@ namespace AimHookState {
             for(int i = 0; i < g_nsites; i++){
                 const DirSite& st = g_sites[i];
 
-                // Start from whatever this point last captured so bytes
-                // we do not own keep the game's values. If it has not
-                // been hit yet there is nothing to preserve and a zeroed
-                // record is fine — the lanes set below are the only ones
-                // masked for write.
+                // The 2-bit mask is per register: only the registers set
+                // to OP_WRITE below are applied by the driver, every other
+                // field of this record is ignored. A previous capture is
+                // read only to keep the lanes of a wide register that we
+                // do not own; its absence is not a reason to skip the
+                // push, because the very first execution is the one we
+                // need to steer.
                 paradise_bp_record rec{};
                 paradise_bp_record cap[1]{};
                 uint32_t count = 0;
@@ -2356,7 +2371,7 @@ namespace AimHookState {
 
         static void DisarmAll(paradise_driver* pd) {
             std::lock_guard<std::mutex> lk(g_mtx);
-            ResetLocked(pd, 0);
+            ResetLocked(pd);
         }
     } // namespace DirExec
 
@@ -2429,9 +2444,6 @@ namespace AimHookState {
                 count = (uint32_t)(sizeof(recs)/sizeof(recs[0]));
 
             std::lock_guard<std::mutex> lk(DirExec::g_mtx);
-            if(DirExec::g_base != base)
-                DirExec::ResetLocked(pd, base);
-
             bool added = false;
             for(uint32_t i = 0; i < count; i++){
                 DirSite st{};
@@ -2450,7 +2462,8 @@ namespace AimHookState {
                        DirExec::g_nsites - 1, (void*)st.pc, st.nlanes);
                 fflush(stdout);
             }
-            if(added) DirExec::CommitLocked(pd);
+            (void)added;
+            DirExec::CommitLocked(pd);   // self-skips when nothing changed
         }
 
         std::lock_guard<std::mutex> lk(DirExec::g_mtx);
