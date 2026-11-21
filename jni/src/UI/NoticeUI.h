@@ -44,6 +44,14 @@
 #define NUI_STATUS        IM_COL32(255, 255, 255, 235)
 #define NUI_CHANNEL       IM_COL32(236, 200,  60, 255)
 #define NUI_HANDLE        IM_COL32(255, 255, 255, 225)
+#define NUI_QT_BG         IM_COL32( 28,  30,  36, 199)  // quick-toggle card
+#define NUI_QT_EDGE       IM_COL32(255, 255, 255,  26)
+#define NUI_QT_CAPTION    IM_COL32(255, 255, 255, 115)
+#define NUI_QT_ON         IM_COL32(255, 255, 255, 255)
+#define NUI_QT_OFF        IM_COL32(255, 255, 255, 140)
+#define NUI_SW_ON         IM_COL32( 56, 132, 246, 255)
+#define NUI_SW_OFF        IM_COL32(255, 255, 255,  46)
+#define NUI_SW_KNOB       IM_COL32(255, 255, 255, 255)
 
 struct NuiMetrics {
     float s;        // uniform design -> screen scale
@@ -114,7 +122,7 @@ static const NuiNavItem kNuiNav[6] = {
 static inline int NuiDrawNavBar(ImDrawList* dl, const NuiMetrics& m,
                                 int page) {
     const float barW = 800.f, barH = 70.f;
-    const float barX = (NUI_DW - barW) * 0.5f, barY = 960.f;
+    const float barX = (NUI_DW - barW) * 0.5f, barY = 948.f;
     const ImVec2 a = NuiP(m, barX, barY);
     const ImVec2 b = NuiP(m, barX + barW, barY + barH);
     const float r  = NuiS(m, barH * 0.5f);
@@ -204,44 +212,91 @@ static inline bool NuiDrawPushButton(ImDrawList* dl, const NuiMetrics& m) {
 // Bottom-left status block.
 static inline void NuiDrawStatus(ImDrawList* dl, const NuiMetrics& m,
                                  const char* status, const char* channel) {
-    dl->AddLine(NuiP(m, 148.f, 938.f), NuiP(m, NUI_DW - 145.f, 938.f),
+    dl->AddLine(NuiP(m, 148.f, 912.f), NuiP(m, NUI_DW - 145.f, 912.f),
                 IM_COL32(255, 255, 255, 60), NuiS(m, 2.f));
-    NuiTextL(dl, m, 148.f, 958.f, 30.f, NUI_STATUS,  status);
-    NuiTextL(dl, m,  75.f, 1022.f, 26.f, NUI_CHANNEL, channel);
+    NuiTextL(dl, m, 148.f, 930.f, 30.f, NUI_STATUS,  status);
+    NuiTextL(dl, m,  75.f, 994.f, 26.f, NUI_CHANNEL, channel);
 }
 
 // Android gesture handle.
 static inline void NuiDrawHandle(ImDrawList* dl, const NuiMetrics& m) {
-    dl->AddRectFilled(NuiP(m, 900.f, 1052.f), NuiP(m, 1500.f, 1060.f),
+    dl->AddRectFilled(NuiP(m, 900.f, 1046.f), NuiP(m, 1500.f, 1055.f),
                       NUI_HANDLE, NuiS(m, 4.f));
 }
 
 // The "致用户" card itself — page 0's content.
 static inline void NuiDrawNoticeCard(ImDrawList* dl, const NuiMetrics& m) {
-    const float x0 = 675.f, x1 = 1715.f, y0 = 165.f, y1 = 915.f;
+    const float x0 = 675.f, x1 = 1715.f, y0 = 150.f, y1 = 710.f;
     const float cx = (x0 + x1) * 0.5f;
     NuiFrostedPanel(dl, NuiP(m, x0, y0), NuiP(m, x1, y1), NuiS(m, 28.f));
 
-    NuiTextC(dl, m, cx, 222.f, 38.f, NUI_TITLE,    "致 用 户");
-    NuiTextC(dl, m, cx, 286.f, 32.f, NUI_SUBTITLE, "To the user");
+    NuiTextC(dl, m, cx, 222.f, 40.f, NUI_TITLE,    "致 用 户");
+    NuiTextC(dl, m, cx, 274.f, 30.f, NUI_SUBTITLE, "To the user");
 
-    dl->AddLine(NuiP(m, x0 + 70.f, 356.f), NuiP(m, x1 - 70.f, 356.f),
+    dl->AddLine(NuiP(m, x0 + 70.f, 310.f), NuiP(m, x1 - 70.f, 310.f),
                 NUI_DIVIDER, NuiS(m, 1.5f));
 
-    NuiTextC(dl, m, cx, 412.f, 28.f, NUI_QUOTE, "人之所以走入迷途，");
-    NuiTextC(dl, m, cx, 458.f, 28.f, NUI_QUOTE, "并不是由于他的无知，");
-    NuiTextC(dl, m, cx, 504.f, 28.f, NUI_QUOTE, "而是由于他自以为知。");
-    NuiTextC(dl, m, cx, 572.f, 26.f, NUI_QUOTE, "—— 卢梭《爱弥儿》");
+    NuiTextC(dl, m, cx, 372.f, 27.f, NUI_QUOTE, "人之所以走入迷途，");
+    NuiTextC(dl, m, cx, 412.f, 27.f, NUI_QUOTE, "并不是由于他的无知，");
+    NuiTextC(dl, m, cx, 452.f, 27.f, NUI_QUOTE, "而是由于他自以为知。");
+    NuiTextC(dl, m, cx, 508.f, 25.f, NUI_QUOTE, "—— 卢梭《爱弥儿》");
 
-    dl->AddLine(NuiP(m, x0 + 70.f, 648.f), NuiP(m, x1 - 70.f, 648.f),
+    dl->AddLine(NuiP(m, x0 + 70.f, 548.f), NuiP(m, x1 - 70.f, 548.f),
                 NUI_DIVIDER, NuiS(m, 1.5f));
 
-    NuiTextC(dl, m, cx, 706.f, 24.f, NUI_WARN_1,
+    NuiTextC(dl, m, cx, 600.f, 23.f, NUI_WARN_1,
              "本产品为个人技术探索，无任何盈利目的");
-    NuiTextC(dl, m, cx, 750.f, 24.f, NUI_WARN_2,
+    NuiTextC(dl, m, cx, 638.f, 23.f, NUI_WARN_2,
              "切勿用于任何违反游戏规则的行为");
-    NuiTextC(dl, m, cx, 794.f, 24.f, NUI_WARN_3,
+    NuiTextC(dl, m, cx, 676.f, 23.f, NUI_WARN_3,
              "技术无罪，使用者的选择决定一切");
+}
+
+// ── Quick toggles ────────────────────────────────────────────────────
+// A pill switch, drawn rather than themed, because ImGui::Checkbox
+// cannot be made to look like this. The whole row is one card under the
+// notice card, so the home page is useful and not just a disclaimer.
+struct NuiToggle { const char* label; bool* value; };
+
+static inline void NuiSwitch(ImDrawList* dl, const NuiMetrics& m,
+                             float cx, float y, bool on, const char* id,
+                             bool* value) {
+    const float w = 64.f, h = 32.f;
+    const float sx = cx - w * 0.5f;
+    const ImVec2 a = NuiP(m, sx, y), b = NuiP(m, sx + w, y + h);
+    dl->AddRectFilled(a, b, on ? NUI_SW_ON : NUI_SW_OFF, NuiS(m, h * 0.5f));
+
+    const float kx = on ? (sx + w - h * 0.5f) : (sx + h * 0.5f);
+    dl->AddCircleFilled(NuiP(m, kx, y + h * 0.5f), NuiS(m, h * 0.5f - 4.f),
+                        NUI_SW_KNOB, 32);
+
+    ImGui::SetCursorScreenPos(a);
+    if (ImGui::InvisibleButton(id, ImVec2(NuiS(m, w), NuiS(m, h))) && value)
+        *value = !*value;
+}
+
+static inline void NuiDrawQuickToggles(ImDrawList* dl, const NuiMetrics& m,
+                                       NuiToggle* items, int count) {
+    if (!items || count <= 0) return;
+    const float x0 = 675.f, w = 1040.f, y0 = 732.f, h = 150.f;
+    NuiFrostedPanel(dl, NuiP(m, x0, y0), NuiP(m, x0 + w, y0 + h), NuiS(m, 24.f));
+    dl->AddRectFilled(NuiP(m, x0, y0), NuiP(m, x0 + w, y0 + h),
+                      NUI_QT_BG, NuiS(m, 24.f));
+    dl->AddRect(NuiP(m, x0 + 1, y0 + 1), NuiP(m, x0 + w - 1, y0 + h - 1),
+                NUI_QT_EDGE, NuiS(m, 24.f), 0, 1.5f);
+
+    NuiTextL(dl, m, x0 + 30.f, y0 + 22.f, 20.f, NUI_QT_CAPTION, "QUICK TOGGLES");
+
+    const float colW = w / (float)count;
+    for (int i = 0; i < count; ++i) {
+        const float cx = x0 + colW * ((float)i + 0.5f);
+        const bool on = items[i].value && *items[i].value;
+        NuiTextC(dl, m, cx, y0 + 72.f, 22.f,
+                 on ? NUI_QT_ON : NUI_QT_OFF, items[i].label);
+        char id[48];
+        snprintf(id, sizeof(id), "##nui_sw_%d", i);
+        NuiSwitch(dl, m, cx, y0 + 110.f, on, id, items[i].value);
+    }
 }
 
 // ── Entry point ──────────────────────────────────────────────────────
@@ -250,14 +305,19 @@ static inline void NuiDrawNoticeCard(ImDrawList* dl, const NuiMetrics& m) {
 // button was tapped this frame.
 static inline bool NuiRenderShell(float scrW, float scrH, int& page,
                                   int players, int bots,
-                                  const char* status, const char* channel) {
+                                  const char* status, const char* channel,
+                                  NuiToggle* quick = nullptr,
+                                  int quickCount = 0) {
     if (scrW < 1.f || scrH < 1.f) return false;
     const NuiMetrics m = NuiComputeMetrics(scrW, scrH);
     ImDrawList* dl = ImGui::GetForegroundDrawList();
 
     NuiDrawCounterPill(dl, m, players, bots);
     const bool push = NuiDrawPushButton(dl, m);
-    if (page == 0) NuiDrawNoticeCard(dl, m);
+    if (page == 0) {
+        NuiDrawNoticeCard(dl, m);
+        NuiDrawQuickToggles(dl, m, quick, quickCount);
+    }
     NuiDrawStatus(dl, m, status, channel);
 
     const int hit = NuiDrawNavBar(dl, m, page);

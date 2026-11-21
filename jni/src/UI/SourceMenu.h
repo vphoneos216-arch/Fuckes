@@ -290,11 +290,28 @@ inline void RenderSingleMenuWindow() {
         // player/bot count global outside Backup/, and inventing one
         // would put a made-up number on screen.
         const int nuiPlayers = 0, nuiBots = 0;
+        // Quick toggles on the home card. Existing feature flags only --
+        // nothing new was invented, only a nicer control for them.
+        NuiToggle nuiQuick[5] = {
+            { "Aim Silent",   &AimSilent             },
+            { "Hardware BT",  &HardwareBT            },
+            { "Normal Write", &g_DirNormalWrite      },
+            { "Box ESP",      &g_Cfg.showBox         },
+            { "Skeleton",     &g_Cfg.showSkeleton    },
+        };
         if (NuiRenderShell(scrW, scrH, nuiPage, nuiPlayers, nuiBots,
                            "Checking for updates...",
-                           "秋山公益追锁  @xsIboynb")) {
+                           "秋山公益追锁  @xsIboynb",
+                           nuiQuick, 5)) {
             // push button tapped — no action bound yet
         }
+        // Mirror to the globals the features actually read, exactly as the
+        // ESP/Aim tabs already do (SourceMenu.h:771-772). Without this a
+        // toggle flipped from the home card would set g_Cfg and nothing
+        // on screen would change until the ESP tab was opened.
+        g_Cfg.aimSilent = AimSilent;
+        showBox         = g_Cfg.showBox;
+        showSkeleton    = g_Cfg.showSkeleton;
         // Page 5 (gear) has no body of its own; it shares Config.
         现在页面 = (nuiPage > 4) ? 4 : nuiPage;
     }
