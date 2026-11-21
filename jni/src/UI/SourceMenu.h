@@ -150,6 +150,8 @@ static inline void SM_DrawInxMark(ImDrawList* dl, ImVec2 center, float size, flo
 
 // ── State — source 菜单.cpp ─────────────────────────────────
 static int   现在页面     = 0;
+
+#include "UI/NoticeUI.h"   // 致用户 card + floating nav bar (screenshot rebuild)
 static bool  已初始化随机 = false;
 
 enum 动画阶段 {
@@ -272,6 +274,29 @@ inline void RenderSingleMenuWindow() {
     if (scrW < 1.0f || scrH < 1.0f) {            // last-resort fallback
         scrW = io.DisplaySize.x;
         scrH = io.DisplaySize.y;
+    }
+
+    // ── NEW SHELL ────────────────────────────────────────────
+    // The 致用户 card, counter pill, push button, status block and the
+    // floating nav bar, rebuilt from the reference screenshot. It owns
+    // the nav; the old text tab bar below still works and stays in sync
+    // through 现在页面, so nothing that already worked was removed.
+    {
+        int nuiPage = 现在页面;
+        if (nuiPage < 0) nuiPage = 0;
+        if (nuiPage > 5) nuiPage = 5;
+        // Counts are shown as the screenshot shows them. They are not
+        // wired to a live source yet: this build has no confirmed
+        // player/bot count global outside Backup/, and inventing one
+        // would put a made-up number on screen.
+        const int nuiPlayers = 0, nuiBots = 0;
+        if (NuiRenderShell(scrW, scrH, nuiPage, nuiPlayers, nuiBots,
+                           "Checking for updates...",
+                           "秋山公益追锁  @xsIboynb")) {
+            // push button tapped — no action bound yet
+        }
+        // Page 5 (gear) has no body of its own; it shares Config.
+        现在页面 = (nuiPage > 4) ? 4 : nuiPage;
     }
 
     // ── UNIFORM FIT ──────────────────────────────────────────

@@ -30,6 +30,9 @@
 #include "ImGui/backends/imgui_impl_android.h"
 #include "Android_touch/TouchHelperA.h"
 
+struct ImFont;
+extern ImFont* g_FontNavIcons;   // 34px FontAwesome bake for the bottom nav bar
+
 #if defined(USE_OPENGL)
     #include "ImGui/backends/imgui_impl_opengl3.h"
     //#include "OpenglUtils.h"

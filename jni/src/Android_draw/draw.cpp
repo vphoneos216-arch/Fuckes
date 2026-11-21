@@ -3,6 +3,10 @@
 // Source project fonts (方正粗等线 + icomoon icons)
 #include "UI/fonts/YuluFont.h"
 #include "UI/fonts/YuluFontIcons.h"
+#include "UI/fonts/FaFont.h"   // FontAwesome TTF bytes (font_awesome_data/_size)
+
+// Larger FontAwesome bake used by the bottom nav bar. Null until drawInit().
+ImFont* g_FontNavIcons = nullptr;
 
 EGLDisplay display = EGL_NO_DISPLAY;
 EGLConfig config;
@@ -235,6 +239,27 @@ bool ImGui_init() {
     io.Fonts->AddFontFromMemoryTTF(
         (void *)雨落图标_data, (int)雨落图标_size, 21.0f,
         &cfg_icon, icon_ranges);
+
+    // Merge FontAwesome into the main font so ICON_FA_* glyphs can be used
+    // inline with text at the normal 21px size.
+    static const ImWchar fa_ranges[] = { 0xF000, 0xF8FF, 0 };
+    ImFontConfig cfg_fa;
+    cfg_fa.MergeMode = true;
+    cfg_fa.FontDataOwnedByAtlas = false;
+    cfg_fa.GlyphMinAdvanceX = 21.0f;
+    io.Fonts->AddFontFromMemoryTTF(
+        (void *)font_awesome_data, (int)font_awesome_size, 21.0f,
+        &cfg_fa, fa_ranges);
+
+    // Second, larger bake of FontAwesome on its own, for the bottom nav
+    // bar's circular icons. A single 21px bake scaled up to ~34px is
+    // visibly soft, which is exactly what the nav bar would show.
+    ImFontConfig cfg_fa_big;
+    cfg_fa_big.FontDataOwnedByAtlas = false;
+    cfg_fa_big.GlyphMinAdvanceX = 34.0f;
+    g_FontNavIcons = io.Fonts->AddFontFromMemoryTTF(
+        (void *)font_awesome_data, (int)font_awesome_size, 34.0f,
+        &cfg_fa_big, fa_ranges);
 
     io.Fonts->Build();
     ::g_Initialized = true;
