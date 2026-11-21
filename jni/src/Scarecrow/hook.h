@@ -2271,6 +2271,7 @@ namespace AimHookState {
         DirLane   lanes[8];
         uint8_t   nlanes;
         uint8_t   xfer;
+        uint8_t   owner;   // which feature learned it (its slot_xy)
     };
 
     namespace DirExec {
@@ -2319,12 +2320,17 @@ namespace AimHookState {
         }
 
         // Pushes the current direction into every armed site.
-        static void PushLocked(paradise_driver* pd, const Vector3& dir) {
+        static void PushLocked(paradise_driver* pd, int owner,
+                               const Vector3& dir) {
             if(!g_armed) return;
             const float comp[3] = { dir.X, dir.Y, dir.Z };
 
             for(int i = 0; i < g_nsites; i++){
                 const DirSite& st = g_sites[i];
+                // Only steer the sites this feature owns. The other
+                // feature's sites keep whatever it last pushed, so the
+                // two never fight over one record.
+                if(st.owner != (uint8_t)owner) continue;
 
                 // The 2-bit mask is per register: only the registers set
                 // to OP_WRITE below are applied by the driver, every other
@@ -2369,9 +2375,35 @@ namespace AimHookState {
             }
         }
 
-        static void DisarmAll(paradise_driver* pd) {
+        // Aim Silent and Hardware BT share this one table, so a blanket
+        // teardown here was the second thing killing the override: BT's
+        // disarm (and Silent's own disarm between target acquisitions)
+        // wiped the OTHER feature's execute points too, and the log went
+        // straight back to relearning site #0. Drop only the sites this
+        // feature owns and re-submit the survivors, so the other feature
+        // keeps running untouched.
+        static void DisarmOwner(paradise_driver* pd, int owner) {
             std::lock_guard<std::mutex> lk(g_mtx);
-            ResetLocked(pd);
+            if(!pd) return;
+
+            int w = 0;
+            for(int i = 0; i < g_nsites; i++)
+                if(g_sites[i].owner != (uint8_t)owner)
+                    g_sites[w++] = g_sites[i];
+
+            if(w == g_nsites) return;            // nothing of ours in there
+            g_nsites = w;
+
+            if(g_nsites == 0){
+                ResetLocked(pd);                 // last owner left -- full stop
+                return;
+            }
+
+            // Indices shift under compaction, so the table and every
+            // record slot have to be rebuilt from the surviving order.
+            pd->ptebp_clear_records(-1);
+            g_committed = 0;
+            CommitLocked(pd);
         }
     } // namespace DirExec
 
@@ -2431,7 +2463,7 @@ namespace AimHookState {
     // Reads the discovery watchpoint's records, learns any new store
     // site from them, and keeps the execute points armed and loaded
     // with the current direction.
-    static bool PushDirOverride(paradise_driver* pd, int slot,
+    static bool PushDirOverride(paradise_driver* pd, int slot, int owner,
                                  uintptr_t base, const Vector3& dir) {
         const int pos = ParadisePoints::GetPosition(slot);
         if(pos < 0) return false;    // raced with a Disarm — skip this frame
@@ -2448,6 +2480,7 @@ namespace AimHookState {
             for(uint32_t i = 0; i < count; i++){
                 DirSite st{};
                 if(!BuildDirSite(recs[i], base, st)) continue;
+                st.owner = (uint8_t)owner;
 
                 bool known = false;
                 for(int s = 0; s < DirExec::g_nsites; s++)
@@ -2468,7 +2501,7 @@ namespace AimHookState {
 
         std::lock_guard<std::mutex> lk(DirExec::g_mtx);
         if(!DirExec::g_armed) return false;
-        DirExec::PushLocked(pd, dir);
+        DirExec::PushLocked(pd, owner, dir);
         return true;
     }
 
@@ -2494,8 +2527,8 @@ namespace AimHookState {
                                              PARADISE_HWBP_WRITE, 4);
         if(!xy && !z) return false;
 
-        if(xy) PushDirOverride(pd, slot_xy, base, dir);
-        if(z)  PushDirOverride(pd, slot_z,  base, dir);
+        if(xy) PushDirOverride(pd, slot_xy, slot_xy, base, dir);
+        if(z)  PushDirOverride(pd, slot_z,  slot_xy, base, dir);
         return true;
     }
 
@@ -2503,7 +2536,7 @@ namespace AimHookState {
         if(!pd) return;
         ParadisePoints::Disarm(pd, slot_xy);
         ParadisePoints::Disarm(pd, slot_xy + 1);
-        DirExec::DisarmAll(pd);   // and the execute points doing the work
+        DirExec::DisarmOwner(pd, slot_xy);   // only OUR execute points
     }
 
     // ── TwT HWBP helpers ───────────────────────────────────────────────
