@@ -265,12 +265,16 @@ bool  AimLock      = false;
 bool  AimLockNew   = false;
 bool  Aimbot       = false;
 bool  AimSilent    = false;
-/* [CHANGED] default true. This is the menu's "Aim Point": it arms only
- * once the target's neck is inside its radius of the crosshair, so on by
- * default means it engages when you drag onto someone and does nothing
- * otherwise. Own feature -- not AimLock/AimSilent/Aimbot. See
+/* The menu's "Aim Point": arms only once the target's neck is inside its
+ * radius of the crosshair, which is why it engages while you drag.
+ *
+ * [CHANGED] back to false. It is gated behind the Inject button now --
+ * the menu forces it true once the asset patch has actually been written
+ * and then greys the toggle so it cannot be switched off again. Starting
+ * true would have it on before the patch that backs it exists.
+ * Own feature -- not AimLock/AimSilent/Aimbot. See
  * UpdateDragHeadshotThread(). */
-bool  DragHeadshot = true;
+bool  DragHeadshot = false;
 /* [NEW] Set by anything that wipes the Paradise breakpoint set behind the
  * aim threads' backs (the diagnostic probe in ix_pd_probe.h does exactly
  * that, since hwbp_set replaces the whole point set and hwbp_remove clears
@@ -3921,7 +3925,9 @@ void DrawAll(float sw, float sh, uintptr_t lib){
                 p[b]  = ImVec2(s.X, s.Y);
             }
             constexpr float tk = 2.4f;
-            const ImU32 SK = IM_COL32(0,255,80,255);
+            // [CHANGED] was IM_COL32(0,255,80,255) (green). Skeleton is
+            // red now; the name below it took the green.
+            const ImU32 SK = IM_COL32(255,40,40,255);
             auto Ln=[&](int a,int b){
                 if(ok[a] && ok[b]) dl->AddLine(p[a], p[b], SK, tk);
             };
@@ -4010,10 +4016,12 @@ void DrawAll(float sw, float sh, uintptr_t lib){
             labelY -= (ts.y + 2.f);
             float tx = bx + bw/2.f - ts.x/2.f;
 
-            // Bots: orange. Real players: white.
+            // [CHANGED] real players were white, now green. Bots keep
+            // orange: that is the bot/real tell, and losing it would
+            // make every name look the same.
             ImU32 nc = e.isBot
                 ? IM_COL32(255,165,  0,255)   // bot — orange
-                : IM_COL32(255,255,255,255);  // real player — white
+                : IM_COL32( 40,230, 90,255);  // real player — green
 
             // Black outline
             for(float ox=-1.f; ox<=1.f; ox+=1.f)

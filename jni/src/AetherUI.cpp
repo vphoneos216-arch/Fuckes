@@ -17,14 +17,10 @@ constexpr float TSZ = 1.92f;  // text scale: logical units -> pixels
 State g;
 Bindings gBind;
 
-// ── Info card text. Change these four lines and nothing else. ────────
-// Not read from anywhere at runtime: there is no seller field in this
-// build's config, so these are the strings the Settings > Info card
-// prints as-is.
-const char* kInfoProduct = "TESLA";
-const char* kInfoSeller  = "InvisibleX";
-const char* kInfoChannel = "t.me/RitmadaPrompt";
-const char* kInfoVersion = "TESLA UI 1.1";
+// [REMOVED] the four kInfo* constants. The Info card reads Seller,
+// Expiry, Valid For and Key from g_Srv now, so hardcoded product and
+// channel strings had nothing left to do and only risked sitting on the
+// card looking like live data.
 
 // ---------------------------------------------------------------- Projection
 float gS = 1.f;
@@ -773,50 +769,38 @@ void PageTheme(ImDrawList* dl) {
           "drag pad that span it were removed.");
 }
 
+// Dims a section and puts a banner over it. gLockInput is what actually
+// stops the presses -- it is checked inside Click/Held, so a locked
+// control cannot be pressed even if its widget never asks about locks.
+void LockBanner(ImDrawList* dl, float x0, float y0, float x1, float y1,
+                const char* title, const char* sub) {
+  const Pal p = P();
+  const float bw = 300.f;
+  const float bx0 = (x0 + x1) * 0.5f - bw * 0.5f;
+  const float bx1 = bx0 + bw;
+  const float by0 = (y0 + y1) * 0.5f - 24.f;
+  DropShadow(dl, bx0, by0, bx1, by0 + 48.f, 10.f, 4.f, 0.20f);
+  FillRR(dl, bx0, by0, bx1, by0 + 48.f, 10.f, Col(228, 76, 76, 0.92f));
+  Txt((bx0 + bx1) * 0.5f, by0 + 11.f, 7.2f, Col(255, 255, 255, 0.98f), title, 1, 1.4f);
+  Txt((bx0 + bx1) * 0.5f, by0 + 30.f, 4.4f, Col(255, 255, 255, 0.86f), sub, 1);
+  (void)p;
+}
+
 // ================================================================ Page: Visual
 void PageVisual(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
   const bool normal = b.normalMode && *b.normalMode;
-  const bool injected = b.injectApplied && *b.injectApplied;
 
   TxtB(X, 36.f, 15.5f, p.text, "Visual", 0);
   Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim,
+      normal ? "Normal Mode. ESP needs a kernel driver."
+             : "Box, skeleton, name, health, distance.", 0);
 
-  float y0 = 100.f;
-
-  // ── Normal Mode: Inject first, then the ESP section greyed out ──
-  // Inject is the first thing on the landing page, as asked. The ESP
-  // controls below it stay visible but dead: a driver is what ESP needs
-  // and Normal Mode did not load one, so showing them live would be a
-  // lie the user only finds out about in a match.
-  if (normal) {
-    Txt(X, 78.f, 5.4f, p.textDim, "Normal Mode. Inject first.", 0);
-
-    CardBg(dl, X, y0, 978.f, y0 + 92.f);
-    CardHead(X + 18.f, y0 + 16.f, "Inject", "ASSET PATCH");
-
-    if (injected) {
-      dl->AddCircleFilled(Pr(X + 24.f, y0 + 62.f), 2.2f * Ds(X + 24.f, y0 + 62.f),
-                          Col(58, 208, 128, 0.95f), 12);
-      Txt(X + 34.f, y0 + 56.f, 5.6f, Col(56, 190, 120, 0.95f), "Injected", 0);
-      TxtWrap(X + 150.f, y0 + 52.f, 790.f, 4.6f, p.textDim,
-              "The real values go back by themselves the moment you reach "
-              "the lobby. Nothing else to press.");
-    } else {
-      if (Button(dl, H("inject"), X + 18.f, y0 + 48.f, 200.f, 32.f, "INJECT", true))
-        g.requestInject = true;
-      TxtWrap(X + 240.f, y0 + 52.f, 700.f, 4.6f, p.textDim,
-              "Writes the asset bundle patch. After that the real values "
-              "are restored automatically on lobby entry.");
-    }
-    y0 += 106.f;
-  } else {
-    Txt(X, 78.f, 5.4f, p.textDim, "Box, skeleton, name, health, distance.", 0);
-  }
-
-  const float y1 = normal ? 430.f : 400.f;
+  const float y0 = 100.f;
+  const float y1 = 400.f;
   const float wCol = 236.f, gap = 14.f;
   const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
 
@@ -878,16 +862,10 @@ void PageVisual(ImDrawList* dl) {
   if (normal) {
     gLockInput = false;
     gAlpha = alphaKeep;
-    // Drawn after the lock is lifted so it sits at full strength on top
-    // of the dimmed section it is talking about.
-    const float bx0 = X + 250.f, bx1 = 978.f - 250.f;
-    const float by0 = (y0 + y1) * 0.5f - 24.f;
-    DropShadow(dl, bx0, by0, bx1, by0 + 48.f, 10.f, 4.f, 0.20f);
-    FillRR(dl, bx0, by0, bx1, by0 + 48.f, 10.f, Col(228, 76, 76, 0.92f));
-    Txt((bx0 + bx1) * 0.5f, by0 + 12.f, 7.4f, Col(255, 255, 255, 0.98f),
-        "DRIVER REQUIRED", 1, 1.4f);
-    Txt((bx0 + bx1) * 0.5f, by0 + 30.f, 4.4f, Col(255, 255, 255, 0.86f),
-        "Restart in Kernel Mode to use ESP", 1);
+    // After the lock is lifted, so it sits at full strength over the
+    // dimmed section it is talking about.
+    LockBanner(dl, X, y0, 978.f, y1, "ESP LOCKED",
+               "Restart in Kernel Mode to use ESP");
   } else {
     Txt(X, 440.f, 4.6f, p.textFaint,
         "Bound to the engine's own flags. An unbound control is not drawn.", 0);
@@ -895,30 +873,61 @@ void PageVisual(ImDrawList* dl) {
 }
 
 // ================================================================ Page: Aim
-// Aim Point only. Aim Silent, Hardware BT and the BT hit mode were taken
-// off this page by request. Their flags are still bound in AetherUI.h and
-// their engine threads are untouched, so putting any of them back is one
-// BindToggle line -- nothing was deleted from the engine.
+// Aim Point only, and it is gated behind Inject: before the asset patch
+// is written the section is locked, after it the toggle is forced on and
+// greyed so it cannot be switched back off.
+//
+// Aim Silent, Hardware BT and the BT hit mode are off this page by
+// request. Their flags are still bound in AetherUI.h and their engine
+// threads are untouched, so any of them is one BindToggle line back.
 void PageAim(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
+  const bool injected = b.injectApplied && *b.injectApplied;
 
   TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
   Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "AIM POINT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Engages on its own while you drag.", 0);
+  Txt(X, 78.f, 5.4f, p.textDim,
+      injected ? "Active. Engages on its own while you drag."
+               : "Inject first to unlock Aim Point.", 0);
 
-  const float y0 = 100.f, wCol = 420.f;
+  const float y0 = 100.f, y1 = 252.f, wCol = 460.f;
 
-  CardBg(dl, X, y0, X + wCol, y0 + 132.f);
+  CardBg(dl, X, y0, X + wCol, y1);
   CardHead(X + 18.f, y0 + 16.f, "Aim Point", "DRAG");
-  {
-    const float w = wCol - 36.f;
-    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, w, b.aimPoint, "Aim Point");
-    if (b.aimPoint) {
-      Txt(X + 18.f, y0 + 100.f, 4.8f, p.textFaint,
-          "When you drag it's activated automatically", 0);
-    }
+
+  if (!injected) {
+    // Locked: the toggle is drawn dimmed and dead, with INJECT as the
+    // only live control in the card.
+    const float keep = gAlpha;
+    gLockInput = true;
+    gAlpha = keep * 0.38f;
+    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimPoint, "Aim Point");
+    gLockInput = false;
+    gAlpha = keep;
+
+    if (Button(dl, H("inject"), X + 18.f, y0 + 104.f, 200.f, 32.f, "INJECT", true))
+      g.requestInject = true;
+    TxtWrap(X + 234.f, y0 + 108.f, wCol - 252.f, 4.5f, p.textDim,
+            "Writes the asset bundle patch, then Aim Point turns on and "
+            "stays on.");
+  } else {
+    // Forced on. gLockInput keeps the row from being pressed, so the
+    // toggle reads as "on and not yours to change" rather than simply
+    // refusing to move.
+    const float keep = gAlpha;
+    gLockInput = true;
+    gAlpha = keep * 0.55f;
+    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimPoint, "Aim Point");
+    gLockInput = false;
+    gAlpha = keep;
+
+    dl->AddCircleFilled(Pr(X + 24.f, y0 + 114.f), 2.2f * Ds(X + 24.f, y0 + 114.f),
+                        Col(58, 208, 128, 0.95f), 12);
+    Txt(X + 34.f, y0 + 108.f, 5.4f, Col(56, 190, 120, 0.95f), "Injected", 0);
+    Txt(X + 18.f, y0 + 128.f, 4.6f, p.textFaint,
+        "When you drag it's activated automatically", 0);
   }
 
   Txt(X, 440.f, 4.6f, p.textFaint,
@@ -930,14 +939,25 @@ void PageExploit(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
+  const bool normal = b.normalMode && *b.normalMode;
 
   TxtB(X, 36.f, 15.5f, p.text, "Exploit", 0);
   Txt(X + TxtWU(15.5f, "Exploit") + 10.f, 42.f, 4.6f, p.textFaint, "COMBAT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Ghost, recoil, reload and write mode.", 0);
+  Txt(X, 78.f, 5.4f, p.textDim,
+      normal ? "Normal Mode. These need a kernel driver."
+             : "Ghost, recoil and reload.", 0);
 
   const float y0 = 100.f, y1 = 400.f;
   const float wCol = 360.f, gap = 26.f;
   const float c1 = X, c2 = X + wCol + gap;
+
+  // Everything below needs driver-backed writes, so Normal Mode shows it
+  // dimmed and dead rather than letting a toggle move and do nothing.
+  const float alphaKeep = gAlpha;
+  if (normal) {
+    gLockInput = true;
+    gAlpha = alphaKeep * 0.38f;
+  }
 
   CardBg(dl, c1, y0, c1 + wCol, y1);
   CardHead(c1 + 18.f, y0 + 16.f, "Combat", "FIGHT");
@@ -962,8 +982,15 @@ void PageExploit(ImDrawList* dl) {
   // which is no longer a control on the Aim page, so the toggle had
   // nothing left to switch. g_DirNormalWrite itself is untouched.
 
-  Txt(X, 440.f, 4.6f, p.textFaint,
-      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+  if (normal) {
+    gLockInput = false;
+    gAlpha = alphaKeep;
+    LockBanner(dl, X, y0, 978.f, y1, "LOCKED",
+               "Restart in Kernel Mode to use these");
+  } else {
+    Txt(X, 440.f, 4.6f, p.textFaint,
+        "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+  }
 }
 
 // ================================================================ Page: Settings
@@ -993,54 +1020,35 @@ void PageSettings(ImDrawList* dl) {
           "the process.");
 
   // ── Info ───────────────────────────────────────────────────────────
-  // Seller / expiry / remaining / total days / devices come from g_Srv,
-  // which main.cpp fills from the login result (auth.getSellerName(),
-  // getExpiryDate(), getDaysRemain(), getTotalDays(), getDevicesUsed(),
-  // getMaxDevices()). Same four rows the old menu's Info card showed,
-  // plus the device count and the key. Nothing here is a constant
-  // pretending to be live data: a row whose pointer is null prints "-".
+  // Four rows only, by request: who sold the key, when it expires, how
+  // long is left on it, and the key itself. All from g_Srv, which
+  // main.cpp fills from the login result. A row whose pointer is null
+  // prints "-" rather than a made-up value.
   CardBg(dl, X, 230.f, 978.f, 430.f);
   CardHead(X + 18.f, 246.f, "Info", "LICENSE");
 
   const Bindings& b = gBind;
-  char rb[4][48];
-  snprintf(rb[0], sizeof(rb[0]), "%d Days", b.daysRemain ? *b.daysRemain : 0);
-  snprintf(rb[1], sizeof(rb[1]), "%d Days", b.daysTotal ? *b.daysTotal : 0);
-  snprintf(rb[2], sizeof(rb[2]), "%d / %d", b.devUsed ? *b.devUsed : 0,
-           b.devMax ? *b.devMax : 0);
-  snprintf(rb[3], sizeof(rb[3]), "%s", kInfoVersion);
+  char remain[48];
+  snprintf(remain, sizeof(remain), "%d Days", b.daysRemain ? *b.daysRemain : 0);
 
-  struct Row { const char* k; const char* v; bool hi; };
-  const Row left[4] = {
-      {"Seller",    b.infoSeller ? b.infoSeller : "-", true},
-      {"Expiry",    b.infoExpiry ? b.infoExpiry : "-", false},
-      {"Remaining", rb[0], true},
-      {"Total",     rb[1], false}};
-  const Row right[4] = {
-      {"Product", kInfoProduct, false},
-      {"Key",     b.infoKey ? b.infoKey : "-", false},
-      {"Devices", rb[2], false},
-      {"Version", rb[3], false}};
-
-  const float lx = X + 18.f, lvx = X + 300.f;
-  const float rx = X + 360.f, rvx = 960.f;
+  const char* k[4] = {"Seller Name", "Expiry", "Valid For", "Key"};
+  const char* v[4] = {b.infoSeller ? b.infoSeller : "-",
+                      b.infoExpiry ? b.infoExpiry : "-",
+                      remain,
+                      b.infoKey ? b.infoKey : "-"};
   for (int i = 0; i < 4; ++i) {
-    const float ry = 284.f + 28.f * (float)i;
-    Txt(lx, ry, 5.2f, p.textDim, left[i].k, 0);
-    Txt(lvx, ry, 5.4f, left[i].hi ? p.accent : p.text, left[i].v, 2);
-    Txt(rx, ry, 5.2f, p.textDim, right[i].k, 0);
-    Txt(rvx, ry, 5.4f, right[i].hi ? p.accent : p.text, right[i].v, 2);
+    const float ry = 288.f + 30.f * (float)i;
+    Txt(X + 18.f, ry, 5.4f, p.textDim, k[i], 0);
+    Txt(960.f, ry, 5.6f, (i == 0 || i == 2) ? p.accent : p.text, v[i], 2);
     if (i < 3) {
-      dl->AddLine(Pr(lx, ry + 20.f), Pr(960.f, ry + 20.f),
+      dl->AddLine(Pr(X + 18.f, ry + 21.f), Pr(960.f, ry + 21.f),
                   Col(150, 168, 190, 0.20f), 1.f);
     }
   }
 
-  Txt(rx, 284.f + 28.f * 4.f + 4.f, 4.6f, p.textFaint, kInfoChannel, 0);
-
   char fb[40];
   snprintf(fb, sizeof(fb), "%d FPS", (int)ImGui::GetIO().Framerate);
-  Txt(X + 18.f, 284.f + 28.f * 4.f + 4.f, 4.6f, p.textFaint, fb, 0);
+  Txt(960.f, 206.f, 4.6f, p.textFaint, fb, 2);
 }
 
 // ================================================================ Panel

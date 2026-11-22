@@ -402,6 +402,10 @@ inline void RenderSingleMenuWindow() {
         // turn on. It is mirrored into g_Cfg like the other two owned
         // flags instead. AimMagnet and g_ExploitFloatUI stay cleared --
         // both features are removed and have no control at all.
+        // Aim Point belongs to Inject: off until the asset patch has
+        // actually been written, then held on so the greyed toggle in
+        // the menu cannot be argued with.
+        DragHeadshot       = g_InjectApplied.load(std::memory_order_acquire);
         g_Cfg.dragHeadshot = DragHeadshot;
         AimMagnet          = false;
         g_ExploitFloatUI   = false;

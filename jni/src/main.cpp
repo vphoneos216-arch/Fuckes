@@ -844,7 +844,7 @@ struct SavedSettings {
     // This is the menu's "Aim Point": own silent redirect to the Neck
     // bone, only while actively dragging. Independent of
     // aimCollider/aimSilent/Aimbot above.
-    bool  dragHeadshot=true;
+    bool  dragHeadshot=false;
     float dragHeadshotRadius=12.f; // [NEW] trigger radius, % of half-screen-height
     // [FIX] Was 10.f. fovRadius = (AimFov/180)*(screenH/2), so 10 gives a
     // ~30px selection circle on a 1080p screen -- an enemy bone has to
@@ -3059,9 +3059,7 @@ int main(int argc,char* argv[]){
     ix_interactive_driver_and_menu_prompt();
 #endif
 
-    LoadMenuOpenMode();
-    printf("[INX] menu open mode: %s\n", g_MenuOpenMode.c_str());
-    fflush(stdout);
+    LoadMenuOpenMode();   // config default; Kernel Mode asks and overrides
 
     // ── MODE ─────────────────────────────────────────────────────
     // Asked right after the key, before anything else happens.
@@ -3081,15 +3079,12 @@ int main(int argc,char* argv[]){
 
     if (have_tty) {
         printf("\n\033[1mSelect mode\033[0m\n");
-        printf("  1) Normal Mode\n");
-        printf("  2) Kernel Mode\n");
+        printf("  1) Kernel Mode\n");
+        printf("  2) Normal Mode\n");
         printf("Choice [1-2]: ");
         fflush(stdout);
         char line[32] = {0};
-        if (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2')
-            normal_mode = false;
-        else
-            normal_mode = true;
+        normal_mode = (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2');
     }
 
     g_NormalMode.store(normal_mode, std::memory_order_release);
@@ -3116,15 +3111,32 @@ int main(int argc,char* argv[]){
         int choice = ix_get_driver_choice();
         if (have_tty) {
             printf("\n\033[1mSelect driver\033[0m\n");
-            printf("  1) Dit Pro KPM\n");
-            printf("  2) Paradise\n");
+            printf("  1) Paradise\n");
+            printf("  2) KPM\n");
             printf("Choice [1-2]: ");
             fflush(stdout);
             char line[32] = {0};
             if (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2')
-                choice = 10;   // paradise
+                choice = 12;   // ditkpm  — "KPM"
             else
-                choice = 12;   // ditkpm
+                choice = 10;   // paradise
+
+            // Menu open mode, asked only here: this is the last thing
+            // between the driver and the menu in Kernel Mode. Normal
+            // Mode has no prompt of its own, so it keeps whatever the
+            // WebUI config says (LoadMenuOpenMode above).
+            printf("\n\033[1mMenu open\033[0m\n");
+            printf("  1) Volume\n");
+            printf("  2) Bar\n");
+            printf("Choice [1-2]: ");
+            fflush(stdout);
+            char ml[32] = {0};
+            if (fgets(ml, sizeof(ml), stdin) != nullptr && ml[0] == '2')
+                g_MenuOpenMode = "bar";
+            else
+                g_MenuOpenMode = "vol";
+            printf("[INX] menu open mode: %s\n", g_MenuOpenMode.c_str());
+            fflush(stdout);
         }
         c_driver::g_driver_choice = choice;
         printf("[INX] driver mode %d (%s)\n",
