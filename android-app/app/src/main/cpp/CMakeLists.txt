@@ -14,6 +14,7 @@ target_include_directories(ixauth PRIVATE
     ${EXT_DIR}/libsodium-android-arm64-v8a/include
     ${EXT_DIR}/curl-android-arm64-v8a/include
     ${EXT_DIR}/openssl-android-arm64-v8a/include
+    ${EXT_DIR}/liboqs-android-arm64-v8a/include
 )
 
 # Prebuilt static libs — the SAME ones already proven working for the
@@ -36,6 +37,16 @@ add_library(crypto_static STATIC IMPORTED)
 set_target_properties(crypto_static PROPERTIES
     IMPORTED_LOCATION ${EXT_DIR}/openssl-android-arm64-v8a/lib/libcrypto.a)
 
+# liboqs (ML-DSA-65, post-quantum) — built for android-arm64 by the CI
+# workflow below (same cmake/NDK-toolchain recipe .github/workflows/
+# build.yml already uses for the kernel module's own build-mldsa-
+# android-lib job), vendored here fresh on every run rather than
+# committed, since it's a few-minute build and keeps this directory
+# free of a large prebuilt binary.
+add_library(oqs_static STATIC IMPORTED)
+set_target_properties(oqs_static PROPERTIES
+    IMPORTED_LOCATION ${EXT_DIR}/liboqs-android-arm64-v8a/lib/liboqs.a)
+
 find_library(log-lib log)
 find_library(z-lib z)
 
@@ -44,6 +55,7 @@ target_link_libraries(ixauth
     ssl_static
     crypto_static
     sodium_static
+    oqs_static
     ${log-lib}
     ${z-lib}
 )

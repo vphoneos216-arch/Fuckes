@@ -23,12 +23,19 @@
    never matched the only shape the server accepts. This module
    reimplements the EXACT protocol already proven correct in
    jni/src/login.h (kd_seal_request / kd_http_post / kd_open_response /
-   kd_verify_ed25519 / perform_auth), minus everything that is
-   binary-only: anti-tamper/anti-debug watchdogs, in-memory game
-   offsets, and the per-session secret payload (ix_features / ix_rt) —
-   none of that applies to or belongs in a normal Android app process.
-   This module ONLY decides "is this license valid right now", and
-   returns that decision (+ expiry/seller/device info) to Java.
+   perform_auth), minus everything that is binary-only: anti-tamper/
+   anti-debug watchdogs, in-memory game offsets, and the per-session
+   secret payload (ix_features / ix_rt) — none of that applies to or
+   belongs in a normal Android app process. This module ONLY decides
+   "is this license valid right now", and returns that decision
+   (+ expiry/seller/device info) to Java.
+
+   SIGNATURE VERIFICATION: all three legs of the same hybrid check
+   login.h enforces -- Ed25519, Ed448, ML-DSA-65 (post-quantum), all
+   three required, fail-closed on any missing/bad field. Unlike
+   login.h, there is no #ifdef gate here: this module has only one
+   build target (this Gradle app), so there is no "lighter" variant of
+   it that is allowed to check fewer signatures.
 
    HWID PARITY: uses the SAME ix_hwid.h device fingerprint the binary
    uses (vendor/ix_hwid.h, byte-for-byte copy of jni/src/ix_hwid.h) so
@@ -48,6 +55,8 @@
 
 #include <sodium.h>
 #include <curl/curl.h>
+#include <openssl/evp.h>
+#include <oqs/oqs.h>
 
 #include "vendor/json.hpp"
 #include "vendor/ca_bundle_data.h"
@@ -66,6 +75,20 @@ using json = nlohmann::json;
 
 #define TRANSPORT_SERVER_PK_HEX \
     "11776d4190bed1f57b9e26b01ffaf2d20dfff70fbce9e8c803d48590bde6f90e"
+
+// ED448_PUBLIC_KEY_HEX / MLDSA65_PUBLIC_KEY_HEX — the SAME two keys
+// jni/src/login.h embeds (byte-for-byte copy, public values, safe to
+// compile in plainly). The server already signs every response with
+// all three keys unconditionally -- login.h's own shipped builds have
+// required sig2 (Ed448) and sig3 (ML-DSA-65) alongside sig (Ed25519)
+// since before this app module existed. This module was only reading
+// "sig" and discarding "sig2"/"sig3" from the same envelope; nothing
+// server-side needs to change for the checks below to start working.
+#define ED448_PUBLIC_KEY_HEX \
+    "a33362a5038b6d0a133adf3cce75ad63350fa8055cee23741883a4c0765848134e7e1ce735e39e164bc7ac17c0a945faf9a8c2cd7f7a15bf00"
+
+#define MLDSA65_PUBLIC_KEY_HEX \
+    "4053bccb4827a70ee8f10e45366335d7ac34dccddafce6c08a14fc84b7333754097dabb9f868eed2bc07296a4e4c43ed90bd94ebcca78bc397dab82c56ea92ab1c454ea4b161260a3aeb9320c2855f049ad82176605de16a8559d0a5d8488325b06d498141640d57b117ff9e51dbdd5b4c9a08267bd7ffe50f7b2e1132b5fc8dd077a70cde3d1eeb9acbc7799fe7c67bc03f258d7df32a7f1da930e9afc45ba00ffcdd019dfa28ce1df2a33756ef01662b3bcb0768daab49bd3ab6a1d3789d10a4adfd190028754ad58b8ee6e554968bb4bbdc8d538c6c8694d464734752981ee04a50861731f3533f424e455d12b0e77601b0d28b342bc964a5d72cf3ea502148fb5421c38af4e9b220c192ce42d6c3736f0b90464358ca8dc2128747a13b17fa39b5f7d838890cd6f32a90bfd4cbdfc465a4f2c1400a1c65eb9930d50e9546dcb1a4f61a8a729b07d3d637285f5b1b5333c740d8d8c20de9d18cc81cba3839150620316374a66928fa3aa661f71fcaa9c5d25aae64a00ae2dbec3242cf0a4b20818db9f5e6976e5f1db7a22388ded29af3bef903c41bc93cbd09c7d8f8a249ef97e4ea1c92d38fc391dba6035f89d4c2f50ec7dbc4e31a759693b5e2719e22edcd8ad41b8f0c110b7ea9b101e10f2ce1452268e49689cc2767ef3df2dc560ea4909ff92701ed1cc81cceca834b0aee276eb1b310205e3be390efc1b8de4456d8041b21a1f00f49032c9bb2e53364bddc78b3a17deb71949e3dd2e3b8fdd1f72d0cafc2c7227ef7b0ac20bce0e522fef398d159806035b0b632706f70afcda2a919424e178db18e91da025ec3cf29d23741acfd6417beaf2ef8b9290115535a28ecbc9d9a16ba8161d3b0933c2ca5a536f2436b8f091813de855cea494cf2f5cb53e943bdabfeb3a7eea82643f604d5f2021a7af9ab5b511f55cefb7d1a042ec0e996157aa0ff47459a835af2611fb3edeb871e82efb739c01d84a1911f309c57f21cc41142bc72a0f1cec1142c9f84b2683fcbac79f746356c8c022fc2d69501149d59ee542a8ce4dbb7836e99af0a3e2e4672eb5024d5da5c8d938017053067736fa547ca440bf7bc600137497e32c549d63e7b7993902a5bbb38f0dd027f4bebba179204e3859cbb1bb45077cf9dd3b7eff00194a8184153aa234f64a6fb8aaf2a36c31c5412e16abfbb77e06f7517b03d5a6c4e1d5792f5564b83ea953e7039cbaf3083d165c759c28aaa65ef7694a49b0a34bf3f6cd056f3bf9dc8aa09381fc72fea88d5e13f1397112b20a7e6c5962a5e46feaba1b1ef5c3190d764acbbd2f83dc20ff732d5f0ab230725b8786c0b64a1ed2335aaa659e538e7b8e6c4d6016b905b924ecc33805addaa3265b5678221a771a084ba59a31c318c9e33d7c7f2e8ca6950a9a2ca6fb7f3dce2e77954ccd313621581fc38246d56c85a262575d3189eace85756ba5c627af76035844ab6819f946ae173261fc39f56dbbc8dba1b5f0ca7294a3519dab68f51588fa8307fa1b7e92db5894e500bb4b3a4e40dbc00eaa92a792ad513b2843d0ed0be325718d8e89f231d95ad645f514e53e7851f80a9bcc13454331c585a04fd70929e565f2281f23e1d98414b3d507e58d6082dd1e17029c8350936790ee6bfd23ebeb01a68f41ff390fe70be90dd270f24c53df3857d8b1b3dec2f08d2c94012f8da2129b212d416ada99e7cda06f1be0ff8e7b5088dde339be7a69a78ae0b16dd9630d3f58c8a92d45d0f7b44634443841cec57664314422083ab839499c8caad18dddb66cbaa04821d6b90e10077961e1e41557be3eff8b468862fe9324db395a96914568014b4d3852bb2c575b04c2a46d424ef56b48720c0e4d09bcae4bbe5002ef635f4d9f5c5631e866f5fd32fbbdae28bfebb04ef343b4d21af946d6387e4e366b908937ca29623be50680876df67719845657d2429db121ac02c7c0de0ae909be6d95a5e58fa3b30826fcbb71624b01a3c797b74ecf8687667a9bff053e8a961a9a27b58a5de1a7ccd67bcd790f23afe3de453213bf48e581c3dcc6829ef4c95b768507fd851ef0a40dbc349ebe9af91a03fd2523d683823667963a5abb947fdb37bad2f5681a13106000d5554aa69785178e59f1ba19cbe2de93f67fe4dc9a3c7c9b5605393503b062ff42b0513ddb4e717e7b299ef20405580d6f6e2e2d6e817b5f2bfa2c49d8eab05330dda3e4dd96ef0d385c7ba3d1fb595baf7143ca6226ebcb4b5286145028eaeae52b3f24c06c40ef920a60b3d4a0bbdbb954e2159cad8b3a3a0fa121a04800866df711ea25ba6922892da5f3ad808840fd77b58f764c69975d193ac44a32e86194f8c0edd212429e03df572d9ef825ca3beaaced798109f6af023d2268d453aef4d8d92037580d07655f5636735fa3467585f5970e658ab481e645d0c9c87558af0f32bdef916aed6f7feb195339af01d2627d72ccb90cafccf6d41678ddb2501f17b180c2e6e931fe37f58786216f6000fab927ef2531f6cb7e87313ba1467299ede427505f0e43b41a90c79e8e8a0b76a92c1f60cde470df51403ecda850e2875adeedd2fc6d53fb5e5b22a53e29c30ed55abfff07e25fe2087da7e3ad28bebffe454429eb7758f91ddd3d3d028a24773817e907f21edb7301662c42351b807e0339cafe6163f1eae890e3b7d09a0377c67e13161655c87917ae837ccc7958222ed12a3d1706217316c3ae74b1fb859a0d386b63b09c8a7ee700f66d93eb0fc11e6ac"
 
 static const size_t IX_MAX_RESPONSE_BYTES = 512 * 1024;
 
@@ -350,6 +373,77 @@ static inline bool ix_verify_ed25519(const std::string& message, const std::stri
         pub.data()) == 0;
 }
 
+// ==================== HYBRID SIGNATURE: ED448 (second, independent) ====================
+// Mirrors jni/src/login.h kd_verify_ed448() exactly -- same key, same
+// EVP_DigestVerify call. Unconditional here (no #ifdef): this module has
+// no "phone/AIDE build" variant the way the binary does, so there is no
+// build of this app that is allowed to skip it.
+static inline bool ix_verify_ed448(const std::string& message, const std::string& signatureB64) {
+    std::vector<unsigned char> pub;
+    if (!ix_hex_decode(std::string(ED448_PUBLIC_KEY_HEX), pub))
+        return false;
+    if (pub.size() != 57)   // raw Ed448 public key length
+        return false;
+
+    bool allZero = true;
+    for (unsigned char c : pub) if (c) { allZero = false; break; }
+    if (allZero) return false;   // placeholder public key never verifies
+
+    const std::string signature = ix_b64_decode(signatureB64);
+    if (signature.size() != 114)   // raw Ed448 signature length
+        return false;
+
+    EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key(
+        EVP_PKEY_ED448, nullptr, pub.data(), pub.size());
+    if (!pkey) return false;
+
+    bool ok = false;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (ctx) {
+        if (EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, pkey) == 1) {
+            ok = (EVP_DigestVerify(
+                ctx,
+                reinterpret_cast<const unsigned char*>(signature.data()), signature.size(),
+                reinterpret_cast<const unsigned char*>(message.data()), message.size()
+            ) == 1);
+        }
+        EVP_MD_CTX_free(ctx);
+    }
+    EVP_PKEY_free(pkey);
+    return ok;
+}
+
+// ==================== HYBRID SIGNATURE: ML-DSA-65 (third, independent, post-quantum) ====================
+// Mirrors jni/src/login.h kd_verify_mldsa65() exactly -- same key, same
+// liboqs call. Unconditional here too, for the same reason as above.
+static inline bool ix_verify_mldsa65(const std::string& message, const std::string& signatureB64) {
+    std::vector<unsigned char> pub;
+    if (!ix_hex_decode(std::string(MLDSA65_PUBLIC_KEY_HEX), pub))
+        return false;
+    if (pub.size() != OQS_SIG_ml_dsa_65_length_public_key)   // 1952 bytes
+        return false;
+
+    bool allZero = true;
+    for (unsigned char c : pub) if (c) { allZero = false; break; }
+    if (allZero) return false;   // placeholder public key never verifies
+
+    const std::string signature = ix_b64_decode(signatureB64);
+    if (signature.empty() || signature.size() > OQS_SIG_ml_dsa_65_length_signature)
+        return false;   // ML-DSA signatures are variable-length up to this max
+
+    OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_65);
+    if (!sig) return false;
+
+    const OQS_STATUS rc = OQS_SIG_verify(
+        sig,
+        reinterpret_cast<const unsigned char*>(message.data()), message.size(),
+        reinterpret_cast<const unsigned char*>(signature.data()), signature.size(),
+        pub.data()
+    );
+    OQS_SIG_free(sig);
+    return rc == OQS_SUCCESS;
+}
+
 static inline std::string ix_writable_dir(JNIEnv* env, jobject filesDirPath) {
     const char* cstr = env->GetStringUTFChars((jstring)filesDirPath, nullptr);
     std::string s(cstr ? cstr : "");
@@ -464,6 +558,41 @@ Java_com_invisiblex_loader_NativeAuth_performLogin(
         out["message"] = "Login failed. Please try again.";
         std::string s = out.dump();
         return env->NewStringUTF(s.c_str());
+    }
+
+    // Hybrid, second leg: Ed448 over the SAME message. Fail-closed, same
+    // convention as jni/src/login.h -- a missing or empty "sig2" is a
+    // rejection, not treated as "server doesn't send this yet". The
+    // server already sends it unconditionally (login.h's shipped builds
+    // have required it for a while); this app was simply not checking it.
+    if (!envelope.contains("sig2") || !envelope["sig2"].is_string()) {
+        out["message"] = "Login failed. Please try again.";
+        std::string s = out.dump();
+        return env->NewStringUTF(s.c_str());
+    }
+    {
+        const std::string sig2B64 = envelope["sig2"].get<std::string>();
+        if (sig2B64.empty() || !ix_verify_ed448(signedMessage, sig2B64)) {
+            out["message"] = "Login failed. Please try again.";
+            std::string s = out.dump();
+            return env->NewStringUTF(s.c_str());
+        }
+    }
+
+    // Hybrid, third leg: ML-DSA-65 (post-quantum) over the SAME message.
+    // Same fail-closed convention.
+    if (!envelope.contains("sig3") || !envelope["sig3"].is_string()) {
+        out["message"] = "Login failed. Please try again.";
+        std::string s = out.dump();
+        return env->NewStringUTF(s.c_str());
+    }
+    {
+        const std::string sig3B64 = envelope["sig3"].get<std::string>();
+        if (sig3B64.empty() || !ix_verify_mldsa65(signedMessage, sig3B64)) {
+            out["message"] = "Login failed. Please try again.";
+            std::string s = out.dump();
+            return env->NewStringUTF(s.c_str());
+        }
     }
 
     const std::string plain = ix_b64_decode(payloadB64);

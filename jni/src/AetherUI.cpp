@@ -800,7 +800,7 @@ void PageVisual(ImDrawList* dl) {
   TxtB(X, 36.f, 15.5f, p.text, "Visual", 0);
   Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim,
-      normal ? "Normal Mode. ESP needs a kernel driver."
+      normal ? "Not available right now."
              : "Box, skeleton, name, health, distance.", 0);
 
   const float y0 = 100.f;
@@ -868,11 +868,8 @@ void PageVisual(ImDrawList* dl) {
     gAlpha = alphaKeep;
     // After the lock is lifted, so it sits at full strength over the
     // dimmed section it is talking about.
-    LockBanner(dl, X, y0, 978.f, y1, "ESP LOCKED",
-               "Restart in Kernel Mode to use ESP");
-  } else {
-    Txt(X, 440.f, 4.6f, p.textFaint,
-        "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+    LockBanner(dl, X, y0, 978.f, y1, "LOCKED",
+               "Not available right now");
   }
 }
 
@@ -894,7 +891,7 @@ void PageAim(ImDrawList* dl) {
   Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "AIM POINT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim,
       injected ? "Active. Engages on its own while you drag."
-               : "Inject first to unlock Aim Point.", 0);
+               : "Activate to unlock Aim Point.", 0);
 
   const float y0 = 100.f, y1 = 252.f, wCol = 460.f;
 
@@ -914,8 +911,7 @@ void PageAim(ImDrawList* dl) {
     if (Button(dl, H("inject"), X + 18.f, y0 + 104.f, 200.f, 32.f, "INJECT", true))
       g.requestInject = true;
     TxtWrap(X + 234.f, y0 + 102.f, wCol - 252.f, 4.5f, p.textDim,
-            "Writes the asset bundle patch, then Aim Point turns on and "
-            "stays on. Exit puts the real values back.");
+            "Unlocks Aim Point. Exit reverts everything.");
   } else {
     // Forced on. gLockInput keeps the row from being pressed, so the
     // toggle reads as "on and not yours to change" rather than simply
@@ -933,9 +929,6 @@ void PageAim(ImDrawList* dl) {
     Txt(X + 18.f, y0 + 128.f, 4.6f, p.textFaint,
         "When you drag it's activated automatically", 0);
   }
-
-  Txt(X, 440.f, 4.6f, p.textFaint,
-      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
 }
 
 // ================================================================ Page: Exploit
@@ -948,7 +941,7 @@ void PageExploit(ImDrawList* dl) {
   TxtB(X, 36.f, 15.5f, p.text, "Exploit", 0);
   Txt(X + TxtWU(15.5f, "Exploit") + 10.f, 42.f, 4.6f, p.textFaint, "COMBAT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim,
-      normal ? "Normal Mode. These need a kernel driver."
+      normal ? "Not available right now."
              : "Ghost, recoil and reload.", 0);
 
   const float y0 = 100.f, y1 = 400.f;
@@ -990,10 +983,7 @@ void PageExploit(ImDrawList* dl) {
     gLockInput = false;
     gAlpha = alphaKeep;
     LockBanner(dl, X, y0, 978.f, y1, "LOCKED",
-               "Restart in Kernel Mode to use these");
-  } else {
-    Txt(X, 440.f, 4.6f, p.textFaint,
-        "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+               "Not available right now");
   }
 }
 
@@ -1019,9 +1009,7 @@ void PageSettings(ImDrawList* dl) {
   // reaches the engine on the frame it is flipped. Apply exists for the
   // handful of values that only the engine's own sync routine pushes.
   TxtWrap(X + 450.f, 146.f, 500.f, 4.6f, p.textDim,
-          "Nothing is written to disk -- this build keeps no settings file, so "
-          "everything starts off after a restart. Exit restores the real "
-          "values first, then stops the overlay and the process.");
+          "Everything resets after a restart. Exit closes cleanly.");
 
   // ── Info ───────────────────────────────────────────────────────────
   // Four rows only, by request: who sold the key, when it expires, how
