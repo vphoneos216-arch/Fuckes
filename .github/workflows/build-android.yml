@@ -79,7 +79,15 @@ jobs:
 
           git clone --depth 1 --branch openssl-3.3.2 https://github.com/openssl/openssl /tmp/openssl-src
           cd /tmp/openssl-src
-          ./Configure android-arm64 -D__ANDROID_API__=28 \
+          # API 26, not 28 (unlike build.yml's build-ed448-lib, which
+          # matches jni/Application.mk's APP_PLATFORM=android-28) --
+          # this app's minSdk is 26 (android-app/app/build.gradle), so
+          # Gradle's final link targets the android26 sysroot. Building
+          # OpenSSL against API 28 made it call getentropy/aligned_alloc,
+          # which don't exist in the android26 sysroot's libc.so --
+          # "undefined symbol" at the final ixauth.so link. API 26 keeps
+          # OpenSSL on its own internal fallbacks for both instead.
+          ./Configure android-arm64 -D__ANDROID_API__=26 \
             no-shared no-tests no-apps no-engine no-deprecated
           make -j"$(nproc)" build_libs
           file libcrypto.a
@@ -125,7 +133,7 @@ jobs:
           cmake -S /tmp/liboqs-src -B /tmp/liboqs-build-android \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-28 \
+            -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DOQS_USE_OPENSSL=OFF \
