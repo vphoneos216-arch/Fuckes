@@ -777,7 +777,7 @@ static void ix_load_paradise_ko() {
     printf("\nStep - Driver\n");
     static const char* names[]  = { "paradise", "ditpro", "twt", "wind", "kpm" };
     static const char* labels[] = { "Paradise (recommended)", "DitPro KPM", "TwT", "Wind",
-                                     "Standalone KPM (APatch, memory R/W only)" };
+                                     "Standalone KPM (APatch, read/write + hardware breakpoint)" };
     const int kDriverCount = 5;
     for (int i = 0; i < kDriverCount; ++i) printf("  %d) %s\n", i + 1, labels[i]);
     printf("\nSelect [1-%d, default=1]: ", kDriverCount);
@@ -3301,18 +3301,25 @@ int main(int argc,char* argv[]){
         g_QuietTerminal.store(true, std::memory_order_release);
     } else {
         // ── DRIVER SELECTION ─────────────────────────────────────
-        // Two drivers only, by request. The numbers are the existing
-        // ix_driver_init.h choices, not new ones: paradise = 10,
-        // ditkpm = 12, so nothing about driver init changes.
+        // The numbers are the existing ix_driver_init.h choices, not new
+        // ones: paradise = 10, ditkpm = 12, standalone inx-mem KPM = 16.
+        // Option 3 (16) was already fully built and shipped (kernel side:
+        // kpm/inx_mem/inx_hwbp.h; userspace: KPM/kpm_driver.h; dispatched
+        // in Scarecrow/hook.h's UpdateSilentAimFast) but this prompt never
+        // offered it, so it was unreachable from a real run.
         int choice = ix_get_driver_choice();
         if (have_tty) {
             printf("\n\033[1mSelect driver\033[0m\n");
             printf("  1) Paradise\n");
             printf("  2) KPM\n");
-            printf("Choice [1-2]: ");
+            printf("  3) Standalone KPM (hardware breakpoint read/write)\n");
+            printf("Choice [1-3]: ");
             fflush(stdout);
             char line[32] = {0};
-            if (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2')
+            const bool got_line = (fgets(line, sizeof(line), stdin) != nullptr);
+            if (got_line && line[0] == '3')
+                choice = 16;   // standalone inx-mem KPM — hardware breakpoint
+            else if (got_line && line[0] == '2')
                 choice = 12;   // ditkpm  — "KPM"
             else
                 choice = 10;   // paradise

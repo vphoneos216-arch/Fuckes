@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.4 Menu no longer explains its own mechanics on screen
+version=v6.5 Standalone KPM (hardware breakpoint) is now a selectable driver, not just built-in code
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

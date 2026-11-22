@@ -53,7 +53,7 @@ extern char packageName[];
 #include "RT_Hook/kernel.h"      // Option 13: RT Hook (ioctl-based, see file header for the c_driver name-collision note)
 #include "TwT/kernel.h"          // Option 14: TwT (ioctl-based, same c_driver name-collision note, renamed TwtDriver)
 #include "Wind/wind_driver.h"    // Option 15: Wind (netlink/ioctl dual transport, class c_wind, no rename needed)
-#include "KPM/kpm_driver.h"      // Option 16: standalone inx-mem KPM (memory read/write only, supercall "su"/config-key auth)
+#include "KPM/kpm_driver.h"      // Option 16: standalone inx-mem KPM (plain memory read/write, plus its own hardware-breakpoint register-override engine; supercall "su"/config-key auth)
 
 // ── Native memory-access syscall numbers (kept for reference, but fallback disabled) ──
 #ifdef __NR_process_vm_readv
@@ -1039,7 +1039,7 @@ public:
             if (getuid() != 0)
                 printf("\033[33m[WARNING] Root access recommended for Wind!\033[0m\n");
         }
-        // ── Option 16: standalone inx-mem KPM (memory read/write only) ──
+        // ── Option 16: standalone inx-mem KPM (plain read/write + hardware-breakpoint override engine) ──
         // Real initialize() (which does the supercall "su"/config-key auth
         // and loads inx_mem.kpm if it isn't already loaded) happens later,
         // in the pid-init block below, same as TwT/Wind — construction here
