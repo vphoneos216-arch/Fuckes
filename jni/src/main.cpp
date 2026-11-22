@@ -658,21 +658,6 @@ void ix_retry_collider_injection() {
     }
 }
 
-#ifdef IX_INTERACTIVE_CLI
-// [STANDALONE BUILD] Terminal driver + bar/vol prompt, run once after
-// login succeeds and before LoadMenuOpenMode()/ix_get_driver_choice() are
-// called a few lines later in main() — this only has to set the env vars
-// those two already read (IX_DRIVER_NAME, IX_MENU_OPEN; see
-// ix_driver_init.h), nothing else changes downstream. Names/aliases below
-// match ix_driver_init.h's ix_driver_number() exactly, so whatever is
-// typed here is guaranteed understood.
-//
-// Loading the chosen driver's .ko.sh (when it needs one) reproduces
-// daemon_service.cpp's load_driver(): chmod 0755 + chown root (a driver
-// script is about to run AS root, so it must not stay writable by
-// whatever put it on disk), detached fork+exec, half a second to settle.
-// Resolved relative to this binary's own location (login.h's
-// kd_exe_dir()) since a standalone run has no module directory.
 // [SPLIT OUT] Loading Paradise's .ko.sh used to be buried inside the
 // interactive prompt below. The prompt is gone -- it was the "Step -
 // Driver" / "Step - Menu" pair that appeared before the mode question and
@@ -736,6 +721,21 @@ static void ix_load_paradise_ko() {
     }
 }
 
+#ifdef IX_INTERACTIVE_CLI
+// [STANDALONE BUILD] Terminal driver + bar/vol prompt, run once after
+// login succeeds and before LoadMenuOpenMode()/ix_get_driver_choice() are
+// called a few lines later in main() — this only has to set the env vars
+// those two already read (IX_DRIVER_NAME, IX_MENU_OPEN; see
+// ix_driver_init.h), nothing else changes downstream. Names/aliases below
+// match ix_driver_init.h's ix_driver_number() exactly, so whatever is
+// typed here is guaranteed understood.
+//
+// Loading the chosen driver's .ko.sh (when it needs one) reproduces
+// daemon_service.cpp's load_driver(): chmod 0755 + chown root (a driver
+// script is about to run AS root, so it must not stay writable by
+// whatever put it on disk), detached fork+exec, half a second to settle.
+// Resolved relative to this binary's own location (login.h's
+// kd_exe_dir()) since a standalone run has no module directory.
 [[maybe_unused]] static void ix_interactive_driver_and_menu_prompt() {
     // [NARROWED, then extended] Paradise/DitPro were the only two shown
     // here; every other driver name ix_driver_init.h understands still
