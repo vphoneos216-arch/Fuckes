@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.2 Simple key store in /data/local/tmp, countdown moved into Info, 5s recovery restores both patches
+version=v6.3 Patch tables encrypted at rest, decrypted only in a wiped stack buffer at use time
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki
