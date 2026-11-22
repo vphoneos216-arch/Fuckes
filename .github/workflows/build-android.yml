@@ -60,6 +60,58 @@ jobs:
             "ndk;25.1.8937393" "cmake;3.22.1" > /dev/null
           echo "ndk.dir=$ANDROID_HOME/ndk/25.1.8937393" >> local.properties
 
+      - name: Build Ed448 OpenSSL (kdoss3_ renamed) for android-arm64
+        # Same recipe as build.yml's build-ed448-lib job, run here too
+        # for the same reason as the liboqs step below -- that job's
+        # artifact doesn't cross workflow boundaries. The vendored
+        # OpenSSL already in external/openssl-android-arm64-v8a is
+        # 1.1.0c (predates Ed448 entirely), so this app needs its own
+        # separate, newer OpenSSL build to verify the server's "sig2"
+        # (ix_auth.cpp's ix_verify_ed448()) -- with every global symbol
+        # renamed to a kdoss3_ prefix so it doesn't collide with the
+        # 1.1.0c lib already linked for curl's TLS.
+        working-directory: .
+        run: |
+          set -e
+          NDK="$ANDROID_HOME/ndk/25.1.8937393"
+          export ANDROID_NDK_ROOT="$NDK"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+
+          git clone --depth 1 --branch openssl-3.3.2 https://github.com/openssl/openssl /tmp/openssl-src
+          cd /tmp/openssl-src
+          ./Configure android-arm64 -D__ANDROID_API__=28 \
+            no-shared no-tests no-apps no-engine no-deprecated
+          make -j"$(nproc)" build_libs
+          file libcrypto.a
+
+          OBJCOPY="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+          AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+
+          mkdir -p /tmp/ed448objs && cd /tmp/ed448objs
+          "$AR" x /tmp/openssl-src/libcrypto.a
+
+          "$NM" --defined-only -g *.o 2>/dev/null \
+            | awk '{print $3}' | sort -u | grep -v '^$' > /tmp/ed448syms.txt
+          wc -l /tmp/ed448syms.txt
+
+          awk '{print $1, "kdoss3_" $1}' /tmp/ed448syms.txt > /tmp/ed448redefine.txt
+          for o in *.o; do
+            "$OBJCOPY" --redefine-syms=/tmp/ed448redefine.txt "$o"
+          done
+          "$AR" rcs /tmp/libcrypto_kdoss3.a *.o
+          "$NM" --defined-only -g /tmp/libcrypto_kdoss3.a | grep -c kdoss3_ || true
+
+          awk '{print "#define " $1 " kdoss3_" $1}' /tmp/ed448syms.txt > /tmp/kd_ossl_rename.h
+
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a/include
+          cp -r /tmp/openssl-src/include/openssl android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a/include/openssl
+          cp /tmp/libcrypto_kdoss3.a android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a/libcrypto_kdoss3.a
+          cp /tmp/kd_ossl_rename.h android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a/kd_ossl_rename.h
+          ls -la android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a
+          file android-app/app/src/main/cpp/external/openssl3-ed448-android-arm64-v8a/libcrypto_kdoss3.a
+
       - name: Build liboqs (ML-DSA-65) for android-arm64
         # Same recipe as build.yml's build-mldsa-android-lib job, run
         # here too because that job's artifact doesn't cross workflow

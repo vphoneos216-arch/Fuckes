@@ -55,6 +55,15 @@
 
 #include <sodium.h>
 #include <curl/curl.h>
+
+// kd_ossl_rename.h #defines every OpenSSL symbol name to its kdoss3_
+// prefixed equivalent -- it MUST come before <openssl/evp.h> (and any
+// other <openssl/*.h>) so the declarations below, and every call site
+// in ix_verify_ed448(), resolve to the renamed Ed448-capable OpenSSL
+// 3.3.2 static lib (ed448_static in CMakeLists.txt) instead of
+// colliding with the plain OpenSSL 1.1.0c already linked for curl's
+// TLS (crypto_static/ssl_static), which predates Ed448 entirely.
+#include "kd_ossl_rename.h"
 #include <openssl/evp.h>
 #include <oqs/oqs.h>
 
