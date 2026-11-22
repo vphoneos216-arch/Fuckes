@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.0 Root cause: duplicate Step-Driver prompt removed, terminal goes quiet, per-patch state, unified key store
+version=v6.1 Key save fixed (store search + master key no longer clobbered), draggable pill, mode label, 5s patch removal, key countdown
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

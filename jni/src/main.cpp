@@ -512,6 +512,31 @@ static std::string ix_extract_embedded_collider_stub() {
 // chatter is on display -- what runs in the backend is nobody's business.
 static std::atomic<bool> g_QuietTerminal{false};
 
+// [NEW] Patch auto-remove. Once Inject has written the asset bytes the
+// game has them; leaving the modified file sitting on disk afterwards
+// serves nothing, so a detached timer puts the stock bytes back five
+// seconds later. The flag stays true -- Aim Point is on for the session
+// either way -- this is only about what remains on disk.
+//
+// Deliberately NOT applied to the hologram patch: that one is written
+// before the game is even opened, so removing it after five seconds
+// would mean the game never reads it at all.
+static void ix_schedule_patch_removal(int seconds) {
+    std::thread([seconds]() {
+        std::this_thread::sleep_for(std::chrono::seconds(seconds));
+        std::string d;
+        const int n = IxRestoreAsset(&d);
+        printf("[INX] auto-remove after %ds: %d file(s) (%s)\n", seconds, n, d.c_str());
+        fflush(stdout);
+    }).detach();
+}
+
+// [NEW] Key countdown. remaining_seconds comes from the server at login;
+// this is the steady-clock instant it runs out, so the on-screen timer
+// and the shutdown both work off one value that no clock change can move.
+static std::chrono::steady_clock::time_point g_KeyDeadline{};
+static std::atomic<bool> g_KeyDeadlineSet{false};
+
 #ifdef IX_INTERACTIVE_CLI
 // [NEW — "error terminal mein pura dikhna chahiye"] Terminal apps
 // (Termux etc.) have limited scrollback, so a long run's early output
@@ -880,6 +905,7 @@ struct _SrvData {
     int         days_total  = 0;
     int         dev_used    = 0;
     int         dev_max     = 0;
+    long long   remain_secs = 0;           // server's own remaining_seconds
     bool        valid       = true;        // Always valid
 };
 static _SrvData g_Srv;
@@ -2982,9 +3008,64 @@ static void ix_apply_control_sync() {
 }
 
 
+// [NEW] Left-side key countdown, drawn every frame on the background
+// draw list so it is there whether the menu is open or shut. At zero the
+// process stops, after putting the patched files back -- the same two
+// steps the Exit button runs, since an expired key should not leave
+// modified game files behind either.
+static void ix_draw_key_timer() {
+    if (!g_KeyDeadlineSet.load(std::memory_order_acquire)) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    long long left = std::chrono::duration_cast<std::chrono::seconds>(
+                         g_KeyDeadline - now).count();
+
+    if (left <= 0) {
+        std::string d;
+        IxRestoreStock(&d);
+        printf("[INX] key expired -> restored (%s), stopping\n", d.c_str());
+        fflush(stdout);
+        main_thread_flag = false;
+        shutdown();
+        Touch_Close();
+        _exit(0);
+    }
+
+    const long long days = left / 86400; left %= 86400;
+    const long long hrs  = left / 3600;  left %= 3600;
+    const long long mins = left / 60;
+    const long long secs = left % 60;
+
+    char buf[48];
+    if (days > 0) snprintf(buf, sizeof(buf), "%lldd %02lld:%02lld:%02lld",
+                           days, hrs, mins, secs);
+    else          snprintf(buf, sizeof(buf), "%02lld:%02lld:%02lld",
+                           hrs, mins, secs);
+
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    if (!dl) return;
+
+    const float sh = (ui::bar::g_sh > 1.f) ? ui::bar::g_sh : 1080.f;
+    const float x  = 14.f;
+    const float y  = sh * 0.5f - 18.f;
+    const ImVec2 ts = ImGui::CalcTextSize(buf);
+    const float w  = ts.x + 20.f, h = ts.y + 12.f;
+
+    // Under a day left is worth noticing, so it turns red.
+    const ImU32 accent = (days < 1) ? IM_COL32(255, 70, 70, 235)
+                                    : IM_COL32(60, 220, 130, 225);
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
+                      IM_COL32(12, 16, 22, 165), 7.f);
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), accent, 7.f, 0, 1.4f);
+    dl->AddRectFilled(ImVec2(x + 2.f, y + 6.f), ImVec2(x + 4.5f, y + h - 6.f),
+                      accent, 1.5f);
+    dl->AddText(ImVec2(x + 12.f, y + 6.f), IM_COL32(236, 242, 250, 245), buf);
+}
+
 void RenderMenu(){
     if(!g_FloatingSystemReady||!g_Landscape2SecDone) return;
     if(!g_SettingsLoaded) LoadSettings();
+    ix_draw_key_timer();
     if (!ix_rt_ready()) {
         /* settings file cannot unlock cheats without server secret */
         g_Cfg.showLine=g_Cfg.showBox=g_Cfg.showHealth=false;
@@ -3131,6 +3212,12 @@ int main(int argc,char* argv[]){
         g_Srv.seller      = auth.getSellerName();
         g_Srv.expiry      = auth.getExpiryDate();
         g_Srv.days_remain = auth.getDaysRemain();
+        g_Srv.remain_secs = auth.getRemainSeconds();
+        if (g_Srv.remain_secs > 0) {
+            g_KeyDeadline = std::chrono::steady_clock::now() +
+                            std::chrono::seconds(g_Srv.remain_secs);
+            g_KeyDeadlineSet.store(true, std::memory_order_release);
+        }
         g_Srv.days_total  = auth.getTotalDays();
         g_Srv.dev_used    = auth.getDevicesUsed();
         g_Srv.dev_max     = auth.getMaxDevices();

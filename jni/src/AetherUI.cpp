@@ -539,7 +539,11 @@ void DrawSidebar(ImDrawList* dl) {
   Txt(42.f, 34.f, 10.5f, Col(255, 255, 255, 0.95f), "T", 1);
 
   TxtB(74.f, 20.f, 15.f, p.text, "TESLA", 0, 0.4f);
-  Txt(74.f, 48.f, 4.6f, p.textDim, "KERNEL EDITION", 0, 1.5f);
+  // Says which mode the run is actually in, rather than claiming the
+  // kernel every time.
+  const bool normalEd = gBind.normalMode && *gBind.normalMode;
+  Txt(74.f, 48.f, 4.6f, p.textDim,
+      normalEd ? "TESLA INTERNAL" : "KERNEL EDITION", 0, 1.5f);
 
   Txt(22.f, 88.f, 4.8f, p.textFaint, "NAVIGATION", 0, 1.8f);
 
@@ -1107,9 +1111,29 @@ void DrawPanel(ImDrawList* dl) {
   }
 }
 
+// [NEW] Draggable. The pill used to be pinned to the panel's top-right
+// corner, which put it wherever the panel happened to be. Its position is
+// now its own, in screen pixels, so moving it does not move anything else
+// and the panel transform cannot drag it around.
+float gPillX = -1.f, gPillY = -1.f;    // -1 = not placed yet
+bool  gPillDrag = false;
+float gPillGrabX = 0.f, gPillGrabY = 0.f;
+bool  gPillMoved = false;              // a drag happened: do not treat as a tap
+
+void PillCenter(float* cx, float* cy) {
+  if (gPillX < 0.f || gPillY < 0.f) {
+    // First frame: the corner it always used to sit in.
+    gPillX = gCx + (PW * 0.5f - 26.f) * gS;
+    gPillY = gCy - (PH * 0.5f - 26.f) * gS;
+  }
+  *cx = gPillX;
+  *cy = gPillY;
+}
+
 void DrawPill() {
   const Pal p = P();
-  const float cx = gCx + (PW * 0.5f - 26.f) * gS, cy = gCy - (PH * 0.5f - 26.f) * gS;
+  float cx = 0.f, cy = 0.f;
+  PillCenter(&cx, &cy);
   ImDrawList* dl = DL();
   dl->AddCircleFilled(ImVec2(cx, cy), 20.f * gS, p.panel, 28);
   dl->AddCircle(ImVec2(cx, cy), 20.f * gS, p.panelEdge, 28, 1.4f);
@@ -1192,11 +1216,44 @@ void Draw(float screenW, float screenH, float uiScale) {
   if (!g.open) {
     gMouseOK = false;
     DrawPill();
-    const float cx = gCx + (PW * 0.5f - 26.f) * gS, cy = gCy - (PH * 0.5f - 26.f) * gS;
-    if (io.MouseClicked[0] && fabsf(io.MousePos.x - cx) < 22.f * gS &&
-        fabsf(io.MousePos.y - cy) < 22.f * gS) {
-      g.open = true;
-      gOpenT = 0.f;
+
+    float cx = 0.f, cy = 0.f;
+    PillCenter(&cx, &cy);
+    const float r = 22.f * gS;
+    const bool onPill = fabsf(io.MousePos.x - cx) < r &&
+                        fabsf(io.MousePos.y - cy) < r;
+
+    // Press on it to grab, move to drag, release without having moved
+    // more than a few pixels to open. The threshold is what keeps a
+    // slightly shaky tap from counting as a drag.
+    if (io.MouseClicked[0] && onPill) {
+      gPillDrag = true;
+      gPillMoved = false;
+      gPillGrabX = io.MousePos.x - cx;
+      gPillGrabY = io.MousePos.y - cy;
+    }
+
+    if (gPillDrag) {
+      if (io.MouseDown[0]) {
+        const float nx = io.MousePos.x - gPillGrabX;
+        const float ny = io.MousePos.y - gPillGrabY;
+        if (fabsf(nx - gPillX) > 2.f || fabsf(ny - gPillY) > 2.f) gPillMoved = true;
+        gPillX = nx;
+        gPillY = ny;
+        // Keep it on screen, whatever the drag does.
+        const float m = 24.f * gS;
+        if (gPillX < m) gPillX = m;
+        if (gPillY < m) gPillY = m;
+        if (gPillX > io.DisplaySize.x - m) gPillX = io.DisplaySize.x - m;
+        if (gPillY > io.DisplaySize.y - m) gPillY = io.DisplaySize.y - m;
+      } else {
+        gPillDrag = false;
+        if (!gPillMoved) {
+          g.open = true;
+          gOpenT = 0.f;
+        }
+        gPillMoved = false;
+      }
     }
     return;
   }
@@ -1205,7 +1262,14 @@ void Draw(float screenW, float screenH, float uiScale) {
 }
 
 bool PointBlocksTouch(float x, float y) {
-  if (!g.open) return false;
+  if (!g.open) {
+    // Collapsed: only the pill itself is ours, and only so a drag or a
+    // tap on it does not reach the game underneath.
+    float cx = 0.f, cy = 0.f;
+    PillCenter(&cx, &cy);
+    const float r = 24.f * gS;
+    return gPillDrag || (fabsf(x - cx) < r && fabsf(y - cy) < r);
+  }
   float ox = 0.f, oy = 0.f;
   if (!Unproject(ImVec2(x, y), &ox, &oy)) return false;
   return ox >= -6.f && ox <= PW + 6.f && oy >= -6.f && oy <= PH + 6.f;

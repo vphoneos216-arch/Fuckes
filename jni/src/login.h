@@ -250,6 +250,17 @@ static inline std::string kd_exe_dir() {
     return found.substr(0, slash);
 }
 
+static inline std::vector<std::string>& kd_candidate_cache() {
+    static std::vector<std::string> v;
+    return v;
+}
+
+// [NEW] The full candidate list, exposed so the LOAD path can search
+// every directory instead of only the one this process happened to pick.
+// That is what actually broke key reuse: two binaries, two different
+// choices from this list, neither able to see the other's file.
+static inline std::vector<std::string> kd_candidate_dirs();
+
 static inline const std::string& kd_writable_dir() {
     static std::string cached;
     if (!cached.empty()) return cached;
@@ -350,6 +361,10 @@ static inline const std::string& kd_writable_dir() {
     if (!exeDir.empty()) candidateList.push_back(exeDir);
     candidateList.push_back(".");
 
+    // Remembered whole, so kd_candidate_dirs() can hand the same list to
+    // the load path without duplicating any of the logic above.
+    kd_candidate_cache() = candidateList;
+
     for (const std::string& dir : candidateList) {
         mkdir(dir.c_str(), 0700);
 
@@ -367,6 +382,16 @@ static inline const std::string& kd_writable_dir() {
 
     cached = ".";
     return cached;
+}
+
+static inline std::vector<std::string> kd_candidate_dirs() {
+    (void)kd_writable_dir();              // fills the cache on first call
+    std::vector<std::string> out = kd_candidate_cache();
+    const std::string& chosen = kd_writable_dir();
+    bool have = false;
+    for (const auto& d : out) if (d == chosen) { have = true; break; }
+    if (!have) out.push_back(chosen);
+    return out;
 }
 
 // ==================== SMALL HELPERS ====================
@@ -551,16 +576,42 @@ static inline void kd_mix_master_key(unsigned char io[crypto_secretbox_KEYBYTES]
     sodium_memzero(mixed, sizeof(mixed));
 }
 
+// Reads the master key out of one specific directory. No creation, no
+// overwrite -- used when hunting for a key another binary saved.
+static inline bool kd_read_master_key_in(const std::string& dir,
+                                         unsigned char out[crypto_secretbox_KEYBYTES]) {
+    const std::string path = dir + "/" + MASTER_KEY_FILE_NAME;
+    // Deliberately NOT gated on kd_file_is_private() here. That check
+    // exists to refuse a planted file, but on the load path a refusal
+    // used to mean "generate a new master key and overwrite this one",
+    // which destroys every key already saved under it. Reading our own
+    // 0600 file in our own store is the lesser risk by a wide margin.
+    std::ifstream in(path, std::ios::binary);
+    if (!in.good()) return false;
+    in.read(reinterpret_cast<char*>(out), crypto_secretbox_KEYBYTES);
+    const bool ok = (in.gcount() == (std::streamsize)crypto_secretbox_KEYBYTES);
+    in.close();
+    return ok;
+}
+
 static inline bool kd_load_or_create_master_key(unsigned char out[crypto_secretbox_KEYBYTES]) {
     if (sodium_init() < 0) return false;
     std::string path = kd_writable_dir() + "/" + MASTER_KEY_FILE_NAME;
 
-    std::ifstream in(kd_file_is_private(path) ? path : std::string("/nonexistent"), std::ios::binary);
-    if (in.good()) {
-        in.read(reinterpret_cast<char*>(out), crypto_secretbox_KEYBYTES);
-        const bool okRead = (in.gcount() == (std::streamsize)crypto_secretbox_KEYBYTES);
-        in.close();
-        if (okRead) return true;
+    if (kd_read_master_key_in(kd_writable_dir(), out)) return true;
+
+    // [FIX] This is the step that made the symptom permanent. The old
+    // code fell through to here whenever the existing file failed the
+    // private-file check or came up short, generated a FRESH random key
+    // and wrote it over the top -- so every key saved under the previous
+    // master key became undecryptable, silently, with no way back. A
+    // file that exists is now left exactly where it is.
+    {
+        struct stat st{};
+        if (lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+            st.st_size == (off_t)crypto_secretbox_KEYBYTES) {
+            return false;   // present but unreadable right now -- do not clobber
+        }
     }
 
     randombytes_buf(out, crypto_secretbox_KEYBYTES);
@@ -604,13 +655,12 @@ static inline bool kd_save_key(const std::string& key) {
     return true;
 }
 
-static inline std::string kd_load_saved_key() {
-    std::string path = kd_writable_dir() + "/" + KEY_FILE_NAME;
-    if (!kd_file_is_private(path)) return "";   // planted / loosened -> ignore
-    std::ifstream f(path);
-    if (!f.good()) return "";
-    std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    f.close();
+// Tries to open one blob with one master key, mixed and unmixed.
+// Returns the key, or "" when neither works.
+static inline std::string kd_try_open_blob(const std::string& raw,
+                                           const unsigned char mkFile[crypto_secretbox_KEYBYTES],
+                                           bool* wasLegacy) {
+    if (wasLegacy) *wasLegacy = false;
     if (raw.empty()) return "";
 
     json blob;
@@ -624,11 +674,8 @@ static inline std::string kd_load_saved_key() {
     if (!kd_hex_decode_any(blob["c"].get<std::string>(), cipher) ||
         cipher.size() < crypto_secretbox_MACBYTES) return "";
 
-    unsigned char mkFile[crypto_secretbox_KEYBYTES];
-    if (!kd_load_or_create_master_key(mkFile)) return "";
-
     unsigned char mk[crypto_secretbox_KEYBYTES];
-    memcpy(mk, mkFile, sizeof(mk));
+    memcpy(mk, mkFile, crypto_secretbox_KEYBYTES);
     kd_mix_master_key(mk);
 
     std::vector<unsigned char> plain(cipher.size() - crypto_secretbox_MACBYTES);
@@ -636,23 +683,60 @@ static inline std::string kd_load_saved_key() {
         plain.data(), cipher.data(), cipher.size(), nonce_v.data(), mk);
     sodium_memzero(mk, sizeof(mk));
 
-    // Legacy blob written before the device factor existed. Open it with the
-    // file key alone, exactly once, then re-save it bound to this device --
-    // an upgrade must never cost the user their saved login.
-    bool wasLegacy = false;
+    // Blob written before the device factor existed, or written on a run
+    // whose HWID came out differently: open it with the file key alone.
     if (rc != 0) {
         rc = crypto_secretbox_open_easy(
             plain.data(), cipher.data(), cipher.size(), nonce_v.data(), mkFile);
-        wasLegacy = (rc == 0);
+        if (rc == 0 && wasLegacy) *wasLegacy = true;
     }
-    sodium_memzero(mkFile, sizeof(mkFile));
     if (rc != 0) return "";
 
     std::string k(reinterpret_cast<char*>(plain.data()), plain.size());
     sodium_memzero(plain.data(), plain.size());
-    const std::string out = kd_trim_upper(k);
-    if (wasLegacy && !out.empty()) kd_save_key(out);
-    return out;
+    return kd_trim_upper(k);
+}
+
+static inline std::string kd_load_saved_key() {
+    if (sodium_init() < 0) return "";
+
+    // [FIX — "save key still not working"] This used to look in exactly
+    // one directory: whichever kd_writable_dir() picked for THIS process.
+    // inx_login_@api and the loader are built with different flags, so
+    // they pick differently, and the key one of them saved was invisible
+    // to the other. Every candidate is searched now, with that directory's
+    // own master key, so wherever the key was written it is found.
+    const std::vector<std::string> dirs = kd_candidate_dirs();
+    const std::string primary = kd_writable_dir();
+
+    for (const std::string& dir : dirs) {
+        const std::string path = dir + "/" + KEY_FILE_NAME;
+
+        std::ifstream f(path);
+        if (!f.good()) continue;
+        std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+        if (raw.empty()) continue;
+
+        unsigned char mkFile[crypto_secretbox_KEYBYTES];
+        if (!kd_read_master_key_in(dir, mkFile)) {
+            // No master key beside the blob: the pair has to live
+            // together, so try the primary store's key before moving on.
+            if (dir == primary || !kd_read_master_key_in(primary, mkFile)) continue;
+        }
+
+        bool wasLegacy = false;
+        const std::string out = kd_try_open_blob(raw, mkFile, &wasLegacy);
+        sodium_memzero(mkFile, sizeof(mkFile));
+        if (out.empty()) continue;
+
+        // Converge: re-save into the primary store so the next run finds
+        // it on the first try, and so a legacy blob gets bound to this
+        // device. An upgrade must never cost the user their saved login.
+        if (wasLegacy || dir != primary) kd_save_key(out);
+        return out;
+    }
+    return "";
 }
 
 // Note: intentionally NO delete_saved_key()/reset function exists.
@@ -2250,6 +2334,9 @@ public:
     std::string getExpiryDate()  const { return expiry_date; }
     std::string getStatus()      const { return status; }
     int getDaysRemain()  const { return (int)(remain_seconds / 86400); }
+    // [NEW] Seconds, not days, so the on-screen countdown ticks on the
+    // same number the server actually sent instead of a rounded day.
+    long long getRemainSeconds() const { return remain_seconds; }
     int getTotalDays()   const { return (int)(remain_seconds / 86400); }
     int getDevicesUsed() const { return devices_used; }
     int getMaxDevices()  const { return devices_max; }

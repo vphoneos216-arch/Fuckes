@@ -428,7 +428,14 @@ inline void RenderSingleMenuWindow() {
                 ast.requestInject = false;
                 std::string d;
                 const bool ok = IxAssetPatch(&d);
-                if (ok) g_InjectApplied.store(true, std::memory_order_release);
+                if (ok) {
+                    g_InjectApplied.store(true, std::memory_order_release);
+                    // The game has the bytes once this returns; five
+                    // seconds later the file goes back to stock so
+                    // nothing modified is left sitting on disk. Aim
+                    // Point stays on for the session regardless.
+                    ix_schedule_patch_removal(5);
+                }
                 printf("[INX] inject: %s (%s)\n", ok ? "ok" : "failed", d.c_str());
                 fflush(stdout);
             }
