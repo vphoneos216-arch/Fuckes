@@ -5,6 +5,7 @@
 #include "ix_rt_offsets.h"
 #include "collider_ipc.h"
 #include "Scarecrow/ix_inject.h"
+#include "ix_ff_patch.h"
 #include <string>
 #include <map>
 #include <sstream>
@@ -3062,21 +3063,77 @@ int main(int argc,char* argv[]){
     printf("[INX] menu open mode: %s\n", g_MenuOpenMode.c_str());
     fflush(stdout);
 
-    // ── DRIVER SELECTION (WebUI) ─────────────────────────────────
-    // c_driver::g_driver_choice ships as -1, which makes the
-    // constructor print its interactive menu and block on stdin.
-    // Started by the module daemon there is no stdin, so the loader
-    // would authenticate and then hang here forever. Setting the
-    // choice first skips the menu entirely.
-    //   1 QX1  2 GT  3 rt-dev  4 rt-proc  5 QX2
-    //   6 TB-KPM  7 DitPro-KPM  8 KMA-KPM  9 LDK-KPM
-    c_driver::g_driver_choice = ix_get_driver_choice();
-    printf("[INX] driver mode %d (%s)\n",
-           c_driver::g_driver_choice, ix_get_selected_driver().c_str());
-    fflush(stdout);
+    // ── MODE ─────────────────────────────────────────────────────
+    // Asked right after the key, before anything else happens.
+    //
+    //   Normal Mode  apply the hologram patch, load NO kernel driver.
+    //                g_driver stays null, which Read<T>/Write<T> already
+    //                handle by falling back to process_vm_* (bool.h), so
+    //                the menu runs; it greys its ESP section and shows
+    //                DRIVER REQUIRED instead of pretending to work.
+    //   Kernel Mode  no hologram patch; pick one of two drivers.
+    //
+    // Only asked when there is a terminal to ask on. Launched by the
+    // daemon there is no stdin, so the WebUI's driver choice decides and
+    // the run stays in Kernel Mode, which is the existing behaviour.
+    bool normal_mode = false;
+    const bool have_tty = isatty(STDIN_FILENO);
 
-    g_driver = new c_driver();
-    printf("[+] Ready\n");
+    if (have_tty) {
+        printf("\n\033[1mSelect mode\033[0m\n");
+        printf("  1) Normal Mode\n");
+        printf("  2) Kernel Mode\n");
+        printf("Choice [1-2]: ");
+        fflush(stdout);
+        char line[32] = {0};
+        if (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2')
+            normal_mode = false;
+        else
+            normal_mode = true;
+    }
+
+    g_NormalMode.store(normal_mode, std::memory_order_release);
+
+    if (normal_mode) {
+        // Quiet on purpose: no paths, no hashes, no offsets on screen.
+        printf("\n  Working");
+        fflush(stdout);
+        std::string holo_detail;
+        const bool holo_ok = IxHologramPatch(/*quiet=*/true, &holo_detail);
+        printf("\n");
+        if (holo_ok) printf("\033[92m  Ready.\033[0m\n");
+        else         printf("\033[91m  Could not complete.\033[0m\n");
+        fflush(stdout);
+
+        // No driver in this mode. Left null deliberately -- see above.
+        g_driver = nullptr;
+        printf("[+] Ready (Normal Mode)\n");
+    } else {
+        // ── DRIVER SELECTION ─────────────────────────────────────
+        // Two drivers only, by request. The numbers are the existing
+        // ix_driver_init.h choices, not new ones: paradise = 10,
+        // ditkpm = 12, so nothing about driver init changes.
+        int choice = ix_get_driver_choice();
+        if (have_tty) {
+            printf("\n\033[1mSelect driver\033[0m\n");
+            printf("  1) Dit Pro KPM\n");
+            printf("  2) Paradise\n");
+            printf("Choice [1-2]: ");
+            fflush(stdout);
+            char line[32] = {0};
+            if (fgets(line, sizeof(line), stdin) != nullptr && line[0] == '2')
+                choice = 10;   // paradise
+            else
+                choice = 12;   // ditkpm
+        }
+        c_driver::g_driver_choice = choice;
+        printf("[INX] driver mode %d (%s)\n",
+               c_driver::g_driver_choice, ix_get_selected_driver().c_str());
+        fflush(stdout);
+
+        g_driver = new c_driver();
+        printf("[+] Ready\n");
+    }
 
     screen_config();
     bool lms=false,pms=false;

@@ -83,6 +83,11 @@ struct Bindings {
   const int*  daysTotal = nullptr;
   const int*  devUsed = nullptr;
   const int*  devMax = nullptr;
+
+  // Normal Mode: no kernel driver was loaded, so the ESP section is
+  // shown greyed with DRIVER REQUIRED and the Inject button appears.
+  const bool* normalMode = nullptr;
+  const bool* injectApplied = nullptr;
 };
 
 Bindings& GetBindings();
@@ -102,6 +107,7 @@ struct State {
   // live in the engine, so it only asks.
   bool requestExit = false;
   bool requestSave = false;
+  bool requestInject = false;
 
   bool open = true;
 };

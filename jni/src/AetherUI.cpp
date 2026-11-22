@@ -311,7 +311,13 @@ bool Hover(float x0, float y0, float x1, float y1) {
   return gMouse.x >= x0 && gMouse.x <= x1 && gMouse.y >= y0 && gMouse.y <= y1;
 }
 
+// Set while a section is greyed out. Checked by the three hit tests
+// rather than by each widget, so nothing can be pressed through a lock
+// just because its widget forgot to ask.
+bool gLockInput = false;
+
 bool Click(uint32_t id, float x0, float y0, float x1, float y1) {
+  if (gLockInput) return false;
   const bool hov = Hover(x0, y0, x1, y1);
   if (hov && ImGui::IsMouseClicked(0)) gActive = id;
   bool fired = false;
@@ -323,6 +329,7 @@ bool Click(uint32_t id, float x0, float y0, float x1, float y1) {
 }
 
 bool Held(uint32_t id, float x0, float y0, float x1, float y1) {
+  if (gLockInput) return false;
   if (Hover(x0, y0, x1, y1) && ImGui::IsMouseClicked(0)) gActive = id;
   return gActive == id && ImGui::IsMouseDown(0);
 }
@@ -771,14 +778,56 @@ void PageVisual(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
+  const bool normal = b.normalMode && *b.normalMode;
+  const bool injected = b.injectApplied && *b.injectApplied;
 
   TxtB(X, 36.f, 15.5f, p.text, "Visual", 0);
   Txt(X + TxtWU(15.5f, "Visual") + 10.f, 42.f, 4.6f, p.textFaint, "ESP", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim, "Drawing, overlay and colours.", 0);
 
-  const float y0 = 100.f, y1 = 400.f;
+  float y0 = 100.f;
+
+  // ── Normal Mode: Inject first, then the ESP section greyed out ──
+  // Inject is the first thing on the landing page, as asked. The ESP
+  // controls below it stay visible but dead: a driver is what ESP needs
+  // and Normal Mode did not load one, so showing them live would be a
+  // lie the user only finds out about in a match.
+  if (normal) {
+    Txt(X, 78.f, 5.4f, p.textDim, "Normal Mode. Inject first.", 0);
+
+    CardBg(dl, X, y0, 978.f, y0 + 92.f);
+    CardHead(X + 18.f, y0 + 16.f, "Inject", "ASSET PATCH");
+
+    if (injected) {
+      dl->AddCircleFilled(Pr(X + 24.f, y0 + 62.f), 2.2f * Ds(X + 24.f, y0 + 62.f),
+                          Col(58, 208, 128, 0.95f), 12);
+      Txt(X + 34.f, y0 + 56.f, 5.6f, Col(56, 190, 120, 0.95f), "Injected", 0);
+      TxtWrap(X + 150.f, y0 + 52.f, 790.f, 4.6f, p.textDim,
+              "The real values go back by themselves the moment you reach "
+              "the lobby. Nothing else to press.");
+    } else {
+      if (Button(dl, H("inject"), X + 18.f, y0 + 48.f, 200.f, 32.f, "INJECT", true))
+        g.requestInject = true;
+      TxtWrap(X + 240.f, y0 + 52.f, 700.f, 4.6f, p.textDim,
+              "Writes the asset bundle patch. After that the real values "
+              "are restored automatically on lobby entry.");
+    }
+    y0 += 106.f;
+  } else {
+    Txt(X, 78.f, 5.4f, p.textDim, "Box, skeleton, name, health, distance.", 0);
+  }
+
+  const float y1 = normal ? 430.f : 400.f;
   const float wCol = 236.f, gap = 14.f;
   const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
+
+  // Everything from here down is the ESP section. Locked in Normal Mode:
+  // gLockInput makes every hit test refuse, and gAlpha is pulled down so
+  // it reads as unavailable rather than merely unresponsive.
+  const float alphaKeep = gAlpha;
+  if (normal) {
+    gLockInput = true;
+    gAlpha = alphaKeep * 0.38f;
+  }
 
   CardBg(dl, c1, y0, c1 + wCol, y1);
   CardHead(c1 + 18.f, y0 + 16.f, "Draw", "ELEMENTS");
@@ -791,8 +840,6 @@ void PageVisual(ImDrawList* dl) {
     y += BindRow(dl, "v.hp",   c1 + 18.f, y, w, b.showHealth,   "Health");
     y += BindRow(dl, "v.dist", c1 + 18.f, y, w, b.showDistance, "Distance");
     y += BindRow(dl, "v.line", c1 + 18.f, y, w, b.showLine,     "ESP Line");
-    // Moved over from the Overlay card to make room for Aim Point, and
-    // it reads better next to the elements it sizes anyway.
     y += 8.f;
     y += BindSliderI(dl, "v.tsz", c1 + 18.f, y, w, b.textSize, 10, 50,
                      "Text Size", "");
@@ -806,106 +853,72 @@ void PageVisual(ImDrawList* dl) {
     y += BindToggle(dl, "v.360",  c2 + 18.f, y, w, b.is3600,        "360 Alert");
     y += BindToggle(dl, "v.fovc", c2 + 18.f, y, w, b.showFovCircle, "FOV Circle");
     y += BindToggle(dl, "v.alin", c2 + 18.f, y, w, b.showAimLine,   "Aim Line");
-    y += 8.f;
-    // Aim FOV lives here, next to the circle that draws it, instead of
-    // on the Aim page. Same flag the old menu's FOV Range slider wrote,
-    // same 1..360 range.
-    // 1..180: fovRadius = (AimFov/180)*(screenH/2), so 180 already is
-    // half the screen and the 360 this used to allow was off the scale.
+    y += 6.f;
     y += BindSliderF(dl, "v.fov", c2 + 18.f, y, w, b.aimFov, 1.f, 180.f,
                      "Aim FOV", "%.0f");
-    y += 6.f;
-    const float apY = y;
-    y += BindToggle(dl, "v.aimpt", c2 + 18.f, y, w, b.aimPoint, "Aim Point");
-    if (b.aimPoint) {
-      TxtWrap(c2 + 18.f, apY + 34.f, w, 4.4f, p.textFaint,
-              "When you drag it's activated automatically");
-    }
   }
 
   CardBg(dl, c3, y0, c3 + wCol, y1);
   CardHead(c3 + 18.f, y0 + 16.f, "Colour", "BOX / LINE");
   {
     const float x = c3 + 18.f, w = wCol - 36.f;
-    // Mode indices are the engine's own: 0 Static, 1 Health, 2 Distance,
-    // 3 Rainbow. Only Static reads the swatch underneath it; the other
-    // three compute the colour per entity, so the swatch is left visible
-    // but simply has no effect there.
     static const char* modes[4] = {"Flat", "HP", "Dist", "RGB"};
-
     Txt(x, y0 + 52.f, 5.4f, p.textDim, "Box", 0);
     if (b.boxColorMode) {
       Segmented(dl, H("c.bm"), x, y0 + 68.f, w, 22.f, b.boxColorMode, modes, 4);
       Swatches(dl, "c.bc", x, y0 + 98.f, w, b.boxColor);
     }
-
     Txt(x, y0 + 136.f, 5.4f, p.textDim, "ESP Line", 0);
     if (b.lineColorMode) {
       Segmented(dl, H("c.lm"), x, y0 + 152.f, w, 22.f, b.lineColorMode, modes, 4);
       Swatches(dl, "c.lc", x, y0 + 182.f, w, b.lineColor);
     }
-
-    TxtWrap(x, y0 + 214.f, w, 4.4f, p.textFaint,
-            "Flat uses the swatch. HP, Dist and RGB compute the colour per "
-            "player, so the swatch does nothing in those three.");
   }
 
-  Txt(X, 440.f, 4.6f, p.textFaint,
-      "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+  if (normal) {
+    gLockInput = false;
+    gAlpha = alphaKeep;
+    // Drawn after the lock is lifted so it sits at full strength on top
+    // of the dimmed section it is talking about.
+    const float bx0 = X + 250.f, bx1 = 978.f - 250.f;
+    const float by0 = (y0 + y1) * 0.5f - 24.f;
+    DropShadow(dl, bx0, by0, bx1, by0 + 48.f, 10.f, 4.f, 0.20f);
+    FillRR(dl, bx0, by0, bx1, by0 + 48.f, 10.f, Col(228, 76, 76, 0.92f));
+    Txt((bx0 + bx1) * 0.5f, by0 + 12.f, 7.4f, Col(255, 255, 255, 0.98f),
+        "DRIVER REQUIRED", 1, 1.4f);
+    Txt((bx0 + bx1) * 0.5f, by0 + 30.f, 4.4f, Col(255, 255, 255, 0.86f),
+        "Restart in Kernel Mode to use ESP", 1);
+  } else {
+    Txt(X, 440.f, 4.6f, p.textFaint,
+        "Bound to the engine's own flags. An unbound control is not drawn.", 0);
+  }
 }
 
 // ================================================================ Page: Aim
-// Aim Silent, Hardware BT and Hardware BT's own hit mode. Aimbot, Body
-// Kill, Brutal BT and Drag Headshot are still bound (AetherUI.h) but are
-// not drawn here, so the saved config keeps deciding them.
+// Aim Point only. Aim Silent, Hardware BT and the BT hit mode were taken
+// off this page by request. Their flags are still bound in AetherUI.h and
+// their engine threads are untouched, so putting any of them back is one
+// BindToggle line -- nothing was deleted from the engine.
 void PageAim(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
 
   TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
-  Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
-  Txt(X, 78.f, 5.4f, p.textDim,
-      "Hardware BT writes directly. Aim Silent uses the breakpoint path.", 0);
+  Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "AIM POINT", 0, 1.5f);
+  Txt(X, 78.f, 5.4f, p.textDim, "Engages on its own while you drag.", 0);
 
-  const float y0 = 100.f, wCol = 360.f;
+  const float y0 = 100.f, wCol = 420.f;
 
-  CardBg(dl, X, y0, X + wCol, 296.f);
-  CardHead(X + 18.f, y0 + 16.f, "Primary", "AIM");
+  CardBg(dl, X, y0, X + wCol, y0 + 132.f);
+  CardHead(X + 18.f, y0 + 16.f, "Aim Point", "DRAG");
   {
-    float y = y0 + 58.f;
     const float w = wCol - 36.f;
-    y += BindToggle(dl, "a.silent", X + 18.f, y, w, b.aimSilent,  "Aim Silent");
-    y += BindToggle(dl, "a.hwbt",   X + 18.f, y, w, b.hardwareBT, "Hardware BT");
-    const float apY = y;
-    y += BindToggle(dl, "a.aimpt",  X + 18.f, y, w, b.aimPoint,   "Aim Point");
+    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, w, b.aimPoint, "Aim Point");
     if (b.aimPoint) {
-      Txt(X + 18.f, apY + 32.f, 4.6f, p.textFaint,
+      Txt(X + 18.f, y0 + 100.f, 4.8f, p.textFaint,
           "When you drag it's activated automatically", 0);
     }
-  }
-
-  // Hardware BT's two extra modes, back as asked. These are the engine's
-  // chestRate values, which it clamps to 1..3 and forces to 1 whenever
-  // Hardware BT is off: 1 = head only, 2 = body, 3 = legit (70% body,
-  // 30% head). Shown as a 3-way because that is what the value is -- a
-  // mode, not a percentage, which is why the old 0..100 slider here was
-  // wrong.
-  const float m0 = 308.f;
-  CardBg(dl, X, m0, X + wCol, m0 + 116.f);
-  CardHead(X + 18.f, m0 + 16.f, "BT Mode", "HIT POINT");
-  if (b.chestRateSave) {
-    static const char* bt[3] = {"Head", "Body", "Legit"};
-    int idx = *b.chestRateSave - 1;
-    if (idx < 0) idx = 0;
-    if (idx > 2) idx = 2;
-    Segmented(dl, H("a.btmode"), X + 18.f, m0 + 48.f, wCol - 36.f, 26.f, &idx, bt, 3);
-    *b.chestRateSave = idx + 1;
-
-    const char* hint = "Head only";
-    if (idx == 1) hint = "Body, 100%";
-    else if (idx == 2) hint = "Legit: 70% body, 30% head";
-    Txt(X + 18.f, m0 + 86.f, 4.8f, p.textFaint, hint, 0);
   }
 
   Txt(X, 440.f, 4.6f, p.textFaint,
@@ -923,8 +936,8 @@ void PageExploit(ImDrawList* dl) {
   Txt(X, 78.f, 5.4f, p.textDim, "Ghost, recoil, reload and write mode.", 0);
 
   const float y0 = 100.f, y1 = 400.f;
-  const float wCol = 236.f, gap = 14.f;
-  const float c1 = X, c2 = X + wCol + gap, c3 = X + (wCol + gap) * 2.f;
+  const float wCol = 360.f, gap = 26.f;
+  const float c1 = X, c2 = X + wCol + gap;
 
   CardBg(dl, c1, y0, c1 + wCol, y1);
   CardHead(c1 + 18.f, y0 + 16.f, "Combat", "FIGHT");
@@ -945,22 +958,9 @@ void PageExploit(ImDrawList* dl) {
     y += BindToggle(dl, "x.mute",  c2 + 18.f, y, w, b.soundMuted, "Sound Muted");
   }
 
-  // Moved here from the Aim page, which is where it was asked for.
-  CardBg(dl, c3, y0, c3 + wCol, y1);
-  CardHead(c3 + 18.f, y0 + 16.f, "Write Mode", "AIM SILENT");
-  {
-    float y = y0 + 54.f;
-    const float w = wCol - 36.f;
-    y += BindToggle(dl, "x.nw", c3 + 18.f, y, w, b.normalWrite, "Normal Write");
-    TxtWrap(c3 + 18.f, y + 8.f, w, 4.6f, p.textDim,
-            "Aim Silent only. Hardware BT was put back on its original direct "
-            "write and has no breakpoint path left to switch.\n\n"
-            "Off: Aim Silent goes through the Paradise EXECUTE breakpoint, "
-            "which rewrites the game's own store instruction.\n\n"
-            "On: it releases the breakpoints and writes the direction field "
-            "directly.\n\n"
-            "A mode you pick, not a fallback. It never switches itself.");
-  }
+  // [REMOVED] the "Write Mode" card. Its only subject was Aim Silent,
+  // which is no longer a control on the Aim page, so the toggle had
+  // nothing left to switch. g_DirNormalWrite itself is untouched.
 
   Txt(X, 440.f, 4.6f, p.textFaint,
       "Bound to the engine's own flags. An unbound control is not drawn.", 0);

@@ -347,6 +347,17 @@ inline void RenderSingleMenuWindow() {
             ab.devMax     = &s_dMax;
         }
 
+        // Normal Mode / inject state. Bindings takes plain const bool*,
+        // and these live as std::atomic<bool> in ix_ff_patch.h, so they
+        // are read once per frame into statics the menu can point at.
+        {
+            static bool s_normal = false, s_injected = false;
+            s_normal   = g_NormalMode.load(std::memory_order_acquire);
+            s_injected = g_InjectApplied.load(std::memory_order_acquire);
+            ab.normalMode    = &s_normal;
+            ab.injectApplied = &s_injected;
+        }
+
         AetherUI::Draw(scrW, scrH, 1.0f);
 
         // ── SYNC → the globals the hook threads actually read ──────
@@ -405,6 +416,18 @@ inline void RenderSingleMenuWindow() {
         // menu's Exit button used.
         {
             AetherUI::State& ast = AetherUI::GetState();
+            // Inject: writes the asset bundle bytes. The restore of the
+            // real values is NOT done here -- it happens by itself on
+            // lobby entry (IxLobbyRestoreTick, called from the ESP scan),
+            // which is why there is no Connect Driver button.
+            if (ast.requestInject) {
+                ast.requestInject = false;
+                std::string d;
+                const bool ok = IxAssetPatch(&d);
+                if (ok) g_InjectApplied.store(true, std::memory_order_release);
+                printf("[INX] inject: %s (%s)\n", ok ? "ok" : "failed", d.c_str());
+                fflush(stdout);
+            }
             if (ast.requestSave) {
                 ast.requestSave = false;
                 UpdateAndSaveSettings();
