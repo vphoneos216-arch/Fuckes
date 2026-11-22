@@ -268,6 +268,30 @@ static inline const std::string& kd_writable_dir() {
     // first, as originally intended.
     std::vector<std::string> candidateList;
 
+    // [FIX — "automatically key save working nahi hai"] Root cause: the
+    // binaries did not agree on where the store is.
+    //
+    //   inx_login_@api  is built WITHOUT IX_INTERACTIVE_CLI, so it took
+    //                   the first app-data candidate further down and
+    //                   saved the key there.
+    //   inx_standalone  is built WITH it, so the block right below put
+    //                   its own exe directory first and it looked for
+    //                   the key there.
+    //
+    // One binary saved, the other looked somewhere else and found
+    // nothing, so kd_load_saved_key() returned empty and the key had to
+    // be typed again on every run. The save itself was never broken.
+    //
+    // This candidate goes FIRST for every build so they all land on the
+    // same file: the module directory when the module is installed --
+    // which is where the login binary already lives -- otherwise a fixed
+    // path that does not move when the binary does. The write probe
+    // below still applies, so a read-only module mount just falls
+    // through to the next candidate.
+    if (access("/data/adb/modules/inx_mods", F_OK) == 0)
+        candidateList.push_back("/data/adb/modules/inx_mods/.kd_store");
+    candidateList.push_back("/data/local/tmp/.kd_store");
+
 #ifdef IX_INTERACTIVE_CLI
     // [FIX — standalone key not saving] The module build's candidate
     // order (below) tries com.invisiblex.loader's app-data folders

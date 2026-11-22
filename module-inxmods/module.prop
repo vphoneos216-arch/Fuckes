@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v5.9 Mode asked first (driver prompt out of launcher), recover-then-patch, Exit restores, Normal Mode runs no threads
+version=v6.0 Root cause: duplicate Step-Driver prompt removed, terminal goes quiet, per-patch state, unified key store
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

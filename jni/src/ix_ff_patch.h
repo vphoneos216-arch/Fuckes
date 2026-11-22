@@ -296,14 +296,40 @@ static inline bool IxAssetPatch(std::string* detail) {
     return true;
 }
 
-// ── RESTORE (the "real value") ────────────────────────────────────────
-// Copies every .stockbak back over its file. Covers both patches, so one
-// call undoes whatever has been applied this session.
-static inline int IxRestoreStock(std::string* detail) {
+// ── STATE CHECKS ──────────────────────────────────────────────────────
+// "Is it patched right now?" answered from the bytes on disk, not from a
+// flag this process is keeping, so it is still right after a crash, a
+// force-stop, or a run that never pressed Exit.
+static inline bool IxAssetIsPatched() {
+    const std::string f = IxPickExisting(IxAssetPaths(), kAssetExpectSize);
+    if (f.empty()) return false;
+    unsigned char marker = 0;
+    const int fd = open(f.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    const ssize_t r = pread(fd, &marker, 1, (off_t)kAssetMarkerOff);
+    close(fd);
+    return r == 1 && marker == 0x4e;      // 0x48 stock, 0x4e patched
+}
+
+static inline bool IxHologramIsPatched() {
+    const std::string f = IxPickExisting(IxPdcachePaths(), 32);
+    if (f.empty()) return false;
+    std::vector<unsigned char> buf;
+    if (!IxReadAll(f, buf)) return false;
+    // Patched means the first pair's REPLACEMENT is the one in the file.
+    long off = -1;
+    return IxCountPattern(buf, kHolo[0].repl, kHolo[0].len, &off) > 0;
+}
+
+// ── RESTORE ───────────────────────────────────────────────────────────
+// Each file on its own, because the two patches are now unpatched at
+// different points: Kernel Mode takes both back out, Normal Mode only
+// the asset (its hologram patch is meant to stay), and Exit takes out
+// whatever is still applied.
+static inline int IxRestoreFrom(const std::vector<std::string>& cands,
+                                std::string* detail) {
     int restored = 0;
-    std::vector<std::string> all = IxPdcachePaths();
-    for (const auto& a : IxAssetPaths()) all.push_back(a);
-    for (const auto& f : all) {
+    for (const auto& f : cands) {
         const std::string b = f + ".stockbak";
         if (IxFileSize(b) > 0 && IxFileSize(f) > 0) {
             if (IxCopyFile(b, f)) ++restored;
@@ -313,7 +339,17 @@ static inline int IxRestoreStock(std::string* detail) {
     return restored;
 }
 
-// [REMOVED] IxLobbyRestoreTick(). The restore used to fire by itself on
-// lobby entry; it did not work reliably, so the Exit button is the only
-// thing that restores now. g_RestoreDone is kept because Exit still
-// latches on it.
+static inline int IxRestoreAsset(std::string* detail) {
+    return IxRestoreFrom(IxAssetPaths(), detail);
+}
+
+static inline int IxRestoreHologram(std::string* detail) {
+    return IxRestoreFrom(IxPdcachePaths(), detail);
+}
+
+// Both, for the Exit button.
+static inline int IxRestoreStock(std::string* detail) {
+    std::vector<std::string> all = IxPdcachePaths();
+    for (const auto& a : IxAssetPaths()) all.push_back(a);
+    return IxRestoreFrom(all, detail);
+}

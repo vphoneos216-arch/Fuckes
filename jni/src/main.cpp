@@ -506,6 +506,12 @@ static std::string ix_extract_embedded_collider_stub() {
 }
 #endif
 
+// [NEW] Once the prompts are done the terminal goes quiet: every later
+// line still reaches run.log, it just stops being written to the screen.
+// The point is that none of the driver probing, symbol lookups or engine
+// chatter is on display -- what runs in the backend is nobody's business.
+static std::atomic<bool> g_QuietTerminal{false};
+
 #ifdef IX_INTERACTIVE_CLI
 // [NEW — "error terminal mein pura dikhna chahiye"] Terminal apps
 // (Termux etc.) have limited scrollback, so a long run's early output
@@ -538,7 +544,9 @@ static void ix_install_output_tee() {
         ssize_t n;
         while ((n = read(pipeFds[0], buf, sizeof(buf))) > 0) {
             ssize_t off = 0;
-            while (off < n) { ssize_t w = write(realStdout, buf + off, n - off); if (w <= 0) break; off += w; }
+            if (!g_QuietTerminal.load(std::memory_order_acquire)) {
+                while (off < n) { ssize_t w = write(realStdout, buf + off, n - off); if (w <= 0) break; off += w; }
+            }
             off = 0;
             while (off < n) { ssize_t w = write(logFd,     buf + off, n - off); if (w <= 0) break; off += w; }
         }
@@ -665,7 +673,70 @@ void ix_retry_collider_injection() {
 // whatever put it on disk), detached fork+exec, half a second to settle.
 // Resolved relative to this binary's own location (login.h's
 // kd_exe_dir()) since a standalone run has no module directory.
-static void ix_interactive_driver_and_menu_prompt() {
+// [SPLIT OUT] Loading Paradise's .ko.sh used to be buried inside the
+// interactive prompt below. The prompt is gone -- it was the "Step -
+// Driver" / "Step - Menu" pair that appeared before the mode question and
+// asked everything twice -- but the load itself is still wanted, so it
+// lives on its own and Kernel Mode calls it after the driver is chosen.
+// Silent: its findings go to run.log, not the screen.
+static void ix_load_paradise_ko() {
+    std::string rel;
+    FILE* p = popen("uname -r 2>/dev/null", "r");
+    if (p) {
+        char buf[256];
+        if (fgets(buf, sizeof(buf), p)) rel = buf;
+        pclose(p);
+    }
+    while (!rel.empty() && (rel.back() == '\n' || rel.back() == '\r')) rel.pop_back();
+
+    int major = 0, minor = 0;
+    if (!rel.empty()) sscanf(rel.c_str(), "%d.%d", &major, &minor);
+    const int kv = major * 1000 + minor;
+
+    std::string sub;
+    if      (kv >= 5010 && kv <= 6006) sub = "paradise_old";
+    else if (kv >= 5010 && kv <= 6018) sub = "paradise_new";
+    if (sub.empty()) {
+        printf("[INX] kernel %s outside Paradise range — no .ko load\n",
+               rel.empty() ? "?" : rel.c_str());
+        return;
+    }
+
+    char verbuf[32];
+    snprintf(verbuf, sizeof(verbuf), "%d.%d", major, minor);
+
+    // The module ships the drivers, so look there first and only then
+    // next to the binary. The old code checked the binary's directory
+    // alone, which is why a module install still reported "No driver
+    // script for kernel ...".
+    const std::string cands[] = {
+        std::string("/data/adb/modules/inx_mods/drivers/") + sub + "/" + verbuf + ".ko.sh",
+        kd_exe_dir() + "/drivers/" + sub + "/" + verbuf + ".ko.sh",
+    };
+    std::string path;
+    for (const auto& c : cands) if (access(c.c_str(), F_OK) == 0) { path = c; break; }
+    if (path.empty()) {
+        printf("[INX] no driver script for kernel %s (%s)\n", rel.c_str(), sub.c_str());
+        return;
+    }
+
+    chmod(path.c_str(), 0755);
+    chown(path.c_str(), 0, 0);
+    printf("[INX] loading driver: %s\n", path.c_str());
+    pid_t child = fork();
+    if (child == 0) {
+        setsid();
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
+        execl("/system/bin/sh", "sh", path.c_str(), (char*)nullptr);
+        execl(path.c_str(), path.c_str(), (char*)nullptr);
+        _exit(127);
+    } else if (child > 0) {
+        usleep(500 * 1000);
+    }
+}
+
+[[maybe_unused]] static void ix_interactive_driver_and_menu_prompt() {
     // [NARROWED, then extended] Paradise/DitPro were the only two shown
     // here; every other driver name ix_driver_init.h understands still
     // works if set via IX_DRIVER_NAME directly. TwT and Wind (Options
@@ -3066,11 +3137,13 @@ int main(int argc,char* argv[]){
         g_Srv.valid       = true;
     }
 
-    printf("\n[LAUNCHING InvisibleX Reborn]\n");
-
-#ifdef IX_INTERACTIVE_CLI
-    ix_interactive_driver_and_menu_prompt();
-#endif
+    // [REMOVED] the "[LAUNCHING InvisibleX Reborn]" banner and the
+    // ix_interactive_driver_and_menu_prompt() call. That prompt is the
+    // root cause of the double questioning: it asked "Step - Driver"
+    // (5 entries) and "Step - Menu" before the mode question, so the
+    // driver got picked twice and the menu mode twice. Only the mode
+    // flow below asks anything now. The function is still compiled but
+    // unreachable, and its .ko.sh load moved to ix_load_paradise_ko().
 
     LoadMenuOpenMode();   // config default; Kernel Mode asks and overrides
 
@@ -3102,17 +3175,28 @@ int main(int argc,char* argv[]){
 
     g_NormalMode.store(normal_mode, std::memory_order_release);
 
-    // ── RECOVER FIRST ────────────────────────────────────────────
-    // Before anything is patched, put back whatever a previous run left
-    // behind. A .stockbak only exists where this loader has patched
-    // before, so on a clean device this is a no-op; after a session that
-    // ended without Exit it is what takes the modded values back out.
-    // Done in both modes: Kernel Mode never patches, but it should not
-    // inherit Normal Mode's leftovers either.
+    // ── PATCH STATE ──────────────────────────────────────────────
+    // Both flows start by asking the files themselves what is applied,
+    // so a run that crashed or was force-stopped is cleaned up rather
+    // than inherited. The two patches are handled separately because
+    // they are wanted in different states:
+    //
+    //   Normal Mode  asset must be OFF at startup (Inject turns it on);
+    //                hologram must be ON, and is left alone if it
+    //                already is, so it is never applied twice.
+    //   Kernel Mode  both must be OFF. The hologram patch is never
+    //                applied in this mode at all.
     {
         std::string rd;
-        const int rn = IxRestoreStock(&rd);
-        if (rn > 0) printf("[INX] recovered %d patched file(s)\n", rn);
+        if (IxAssetIsPatched()) {
+            const int n = IxRestoreAsset(&rd);
+            printf("[INX] asset was patched -> unpatched (%d)\n", n);
+        }
+        if (!normal_mode && IxHologramIsPatched()) {
+            const int n = IxRestoreHologram(&rd);
+            printf("[INX] hologram was patched -> unpatched (%d)\n", n);
+        }
+        g_InjectApplied.store(false, std::memory_order_release);
         g_RestoreDone.store(false, std::memory_order_release);
     }
 
@@ -3128,11 +3212,18 @@ int main(int argc,char* argv[]){
             return 1;
         }
 
+        // Already patched from an earlier run -> leave it, do not do it
+        // a second time.
+        bool holo_ok = IxHologramIsPatched();
+        if (holo_ok) {
+            printf("\n\033[92m  Ready.\033[0m\n");
+            fflush(stdout);
+        } else {
         // Quiet on purpose: no paths, no hashes, no offsets on screen.
         printf("\n  Working");
         fflush(stdout);
         std::string holo_detail;
-        const bool holo_ok = IxHologramPatch(/*quiet=*/true, &holo_detail);
+        holo_ok = IxHologramPatch(/*quiet=*/true, &holo_detail);
         printf("\n");
         if (!holo_ok) {
             printf("\033[91m  PROCESS FAILED\033[0m\n");
@@ -3141,10 +3232,11 @@ int main(int argc,char* argv[]){
         }
         printf("\033[92m  Ready.\033[0m\n");
         fflush(stdout);
+        }
 
         // No driver in this mode. Left null deliberately -- see above.
         g_driver = nullptr;
-        printf("[+] Ready (Normal Mode)\n");
+        g_QuietTerminal.store(true, std::memory_order_release);
     } else {
         // ── DRIVER SELECTION ─────────────────────────────────────
         // Two drivers only, by request. The numbers are the existing
@@ -3181,12 +3273,16 @@ int main(int argc,char* argv[]){
             fflush(stdout);
         }
         c_driver::g_driver_choice = choice;
+
+        // From here on nothing more belongs on the screen.
+        g_QuietTerminal.store(true, std::memory_order_release);
+
         printf("[INX] driver mode %d (%s)\n",
                c_driver::g_driver_choice, ix_get_selected_driver().c_str());
+        if (choice == 10) ix_load_paradise_ko();
         fflush(stdout);
 
         g_driver = new c_driver();
-        printf("[+] Ready\n");
     }
 
     screen_config();
