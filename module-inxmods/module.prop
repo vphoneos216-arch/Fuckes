@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.1 Key save fixed (store search + master key no longer clobbered), draggable pill, mode label, 5s patch removal, key countdown
+version=v6.2 Simple key store in /data/local/tmp, countdown moved into Info, 5s recovery restores both patches
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

@@ -345,6 +345,11 @@ inline void RenderSingleMenuWindow() {
             ab.daysTotal  = &s_dTot;
             ab.devUsed    = &s_dUsed;
             ab.devMax     = &s_dMax;
+
+            // Recomputed every frame so the Info card's countdown ticks.
+            static long long s_remainSecs = -1;
+            s_remainSecs  = ix_key_seconds_left();
+            ab.remainSecs = &s_remainSecs;
         }
 
         // Normal Mode / inject state. Bindings takes plain const bool*,
@@ -431,9 +436,9 @@ inline void RenderSingleMenuWindow() {
                 if (ok) {
                     g_InjectApplied.store(true, std::memory_order_release);
                     // The game has the bytes once this returns; five
-                    // seconds later the file goes back to stock so
-                    // nothing modified is left sitting on disk. Aim
-                    // Point stays on for the session regardless.
+                    // seconds later BOTH patched files go back to their
+                    // real values, in Normal Mode as well as Kernel.
+                    // Aim Point stays on for the session regardless.
                     ix_schedule_patch_removal(5);
                 }
                 printf("[INX] inject: %s (%s)\n", ok ? "ok" : "failed", d.c_str());

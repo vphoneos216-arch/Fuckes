@@ -1032,8 +1032,22 @@ void PageSettings(ImDrawList* dl) {
   CardHead(X + 18.f, 246.f, "Info", "LICENSE");
 
   const Bindings& b = gBind;
-  char remain[48];
-  snprintf(remain, sizeof(remain), "%d Days", b.daysRemain ? *b.daysRemain : 0);
+
+  // Live countdown, down to the second, from the server's own
+  // remaining_seconds. Falls back to the day count if that is not bound.
+  char remain[64];
+  const long long rs = b.remainSecs ? *b.remainSecs : -1;
+  if (rs >= 0) {
+    const long long d = rs / 86400;
+    const long long h = (rs % 86400) / 3600;
+    const long long m = (rs % 3600) / 60;
+    const long long sec = rs % 60;
+    if (d > 0) snprintf(remain, sizeof(remain), "%lld d  %02lld h  %02lld m  %02lld s",
+                        d, h, m, sec);
+    else       snprintf(remain, sizeof(remain), "%02lld h  %02lld m  %02lld s", h, m, sec);
+  } else {
+    snprintf(remain, sizeof(remain), "%d Days", b.daysRemain ? *b.daysRemain : 0);
+  }
 
   const char* k[4] = {"Seller Name", "Expiry", "Valid For", "Key"};
   const char* v[4] = {b.infoSeller ? b.infoSeller : "-",

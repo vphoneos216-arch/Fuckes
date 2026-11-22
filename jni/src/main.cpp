@@ -512,21 +512,23 @@ static std::string ix_extract_embedded_collider_stub() {
 // chatter is on display -- what runs in the backend is nobody's business.
 static std::atomic<bool> g_QuietTerminal{false};
 
-// [NEW] Patch auto-remove. Once Inject has written the asset bytes the
-// game has them; leaving the modified file sitting on disk afterwards
-// serves nothing, so a detached timer puts the stock bytes back five
-// seconds later. The flag stays true -- Aim Point is on for the session
-// either way -- this is only about what remains on disk.
+// [NEW] Patch auto-remove. Once Inject has run the game has the bytes;
+// leaving modified files on disk afterwards serves nothing, so a detached
+// timer puts the real values back five seconds later.
 //
-// Deliberately NOT applied to the hologram patch: that one is written
-// before the game is even opened, so removing it after five seconds
-// would mean the game never reads it at all.
+// Both patches, in both modes. In Kernel Mode the hologram was never
+// applied so that half is a no-op; in Normal Mode it was applied at
+// startup, the game read it when it launched, and by the time Inject has
+// been pressed there is nothing left that still needs it on disk.
+//
+// Feature state is untouched -- Aim Point stays on for the session. This
+// is only about what remains in the files.
 static void ix_schedule_patch_removal(int seconds) {
     std::thread([seconds]() {
         std::this_thread::sleep_for(std::chrono::seconds(seconds));
         std::string d;
-        const int n = IxRestoreAsset(&d);
-        printf("[INX] auto-remove after %ds: %d file(s) (%s)\n", seconds, n, d.c_str());
+        const int n = IxRestoreStock(&d);
+        printf("[INX] auto-recover after %ds: %d file(s) (%s)\n", seconds, n, d.c_str());
         fflush(stdout);
     }).detach();
 }
@@ -2882,6 +2884,33 @@ static void settings_tab(float a){
 // =============================================================
 
 // ── Source project NEW UI ────────────────────────────────────
+// [CHANGED] The countdown used to be drawn on the left of the screen.
+// It lives in the menu's Info card now, so this is only the expiry
+// check: at zero the patched files go back and the process stops -- the
+// same two steps the Exit button runs, because an expired key should not
+// leave modified game files behind either.
+static void ix_key_expiry_tick() {
+    if (!g_KeyDeadlineSet.load(std::memory_order_acquire)) return;
+    if (std::chrono::steady_clock::now() < g_KeyDeadline) return;
+
+    std::string d;
+    IxRestoreStock(&d);
+    printf("[INX] key expired -> restored (%s), stopping\n", d.c_str());
+    fflush(stdout);
+    main_thread_flag = false;
+    shutdown();
+    Touch_Close();
+    _exit(0);
+}
+
+// Seconds left on the key, for the Info card. Clamped at zero.
+static long long ix_key_seconds_left() {
+    if (!g_KeyDeadlineSet.load(std::memory_order_acquire)) return -1;
+    const long long n = std::chrono::duration_cast<std::chrono::seconds>(
+                            g_KeyDeadline - std::chrono::steady_clock::now()).count();
+    return n > 0 ? n : 0;
+}
+
 #include "UI/SourceMenu.h"
 // NewThemeMenu.h removed -- was a second, duplicate window; the menu above is the only one now
 #include "ix_controls.h"
@@ -3008,64 +3037,10 @@ static void ix_apply_control_sync() {
 }
 
 
-// [NEW] Left-side key countdown, drawn every frame on the background
-// draw list so it is there whether the menu is open or shut. At zero the
-// process stops, after putting the patched files back -- the same two
-// steps the Exit button runs, since an expired key should not leave
-// modified game files behind either.
-static void ix_draw_key_timer() {
-    if (!g_KeyDeadlineSet.load(std::memory_order_acquire)) return;
-
-    const auto now = std::chrono::steady_clock::now();
-    long long left = std::chrono::duration_cast<std::chrono::seconds>(
-                         g_KeyDeadline - now).count();
-
-    if (left <= 0) {
-        std::string d;
-        IxRestoreStock(&d);
-        printf("[INX] key expired -> restored (%s), stopping\n", d.c_str());
-        fflush(stdout);
-        main_thread_flag = false;
-        shutdown();
-        Touch_Close();
-        _exit(0);
-    }
-
-    const long long days = left / 86400; left %= 86400;
-    const long long hrs  = left / 3600;  left %= 3600;
-    const long long mins = left / 60;
-    const long long secs = left % 60;
-
-    char buf[48];
-    if (days > 0) snprintf(buf, sizeof(buf), "%lldd %02lld:%02lld:%02lld",
-                           days, hrs, mins, secs);
-    else          snprintf(buf, sizeof(buf), "%02lld:%02lld:%02lld",
-                           hrs, mins, secs);
-
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    if (!dl) return;
-
-    const float sh = (ui::bar::g_sh > 1.f) ? ui::bar::g_sh : 1080.f;
-    const float x  = 14.f;
-    const float y  = sh * 0.5f - 18.f;
-    const ImVec2 ts = ImGui::CalcTextSize(buf);
-    const float w  = ts.x + 20.f, h = ts.y + 12.f;
-
-    // Under a day left is worth noticing, so it turns red.
-    const ImU32 accent = (days < 1) ? IM_COL32(255, 70, 70, 235)
-                                    : IM_COL32(60, 220, 130, 225);
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
-                      IM_COL32(12, 16, 22, 165), 7.f);
-    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), accent, 7.f, 0, 1.4f);
-    dl->AddRectFilled(ImVec2(x + 2.f, y + 6.f), ImVec2(x + 4.5f, y + h - 6.f),
-                      accent, 1.5f);
-    dl->AddText(ImVec2(x + 12.f, y + 6.f), IM_COL32(236, 242, 250, 245), buf);
-}
-
 void RenderMenu(){
     if(!g_FloatingSystemReady||!g_Landscape2SecDone) return;
     if(!g_SettingsLoaded) LoadSettings();
-    ix_draw_key_timer();
+    ix_key_expiry_tick();
     if (!ix_rt_ready()) {
         /* settings file cannot unlock cheats without server secret */
         g_Cfg.showLine=g_Cfg.showBox=g_Cfg.showHealth=false;

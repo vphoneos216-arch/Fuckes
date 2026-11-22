@@ -83,6 +83,9 @@ struct Bindings {
   const int*  daysTotal = nullptr;
   const int*  devUsed = nullptr;
   const int*  devMax = nullptr;
+  // Seconds left on the key, recomputed every frame by the owner so the
+  // Info card's countdown actually ticks. -1 means unknown.
+  const long long* remainSecs = nullptr;
 
   // Normal Mode: no kernel driver was loaded, so the ESP section is
   // shown greyed with DRIVER REQUIRED and the Inject button appears.

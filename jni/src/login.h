@@ -657,6 +657,48 @@ static inline bool kd_save_key(const std::string& key) {
 
 // Tries to open one blob with one master key, mixed and unmixed.
 // Returns the key, or "" when neither works.
+// ====================================================================
+//  SIMPLE KEY STORE  —  /data/local/tmp/.inx_key
+// ====================================================================
+// The encrypted store below works, but it only works when three separate
+// things line up: the same directory in every binary, a readable master
+// key file, and the same HWID. Any one of those going sideways loses the
+// saved login, and it has.
+//
+// This is the plain version, and it is tried FIRST: one fixed path, no
+// device binding, no master key, nothing to get out of step. One valid
+// login writes the key here; the next run reads it back and tries to log
+// in with it. If the server says no, the key is simply asked for again.
+//
+// The file is 0600 and written by whoever is running the loader (root in
+// practice). It holds the licence key as text -- that is the trade for
+// having it actually survive, and it is the behaviour asked for.
+static inline const char* kd_simple_key_path() {
+    return "/data/local/tmp/.inx_key";
+}
+
+static inline bool kd_simple_save_key(const std::string& key) {
+    if (key.empty()) return false;
+    const char* path = kd_simple_key_path();
+    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    const ssize_t w = write(fd, key.data(), key.size());
+    close(fd);
+    ::chmod(path, 0600);
+    return w == (ssize_t)key.size();
+}
+
+static inline std::string kd_simple_load_key() {
+    const int fd = open(kd_simple_key_path(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return "";
+    char buf[256];
+    const ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    return kd_trim_upper(std::string(buf));
+}
+
 static inline std::string kd_try_open_blob(const std::string& raw,
                                            const unsigned char mkFile[crypto_secretbox_KEYBYTES],
                                            bool* wasLegacy) {
@@ -2411,8 +2453,11 @@ public:
         printf("  %s%s%s\n\n", COL_WHITE, hwid.c_str(), COL_RESET);
         fflush(stdout);
 
-        // 1) Saved key from a previous successful login
-        const std::string saved = kd_load_saved_key();
+        // 1) Saved key from a previous successful login.
+        // The plain store first -- one fixed path, nothing to get out of
+        // step -- then the encrypted one for anything saved before this.
+        std::string saved = kd_simple_load_key();
+        if (saved.empty()) saved = kd_load_saved_key();
         if (!saved.empty()) {
             printf("%sChecking saved license...%s\n", COL_YELLOW, COL_RESET);
             fflush(stdout);
@@ -2457,6 +2502,7 @@ public:
 
             LoginResult r = perform_login(key, hwid);
             if (r.success && kd_get_kernel_ok()) {
+                kd_simple_save_key(key);   // the one that has to survive
                 kd_save_key(key);
                 applyResult(key, r);
                 showActive();
@@ -2482,8 +2528,11 @@ public:
         curl_global_init(CURL_GLOBAL_DEFAULT);
         hwid = kd_get_hwid();
 
-        const std::string key = keyNameIn.empty() ? kd_load_saved_key()
-                                                  : kd_trim_upper(keyNameIn);
+        std::string key = kd_trim_upper(keyNameIn);
+        if (key.empty()) {
+            key = kd_simple_load_key();
+            if (key.empty()) key = kd_load_saved_key();
+        }
         LoginResult res;
         if (key.empty()) res.message = oxorany("No license key.");
         else             res = perform_login(key, hwid);
@@ -2492,6 +2541,10 @@ public:
 
         if (res.success && kd_get_kernel_ok()) {
             applyResult(key, res);
+            // Saved whichever way the key arrived: a key that came from
+            // the store is worth re-writing, since this is the run that
+            // just proved it still works.
+            kd_simple_save_key(key);
             if (!keyNameIn.empty()) kd_save_key(key);
             return true;
         }
