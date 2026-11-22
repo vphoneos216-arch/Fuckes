@@ -439,6 +439,22 @@ inline void RenderSingleMenuWindow() {
             if (ast.requestExit) {
                 ast.requestExit = false;
                 UpdateAndSaveSettings();
+
+                // [NEW] Exit is what puts the real values back now that
+                // the lobby trigger is gone. It runs before _exit(0),
+                // which skips atexit handlers and destructors, so there
+                // is no later point where this could still happen. This
+                // is also the path that cleans up after a session that
+                // actually played with the modded values.
+                {
+                    std::string rd;
+                    const int rn = IxRestoreStock(&rd);
+                    g_RestoreDone.store(true, std::memory_order_release);
+                    printf("[INX] exit: restored %d file(s) (%s)\n",
+                           rn, rd.c_str());
+                    fflush(stdout);
+                }
+
                 main_thread_flag = false;
                 shutdown();
                 Touch_Close();

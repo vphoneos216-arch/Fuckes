@@ -1226,13 +1226,6 @@ void EspThreadFunc(){
         uintptr_t originalLP = lp;
         {std::lock_guard<std::mutex>lk(g_SA_mtx); g_SA_lp = originalLP;}
 
-        /* [NEW] Lobby trigger for the "real value" restore. MM resolving
-         * is the proof the game is actually up -- it is the manager the
-         * match state itself is read from -- and matchState != 1 means
-         * not in a match, i.e. sitting in the lobby. The call latches
-         * internally, so this fires once per run and only after the
-         * Inject button has written something. See ix_ff_patch.h. */
-        IxLobbyRestoreTick(/*chain_ready=*/MM != 0, matchState);
         IxSyncSilentPercentFromChestRate();
 
         int localHP = originalLP ? ReadLocalPlayerHP(originalLP) : 0;

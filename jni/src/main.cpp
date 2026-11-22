@@ -2883,6 +2883,19 @@ static void ix_apply_control_sync() {
     // run, HardwareBT would stay stuck at whatever it was on the previous
     // run (or false on a fresh process), ignoring the checkbox entirely.
     HardwareBT        = g_Cfg.hardwareBT;
+
+    // [NEW] Normal Mode starts no feature thread at all. There is no
+    // driver in that mode, so every one of these would spin reading
+    // memory it cannot reach; the menu shows those sections locked and
+    // this makes the lock true underneath as well.
+    if (g_NormalMode.load(std::memory_order_acquire)) {
+        printf("[INX] Normal Mode — feature threads not started\n");
+        fflush(stdout);
+        BodyKill   = g_Cfg.bodyKill;
+        BodyKillHP = g_Cfg.bodyKillHP;
+        return;
+    }
+
     StartSilentAimThread();
     // StartAimLockNewThread() no longer called from here — that slot
     // now drives Drag Headshot (see StartDragHeadshotThread() below).
@@ -3089,15 +3102,44 @@ int main(int argc,char* argv[]){
 
     g_NormalMode.store(normal_mode, std::memory_order_release);
 
+    // ── RECOVER FIRST ────────────────────────────────────────────
+    // Before anything is patched, put back whatever a previous run left
+    // behind. A .stockbak only exists where this loader has patched
+    // before, so on a clean device this is a no-op; after a session that
+    // ended without Exit it is what takes the modded values back out.
+    // Done in both modes: Kernel Mode never patches, but it should not
+    // inherit Normal Mode's leftovers either.
+    {
+        std::string rd;
+        const int rn = IxRestoreStock(&rd);
+        if (rn > 0) printf("[INX] recovered %d patched file(s)\n", rn);
+        g_RestoreDone.store(false, std::memory_order_release);
+    }
+
     if (normal_mode) {
+        // The hologram file has to be there. If it is not, this is a
+        // failed process and nothing else runs -- no menu, no threads --
+        // rather than opening a menu whose patch never landed.
+        if (IxPickExisting(IxPdcachePaths(), 32).empty()) {
+            printf("\n\033[91m  PROCESS FAILED\033[0m\n");
+            printf("  Hologram file not found. Open the game once so it\n");
+            printf("  builds its cache, then run this again.\n");
+            fflush(stdout);
+            return 1;
+        }
+
         // Quiet on purpose: no paths, no hashes, no offsets on screen.
         printf("\n  Working");
         fflush(stdout);
         std::string holo_detail;
         const bool holo_ok = IxHologramPatch(/*quiet=*/true, &holo_detail);
         printf("\n");
-        if (holo_ok) printf("\033[92m  Ready.\033[0m\n");
-        else         printf("\033[91m  Could not complete.\033[0m\n");
+        if (!holo_ok) {
+            printf("\033[91m  PROCESS FAILED\033[0m\n");
+            fflush(stdout);
+            return 1;
+        }
+        printf("\033[92m  Ready.\033[0m\n");
         fflush(stdout);
 
         // No driver in this mode. Left null deliberately -- see above.
@@ -3173,7 +3215,7 @@ int main(int argc,char* argv[]){
     thread vkT(VolumeKeyThread); vkT.detach();
 
     // All threads detached — no join in game loop (crash fix)
-    StartSilentAimThread();
+    if (!g_NormalMode.load(std::memory_order_acquire)) StartSilentAimThread();
     // Body Kill has no separate thread — its threshold check runs inline
     // inside StartSilentAimThread's loop (UpdateSilentAimFast) and the FOV
     // targeting loop.
@@ -3182,9 +3224,14 @@ int main(int argc,char* argv[]){
     // the main startup sequence at all — the actual reason Collider
     // Lock did nothing even once wired to a real checkbox, and the
     // reason Aimbot has never run since being "removed".
-    StartAimLockNewThread();
-    StartAimbotThread();
-    StartEspThread();
+    // Same gate as the other startup path: no driver in Normal Mode, so
+    // the ESP and aim threads stay down instead of scanning memory they
+    // cannot read.
+    if (!g_NormalMode.load(std::memory_order_acquire)) {
+        StartAimLockNewThread();
+        StartAimbotThread();
+        StartEspThread();
+    }
     // Measurement only, and only while /sdcard/Download/ix_probe.on exists.
     // Touches no feature and no game state unless the separate override
     // trigger file is also present. See ix_pd_probe.h for what it answers.

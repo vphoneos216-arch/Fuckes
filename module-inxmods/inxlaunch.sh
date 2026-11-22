@@ -4,8 +4,10 @@
 #  Usage:  sh /data/adb/modules/inx_mods/inxlaunch.sh
 #
 #  1. Enter your license key
-#  2. Select driver
-#  3. Press Login — runs inx_login_@api and updates config.json
+#  2. Login — runs inx_login_@api
+#
+#  The mode (Kernel / Normal) and, in Kernel Mode, the driver and the
+#  menu-open mode are asked by the binary itself, after the key.
 # ============================================================
 
 MODULE_DIR="/data/adb/modules/inx_mods"
@@ -50,66 +52,19 @@ if [ -z "$KEY" ]; then
 fi
 printf '\n'
 
-# ── step 2: driver selection ─────────────────────────────────
-bold "Step 2 — Driver"
-yellow "  1) auto      (let the module choose)"
-yellow "  2) sodium    (Sodium KPM)"
-yellow "  3) kma       (KMA KPM)"
-yellow "  4) ldg       (LDG KPM)"
-yellow "  5) paradise  (Paradise — recommended)"
-yellow "  6) bing      (Bing)"
-yellow "  7) ditkpm    (Dit KPM)"
-yellow "  8) rthook    (RT Hook)"
-printf '\nSelect driver [1-8, default=1]: '
-read -r DRIVER_NUM
-
-case "$DRIVER_NUM" in
-    2) DRIVER="sodium"   ;;
-    3) DRIVER="kma"      ;;
-    4) DRIVER="ldg"      ;;
-    5) DRIVER="paradise" ;;
-    6) DRIVER="bing"     ;;
-    7) DRIVER="ditkpm"   ;;
-    8) DRIVER="rthook"   ;;
-    *) DRIVER="auto"     ;;
-esac
-
-yellow "→ Driver selected: $DRIVER"
-printf '\n'
-
-# ── step 3: write driver into config.json ────────────────────
-# Read existing config, inject driver field, write back.
-# Uses only sh + awk — no jq required on the device.
-if [ -f "$CONFIG" ]; then
-    # Remove any existing "driver" line and append the new one before the closing }
-    TMP_CFG="${CONFIG}.tmp.$$"
-    awk -v drv="$DRIVER" '
-        /^[[:space:]]*"driver"[[:space:]]*:/ { next }  # drop old driver line
-        /^[[:space:]]*\}[[:space:]]*$/ {
-            # last closing brace — inject driver before it
-            print "    \"driver\": \"" drv "\","
-        }
-        { print }
-    ' "$CONFIG" > "$TMP_CFG" 2>/dev/null
-
-    if [ -s "$TMP_CFG" ]; then
-        mv "$TMP_CFG" "$CONFIG"
-        chmod 0644 "$CONFIG"
-    else
-        rm -f "$TMP_CFG"
-        # Fallback: build a minimal config from scratch
-        printf '{\n    "driver": "%s"\n}\n' "$DRIVER" > "$CONFIG"
-        chmod 0644 "$CONFIG"
-    fi
-else
-    # config.json doesn't exist yet — create it
-    mkdir -p "$(dirname "$CONFIG")"
-    printf '{\n    "driver": "%s"\n}\n' "$DRIVER" > "$CONFIG"
-    chmod 0644 "$CONFIG"
-fi
+# ── driver selection: REMOVED ────────────────────────────────
+# This asked for the driver right after the key, which is why the
+# driver question appeared before the mode question. The binary now
+# asks the mode first and then, in Kernel Mode only, which of the two
+# drivers to use -- it sets c_driver::g_driver_choice directly, so
+# nothing has to be written into config.json here any more.
+#
+# A "driver" value already in config.json is still honoured when the
+# binary runs with no terminal (started by the daemon), which is the
+# path ix_get_driver_choice() covers.
 
 # ── step 4: run login ─────────────────────────────────────────
-bold "Step 3 — Login"
+bold "Step 2 — Login"
 yellow "→ Verifying key with server …"
 printf '\n'
 
@@ -129,7 +84,6 @@ if [ $EXIT_CODE -eq 0 ]; then
         green "  Key verified successfully."
     fi
     printf '\n'
-    cyan  "  Driver : $DRIVER"
     cyan  "  Config : $CONFIG"
     printf '\n'
     green "  Module is ready. If the game is running, the"

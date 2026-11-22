@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v5.8 Flow: mode then driver then volume-bar, Inject unlocks Aim Point, ESP red skeleton + green name
+version=v5.9 Mode asked first (driver prompt out of launcher), recover-then-patch, Exit restores, Normal Mode runs no threads
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

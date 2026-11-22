@@ -313,21 +313,7 @@ static inline int IxRestoreStock(std::string* detail) {
     return restored;
 }
 
-// ── lobby trigger ─────────────────────────────────────────────────────
-// Called from the ESP thread once per scan with the match state it just
-// read. The restore runs the first time the game is up and NOT in a
-// match, i.e. sitting in the lobby, and only after Inject has actually
-// applied something. Latched, so it happens once per run.
-static inline void IxLobbyRestoreTick(bool chain_ready, int match_state) {
-    if (!g_InjectApplied.load(std::memory_order_acquire)) return;
-    if (g_RestoreDone.load(std::memory_order_acquire)) return;
-    if (!chain_ready) return;
-    if (match_state == 1) return;          // in a match, not the lobby
-
-    std::string d;
-    const int n = IxRestoreStock(&d);
-    g_RestoreDone.store(true, std::memory_order_release);
-    printf("[INX] lobby reached -> real values restored (%d file(s), %s)\n",
-           n, d.c_str());
-    fflush(stdout);
-}
+// [REMOVED] IxLobbyRestoreTick(). The restore used to fire by itself on
+// lobby entry; it did not work reliably, so the Exit button is the only
+// thing that restores now. g_RestoreDone is kept because Exit still
+// latches on it.

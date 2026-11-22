@@ -909,9 +909,9 @@ void PageAim(ImDrawList* dl) {
 
     if (Button(dl, H("inject"), X + 18.f, y0 + 104.f, 200.f, 32.f, "INJECT", true))
       g.requestInject = true;
-    TxtWrap(X + 234.f, y0 + 108.f, wCol - 252.f, 4.5f, p.textDim,
+    TxtWrap(X + 234.f, y0 + 102.f, wCol - 252.f, 4.5f, p.textDim,
             "Writes the asset bundle patch, then Aim Point turns on and "
-            "stays on.");
+            "stays on. Exit puts the real values back.");
   } else {
     // Forced on. gLockInput keeps the row from being pressed, so the
     // toggle reads as "on and not yours to change" rather than simply
@@ -1014,10 +1014,10 @@ void PageSettings(ImDrawList* dl) {
   // empty function, there is no settings file, and every toggle already
   // reaches the engine on the frame it is flipped. Apply exists for the
   // handful of values that only the engine's own sync routine pushes.
-  TxtWrap(X + 450.f, 150.f, 500.f, 4.6f, p.textDim,
+  TxtWrap(X + 450.f, 146.f, 500.f, 4.6f, p.textDim,
           "Nothing is written to disk -- this build keeps no settings file, so "
-          "everything starts off after a restart. Exit stops the overlay and "
-          "the process.");
+          "everything starts off after a restart. Exit restores the real "
+          "values first, then stops the overlay and the process.");
 
   // ── Info ───────────────────────────────────────────────────────────
   // Four rows only, by request: who sold the key, when it expires, how
