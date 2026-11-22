@@ -313,12 +313,39 @@ inline void RenderSingleMenuWindow() {
         ab.bodyKillHP    = &g_Cfg.bodyKillHP;
         ab.chestRateSave = &g_Cfg.chestRateSave;
 
+        ab.aimPoint      = &DragHeadshot;
+
         ab.ghostHack     = &GhostHack;
         ab.noRecoil      = &NoRecoil;
         ab.noReload      = &NoReload;
         ab.floatGhost    = &g_ExploitFloatGhost;
         ab.normalWrite   = &g_DirNormalWrite;
         ab.soundMuted    = &g_Cfg.soundMuted;
+
+        // License rows for Settings > Info. g_Srv is file-static in
+        // main.cpp behind g_SrvMtx, so it is copied out under the lock
+        // into buffers that outlive this frame and the menu is handed
+        // pointers to those -- the same read the old Info card did.
+        {
+            static std::string s_key, s_seller, s_expiry;
+            static int s_dRem = 0, s_dTot = 0, s_dUsed = 0, s_dMax = 0;
+            _SrvData sd;
+            { std::lock_guard<std::mutex> lk(g_SrvMtx); sd = g_Srv; }
+            s_key    = sd.key_masked;
+            s_seller = sd.seller;
+            s_expiry = sd.expiry;
+            s_dRem   = sd.days_remain;
+            s_dTot   = sd.days_total;
+            s_dUsed  = sd.dev_used;
+            s_dMax   = sd.dev_max;
+            ab.infoKey    = s_key.c_str();
+            ab.infoSeller = s_seller.c_str();
+            ab.infoExpiry = s_expiry.c_str();
+            ab.daysRemain = &s_dRem;
+            ab.daysTotal  = &s_dTot;
+            ab.devUsed    = &s_dUsed;
+            ab.devMax     = &s_dMax;
+        }
 
         AetherUI::Draw(scrW, scrH, 1.0f);
 
@@ -358,11 +385,13 @@ inline void RenderSingleMenuWindow() {
         if (chestRate < 1) chestRate = 1;
         if (chestRate > 3) chestRate = 3;
 
-        // The same force-clears the old AIM page did every frame, kept
-        // for the same reason: these have no control any more, so a
-        // stale config.json must not be able to switch them back on.
-        DragHeadshot       = false;
-        g_Cfg.dragHeadshot = false;
+        // [CHANGED] DragHeadshot is no longer force-cleared here: it is
+        // the "Aim Point" control on the Visual and Aim pages now, so
+        // clearing it every frame would make that toggle impossible to
+        // turn on. It is mirrored into g_Cfg like the other two owned
+        // flags instead. AimMagnet and g_ExploitFloatUI stay cleared --
+        // both features are removed and have no control at all.
+        g_Cfg.dragHeadshot = DragHeadshot;
         AimMagnet          = false;
         g_ExploitFloatUI   = false;
         aimBotBoneIndex    = 0;

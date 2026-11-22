@@ -265,7 +265,12 @@ bool  AimLock      = false;
 bool  AimLockNew   = false;
 bool  Aimbot       = false;
 bool  AimSilent    = false;
-bool  DragHeadshot = false;  /* [NEW] own feature -- not AimLock/AimSilent/Aimbot. See UpdateDragHeadshotThread(). */
+/* [CHANGED] default true. This is the menu's "Aim Point": it arms only
+ * once the target's neck is inside its radius of the crosshair, so on by
+ * default means it engages when you drag onto someone and does nothing
+ * otherwise. Own feature -- not AimLock/AimSilent/Aimbot. See
+ * UpdateDragHeadshotThread(). */
+bool  DragHeadshot = true;
 /* [NEW] Set by anything that wipes the Paradise breakpoint set behind the
  * aim threads' backs (the diagnostic probe in ix_pd_probe.h does exactly
  * that, since hwbp_set replaces the whole point set and hwbp_remove clears

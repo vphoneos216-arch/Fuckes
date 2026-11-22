@@ -791,6 +791,11 @@ void PageVisual(ImDrawList* dl) {
     y += BindRow(dl, "v.hp",   c1 + 18.f, y, w, b.showHealth,   "Health");
     y += BindRow(dl, "v.dist", c1 + 18.f, y, w, b.showDistance, "Distance");
     y += BindRow(dl, "v.line", c1 + 18.f, y, w, b.showLine,     "ESP Line");
+    // Moved over from the Overlay card to make room for Aim Point, and
+    // it reads better next to the elements it sizes anyway.
+    y += 8.f;
+    y += BindSliderI(dl, "v.tsz", c1 + 18.f, y, w, b.textSize, 10, 50,
+                     "Text Size", "");
   }
 
   CardBg(dl, c2, y0, c2 + wCol, y1);
@@ -809,8 +814,13 @@ void PageVisual(ImDrawList* dl) {
     // half the screen and the 360 this used to allow was off the scale.
     y += BindSliderF(dl, "v.fov", c2 + 18.f, y, w, b.aimFov, 1.f, 180.f,
                      "Aim FOV", "%.0f");
-    y += BindSliderI(dl, "v.tsz", c2 + 18.f, y, w, b.textSize, 10, 50,
-                     "Text Size", "");
+    y += 6.f;
+    const float apY = y;
+    y += BindToggle(dl, "v.aimpt", c2 + 18.f, y, w, b.aimPoint, "Aim Point");
+    if (b.aimPoint) {
+      TxtWrap(c2 + 18.f, apY + 34.f, w, 4.4f, p.textFaint,
+              "When you drag it's activated automatically");
+    }
   }
 
   CardBg(dl, c3, y0, c3 + wCol, y1);
@@ -860,13 +870,19 @@ void PageAim(ImDrawList* dl) {
 
   const float y0 = 100.f, wCol = 360.f;
 
-  CardBg(dl, X, y0, X + wCol, 248.f);
+  CardBg(dl, X, y0, X + wCol, 296.f);
   CardHead(X + 18.f, y0 + 16.f, "Primary", "AIM");
   {
     float y = y0 + 58.f;
     const float w = wCol - 36.f;
     y += BindToggle(dl, "a.silent", X + 18.f, y, w, b.aimSilent,  "Aim Silent");
     y += BindToggle(dl, "a.hwbt",   X + 18.f, y, w, b.hardwareBT, "Hardware BT");
+    const float apY = y;
+    y += BindToggle(dl, "a.aimpt",  X + 18.f, y, w, b.aimPoint,   "Aim Point");
+    if (b.aimPoint) {
+      Txt(X + 18.f, apY + 32.f, 4.6f, p.textFaint,
+          "When you drag it's activated automatically", 0);
+    }
   }
 
   // Hardware BT's two extra modes, back as asked. These are the engine's
@@ -875,8 +891,8 @@ void PageAim(ImDrawList* dl) {
   // 30% head). Shown as a 3-way because that is what the value is -- a
   // mode, not a percentage, which is why the old 0..100 slider here was
   // wrong.
-  const float m0 = 262.f;
-  CardBg(dl, X, m0, X + wCol, m0 + 118.f);
+  const float m0 = 308.f;
+  CardBg(dl, X, m0, X + wCol, m0 + 116.f);
   CardHead(X + 18.f, m0 + 16.f, "BT Mode", "HIT POINT");
   if (b.chestRateSave) {
     static const char* bt[3] = {"Head", "Body", "Legit"};
@@ -977,25 +993,54 @@ void PageSettings(ImDrawList* dl) {
           "the process.");
 
   // ── Info ───────────────────────────────────────────────────────────
+  // Seller / expiry / remaining / total days / devices come from g_Srv,
+  // which main.cpp fills from the login result (auth.getSellerName(),
+  // getExpiryDate(), getDaysRemain(), getTotalDays(), getDevicesUsed(),
+  // getMaxDevices()). Same four rows the old menu's Info card showed,
+  // plus the device count and the key. Nothing here is a constant
+  // pretending to be live data: a row whose pointer is null prints "-".
   CardBg(dl, X, 230.f, 978.f, 430.f);
-  CardHead(X + 18.f, 246.f, "Info", "BUILD / SELLER");
+  CardHead(X + 18.f, 246.f, "Info", "LICENSE");
 
-  const char* k[4] = {"Product", "Seller", "Channel", "Version"};
-  const char* v[4] = {kInfoProduct, kInfoSeller, kInfoChannel, kInfoVersion};
+  const Bindings& b = gBind;
+  char rb[4][48];
+  snprintf(rb[0], sizeof(rb[0]), "%d Days", b.daysRemain ? *b.daysRemain : 0);
+  snprintf(rb[1], sizeof(rb[1]), "%d Days", b.daysTotal ? *b.daysTotal : 0);
+  snprintf(rb[2], sizeof(rb[2]), "%d / %d", b.devUsed ? *b.devUsed : 0,
+           b.devMax ? *b.devMax : 0);
+  snprintf(rb[3], sizeof(rb[3]), "%s", kInfoVersion);
+
+  struct Row { const char* k; const char* v; bool hi; };
+  const Row left[4] = {
+      {"Seller",    b.infoSeller ? b.infoSeller : "-", true},
+      {"Expiry",    b.infoExpiry ? b.infoExpiry : "-", false},
+      {"Remaining", rb[0], true},
+      {"Total",     rb[1], false}};
+  const Row right[4] = {
+      {"Product", kInfoProduct, false},
+      {"Key",     b.infoKey ? b.infoKey : "-", false},
+      {"Devices", rb[2], false},
+      {"Version", rb[3], false}};
+
+  const float lx = X + 18.f, lvx = X + 300.f;
+  const float rx = X + 360.f, rvx = 960.f;
   for (int i = 0; i < 4; ++i) {
-    const float ry = 284.f + 26.f * (float)i;
-    Txt(X + 18.f, ry, 5.2f, p.textDim, k[i], 0);
-    Txt(X + 200.f, ry, 5.4f, i == 1 ? p.accent : p.text, v[i], 0);
+    const float ry = 284.f + 28.f * (float)i;
+    Txt(lx, ry, 5.2f, p.textDim, left[i].k, 0);
+    Txt(lvx, ry, 5.4f, left[i].hi ? p.accent : p.text, left[i].v, 2);
+    Txt(rx, ry, 5.2f, p.textDim, right[i].k, 0);
+    Txt(rvx, ry, 5.4f, right[i].hi ? p.accent : p.text, right[i].v, 2);
     if (i < 3) {
-      dl->AddLine(Pr(X + 18.f, ry + 19.f), Pr(960.f, ry + 19.f),
-                  Col(150, 168, 190, 0.22f), 1.f);
+      dl->AddLine(Pr(lx, ry + 20.f), Pr(960.f, ry + 20.f),
+                  Col(150, 168, 190, 0.20f), 1.f);
     }
   }
 
+  Txt(rx, 284.f + 28.f * 4.f + 4.f, 4.6f, p.textFaint, kInfoChannel, 0);
+
   char fb[40];
-  snprintf(fb, sizeof(fb), "%d FPS  ·  ImGui overlay on its own layer",
-           (int)ImGui::GetIO().Framerate);
-  Txt(X + 18.f, 394.f, 4.6f, p.textFaint, fb, 0);
+  snprintf(fb, sizeof(fb), "%d FPS", (int)ImGui::GetIO().Framerate);
+  Txt(X + 18.f, 284.f + 28.f * 4.f + 4.f, 4.6f, p.textFaint, fb, 0);
 }
 
 // ================================================================ Panel

@@ -61,12 +61,28 @@ struct Bindings {
   int*   chestRateSave = nullptr;
 
   // Exploit
+  // "Aim Point" is the engine's DragHeadshot: it arms only once the
+  // target's neck comes inside its radius of the crosshair, which is
+  // why the caption under it says it turns itself on when you drag.
+  bool* aimPoint = nullptr;
+
   bool* ghostHack = nullptr;
   bool* noRecoil = nullptr;
   bool* noReload = nullptr;
   bool* floatGhost = nullptr;
   bool* normalWrite = nullptr;
   bool* soundMuted = nullptr;
+
+  // License info for the Settings > Info card. Read-only: the owner
+  // copies g_Srv (main.cpp, file-static behind g_SrvMtx) into buffers
+  // of its own each frame and points these at them.
+  const char* infoKey = nullptr;
+  const char* infoSeller = nullptr;
+  const char* infoExpiry = nullptr;
+  const int*  daysRemain = nullptr;
+  const int*  daysTotal = nullptr;
+  const int*  devUsed = nullptr;
+  const int*  devMax = nullptr;
 };
 
 Bindings& GetBindings();

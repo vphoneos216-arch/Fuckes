@@ -836,7 +836,14 @@ struct SavedSettings {
     bool  Aimbot=false; int aimbotBone=0; bool aimSilent=false; bool hardwareBT=false;
     bool  brutalBT=false;   // BRUTAL BT — OG silent aim
     bool  aimCollider=false; // Aimbot Collider — OG aim lock
-    bool  dragHeadshot=false; // [NEW] Drag Headshot — own silent redirect to Neck bone, only while actively dragging. Independent of aimCollider/aimSilent/Aimbot above.
+    // [CHANGED] default true, to match the DragHeadshot global in hook.h.
+    // UpdateAndSaveSettings() copies this field INTO that global, so
+    // leaving the two disagreeing would quietly beat the global's default
+    // back to false -- the same way aimFovUI=10 was beating AimFov=150.
+    // This is the menu's "Aim Point": own silent redirect to the Neck
+    // bone, only while actively dragging. Independent of
+    // aimCollider/aimSilent/Aimbot above.
+    bool  dragHeadshot=true;
     float dragHeadshotRadius=12.f; // [NEW] trigger radius, % of half-screen-height
     // [FIX] Was 10.f. fovRadius = (AimFov/180)*(screenH/2), so 10 gives a
     // ~30px selection circle on a 1080p screen -- an enemy bone has to
