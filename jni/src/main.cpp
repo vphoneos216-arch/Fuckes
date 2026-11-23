@@ -3207,6 +3207,23 @@ int main(int argc,char* argv[]){
     // flow below asks anything now. The function is still compiled but
     // unreachable, and its .ko.sh load moved to ix_load_paradise_ko().
 
+    // ── PATCH BYTES ARRIVED? ─────────────────────────────────────
+    // Nothing is compiled into this build any more, so a product with
+    // no rows in keydock_cheat_patches reaches here with an empty
+    // bundle. Said now, once, instead of surfacing later as a blank
+    // PROCESS FAILED or an Inject button that does nothing.
+    if (ix_patch_count() == 0) {
+        printf("\n\033[93m  No patch bytes from the server.\033[0m\n");
+        printf("  This key's product has no rows in keydock_cheat_patches.\n");
+        printf("  Normal Mode and Inject will both refuse until it does.\n");
+        fflush(stdout);
+    } else if (!ix_patch_have("hologram") || !ix_patch_have("asset")) {
+        printf("\n\033[93m  Partial patch bytes from the server:%s%s\033[0m\n",
+               ix_patch_have("hologram") ? "" : " hologram missing",
+               ix_patch_have("asset")    ? "" : " asset missing");
+        fflush(stdout);
+    }
+
     LoadMenuOpenMode();   // config default; Kernel Mode asks and overrides
 
     // ── MODE ─────────────────────────────────────────────────────
@@ -3289,6 +3306,14 @@ int main(int argc,char* argv[]){
         printf("\n");
         if (!holo_ok) {
             printf("\033[91m  PROCESS FAILED\033[0m\n");
+            // The reason used to be collected and then thrown away, so
+            // the screen said nothing at all. Print it: "no hologram
+            // bytes from server" means this product has no rows in
+            // keydock_cheat_patches, which is a panel problem, not a
+            // device one, and looks identical to a real patch failure
+            // without this line.
+            if (!holo_detail.empty())
+                printf("  %s\n", holo_detail.c_str());
             fflush(stdout);
             return 1;
         }

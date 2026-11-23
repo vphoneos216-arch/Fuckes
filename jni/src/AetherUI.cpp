@@ -910,8 +910,21 @@ void PageAim(ImDrawList* dl) {
 
     if (Button(dl, H("inject"), X + 18.f, y0 + 104.f, 200.f, 32.f, "INJECT", true))
       g.requestInject = true;
-    TxtWrap(X + 234.f, y0 + 102.f, wCol - 252.f, 4.5f, p.textDim,
-            "Unlocks Aim Point. Exit reverts everything.");
+
+    // Why the last press did not take. Shown here because the overlay
+    // is the only surface the user is looking at -- the handler's printf
+    // goes to a terminal that is usually long closed, which is what made
+    // a failed Inject look like a dead button.
+    const char* ierr = b.injectError;
+    if (ierr && ierr[0]) {
+      TxtWrap(X + 234.f, y0 + 96.f, wCol - 252.f, 4.5f, Col(206, 86, 72, 0.96f), ierr);
+      TxtWrap(X + 18.f, y0 + 142.f, wCol - 36.f, 4.3f, p.textFaint,
+              "\"no asset bytes from server\" means the panel has no patch "
+              "rows for this key's product.", 0.f);
+    } else {
+      TxtWrap(X + 234.f, y0 + 102.f, wCol - 252.f, 4.5f, p.textDim,
+              "Unlocks Aim Point. Exit reverts everything.");
+    }
   } else {
     // Forced on. gLockInput keeps the row from being pressed, so the
     // toggle reads as "on and not yours to change" rather than simply

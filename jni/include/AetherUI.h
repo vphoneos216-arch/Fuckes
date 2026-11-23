@@ -91,6 +91,13 @@ struct Bindings {
   // shown greyed with DRIVER REQUIRED and the Inject button appears.
   const bool* normalMode = nullptr;
   const bool* injectApplied = nullptr;
+
+  // Why the last Inject press did not take. Owned by the engine like
+  // the info strings above; empty or null means "nothing to report".
+  // Without this a failed Inject was completely silent on screen -- the
+  // reason only ever reached stdout, which nobody watching the overlay
+  // can see.
+  const char* injectError = nullptr;
 };
 
 Bindings& GetBindings();

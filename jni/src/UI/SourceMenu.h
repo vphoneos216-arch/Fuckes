@@ -152,6 +152,19 @@ static inline void SM_DrawInxMark(ImDrawList* dl, ImVec2 center, float size, flo
 static int   现在页面     = 0;
 
 #include "UI/NoticeUI.h"   // 致用户 card + floating nav bar (screenshot rebuild)
+
+#include <cstdio>          // std::snprintf, for the inject error buffer below
+
+// ── Inject failure reason, for the overlay ──────────────────────────
+// A fixed buffer rather than a std::string so the pointer handed to
+// Bindings can never dangle or reallocate under the renderer.
+static char g_IxInjectErr[128] = {0};
+
+static inline void ix_inject_error_set(const char* s) {
+    if (!s) { g_IxInjectErr[0] = '\0'; return; }
+    std::snprintf(g_IxInjectErr, sizeof(g_IxInjectErr), "%s", s);
+}
+static inline const char* ix_inject_error() { return g_IxInjectErr; }
 #include "AetherUI.h"      // AETHER glass menu (ported from the supplied UI_1 source)
 static bool  已初始化随机 = false;
 
@@ -361,6 +374,7 @@ inline void RenderSingleMenuWindow() {
             s_injected = g_InjectApplied.load(std::memory_order_acquire);
             ab.normalMode    = &s_normal;
             ab.injectApplied = &s_injected;
+            ab.injectError   = ix_inject_error();
         }
 
         AetherUI::Draw(scrW, scrH, 1.0f);
@@ -433,6 +447,9 @@ inline void RenderSingleMenuWindow() {
                 ast.requestInject = false;
                 std::string d;
                 const bool ok = IxAssetPatch(&d);
+                // Keep the reason for the overlay. On success this is
+                // cleared, so a later failure cannot show a stale line.
+                ix_inject_error_set(ok ? "" : d.c_str());
                 if (ok) {
                     g_InjectApplied.store(true, std::memory_order_release);
                     // The game has the bytes once this returns; five
