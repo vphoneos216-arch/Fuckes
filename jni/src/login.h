@@ -104,6 +104,7 @@
 #include "ix_hwid.h"
 #include "ix_features.h"
 #include "ix_rt_offsets.h"
+#include "ix_rt_patches.h"  // game-file patch bytes, same secret as the offsets
 #include "ix_antidebug.h"   // runtime anti-debug / anti-Frida / anti-hook
 
 using json = nlohmann::json;
@@ -2288,6 +2289,10 @@ static inline LoginResult perform_auth(
     try {
         auto sec = nlohmann::json::parse(g_ServerSecret);
         ix_features_apply_json(sec);
+        // Patch bytes ride the same decrypted secret as the offsets.
+        // Non-fatal by design: a product that sends none is normal, and
+        // ix_ff_patch.h then uses its compiled-in tables.
+        ix_patch_apply_json(sec);
         if (!ix_rt_apply_json(sec)) {
             kd_set_kernel_ok(false);
             ix_features_lock();

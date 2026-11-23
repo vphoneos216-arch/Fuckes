@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.5 Standalone KPM (hardware breakpoint) is now a selectable driver, not just built-in code
+version=v6.6 Patch bytes come from the server secret; removed the at-rest XOR that was corrupting both game-file patches
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

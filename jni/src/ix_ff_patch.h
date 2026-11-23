@@ -34,6 +34,10 @@
 #include <sys/stat.h>
 #include <atomic>
 
+// The server-delivered rows. Empty unless the product sends patch data,
+// in which case they take precedence over the fallback tables below.
+#include "ix_rt_patches.h"
+
 // ── flow state, shared by the loader, the ESP thread and the menu ─────
 // Declared here because this header is included before both hook.h and
 // the menu, so all three see one copy.
@@ -48,62 +52,51 @@
 //                   detection restores once per run, not every frame.
 
 // ============================================================
-//  Patch tables — ENCRYPTED AT REST
+//  Patch tables — FALLBACK ONLY, PLAIN BYTES
 // ============================================================
-// These arrays are ciphertext. The plaintext offsets and bytes are
-// never present in the binary's .rodata, so `strings`, a hex editor,
-// or a Ghidra data dump reveal nothing usable -- the game-file hex
-// that used to sit here in the clear is gone. ix_xcrypt() below
-// turns a row back into plaintext into a short-lived stack buffer
-// only at the instant it is applied, and the buffer is wiped right
-// after. The keystream is an MMIX LCG keyed by a compile-time
-// constant XOR a per-row salt; O-MVLL's obfuscate_constants pass
-// (see omvll_config.py) then hides that constant itself.
+// The real source of these bytes is the server: ix_rt_patches.h reads
+// them out of the per-product secret that login.h decrypts, exactly the
+// way the offsets already arrive. The tables below are the fallback used
+// when the server sends no patch rows for this product.
+//
+// They are stored as PLAIN bytes, deliberately.
+//
+// A previous version XOR-encrypted these arrays at rest and called an
+// ix_xcrypt() helper to decrypt each row into a stack buffer before use.
+// The arrays were later regenerated as plaintext while that decrypt call
+// stayed in place, so every row was XOR-ed a second time and turned into
+// garbage. The visible effect was:
+//
+//   * IxHologramPatch() searched for garbage, found nothing, and failed
+//     with "pattern not found" on every single run.
+//   * IxAssetPatch() wrote garbage to all 17 real offsets, so the marker
+//     it left behind was never 0x4e. IxAssetIsPatched() therefore always
+//     reported "not patched", and the NEXT run read a marker that was
+//     neither 0x48 nor 0x4e and refused with "marker mismatch" — leaving
+//     the asset file corrupted until a restore.
+//
+// Hiding these bytes is not worth a layer that can silently corrupt a
+// game file, and the server copy is the one that matters now. The
+// encryption is gone rather than repaired.
 
-static inline void ix_xcrypt(unsigned char* dst, const unsigned char* src,
-                             int len, unsigned long long salt) {
-    unsigned long long state = 0xA17E5C94C3B5D901ULL ^ salt;
-    for (int i = 0; i < len; ++i) {
-        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
-        dst[i] = (unsigned char)(src[i] ^ (unsigned char)((state >> 33) & 0xFF));
-    }
-}
-
-// Zeroes a stack buffer without the compiler optimizing the store away —
-// the thing a plain memset over a soon-dead local is not guaranteed to
-// survive. Used right after a row's plaintext has been used and is no
-// longer needed in memory.
-static inline void ix_wipe(void* p, size_t n) {
-    volatile unsigned char* vp = (volatile unsigned char*)p;
-    for (size_t i = 0; i < n; ++i) vp[i] = 0;
-}
-
-// Per-row salts. Kept out of the arrays so the two never sit together.
-#define IX_SALT_HOLO_FIND(i) (0x0100ULL | (unsigned long long)(i))
-#define IX_SALT_HOLO_REPL(i) (0x0200ULL | (unsigned long long)(i))
-#define IX_SALT_ASSET(i)     (0x0300ULL | (unsigned long long)(i))
-
-// Largest single row below is 48 bytes (the holograms). Every decrypt
-// buffer uses this bound; IX_ROW_MAX is checked against it, not guessed.
+// Largest single row below is 48 bytes (the holograms). Every row is
+// checked against this bound rather than assumed to fit.
 #define IX_ROW_MAX 64
 
 struct IxSR {
     const unsigned char* find; const unsigned char* repl; int len;
     const char* tag;
-    unsigned long long saltFind; unsigned long long saltRepl;
 };
 static const unsigned char kHoloFind0[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x63, 0x38, 0x61, 0x30, 0x61, 0x37, 0x65, 0x37, 0x64, 0x39, 0x30, 0x62, 0x39, 0x64, 0x63, 0x34, 0x61, 0x62, 0x65, 0x62, 0x35, 0x64, 0x62, 0x64, 0x63, 0x65, 0x30, 0x34, 0x34, 0x65, 0x38, 0x36, 0xd9, 0xb1, 0x4f, 0x0c, 0x27, 0xb2, 0x4f, 0x0c };
 static const unsigned char kHoloRepl0[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x32, 0x31, 0x36, 0x61, 0x37, 0x31, 0x31, 0x33, 0x62, 0x37, 0x66, 0x31, 0x62, 0x63, 0x37, 0x34, 0x65, 0x62, 0x32, 0x32, 0x38, 0x39, 0x64, 0x34, 0x37, 0x66, 0x32, 0x61, 0x34, 0x30, 0x36, 0x64, 0xd9, 0xb1, 0x4f, 0x0c, 0x27, 0xb2, 0x4f, 0x0c };
 static const unsigned char kHoloFind1[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x32, 0x31, 0x36, 0x61, 0x37, 0x31, 0x31, 0x33, 0x62, 0x37, 0x66, 0x31, 0x62, 0x63, 0x37, 0x34, 0x65, 0x62, 0x32, 0x32, 0x38, 0x39, 0x64, 0x34, 0x37, 0x66, 0x32, 0x61, 0x34, 0x30, 0x36, 0x64, 0xa5, 0xb5, 0xe1, 0x01, 0xf3, 0xb5, 0xe1, 0x01 };
 static const unsigned char kHoloRepl1[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x63, 0x38, 0x61, 0x30, 0x61, 0x37, 0x65, 0x37, 0x64, 0x39, 0x30, 0x62, 0x39, 0x64, 0x63, 0x34, 0x61, 0x62, 0x65, 0x62, 0x35, 0x64, 0x62, 0x64, 0x63, 0x65, 0x30, 0x34, 0x34, 0x65, 0x38, 0x36, 0xa5, 0xb5, 0xe1, 0x01, 0xf3, 0xb5, 0xe1, 0x01 };
 static const IxSR kHolo[2] = {
-    { kHoloFind0, kHoloRepl0, (int)sizeof(kHoloFind0), "hash A->B",
-      IX_SALT_HOLO_FIND(0), IX_SALT_HOLO_REPL(0) },
-    { kHoloFind1, kHoloRepl1, (int)sizeof(kHoloFind1), "hash B->A",
-      IX_SALT_HOLO_FIND(1), IX_SALT_HOLO_REPL(1) },
+    { kHoloFind0, kHoloRepl0, (int)sizeof(kHoloFind0), "hash A->B" },
+    { kHoloFind1, kHoloRepl1, (int)sizeof(kHoloFind1), "hash B->A" },
 };
 
-struct IxPoke { long off; const unsigned char* bytes; int len; unsigned long long salt; };
+struct IxPoke { long off; const unsigned char* bytes; int len; };
 static const unsigned char kAsset00[1] = { 0x4e };
 static const unsigned char kAsset01[2] = { 0x63, 0x6b };
 static const unsigned char kAsset02[29] = { 0xe7, 0x74, 0xbd, 0xbe, 0x16, 0xdc, 0x98, 0xbd, 0xbb, 0x82, 0x97, 0xb4, 0x00, 0x00, 0x00, 0x00, 0xbf, 0xb2, 0x2f, 0x3f, 0x43, 0x32, 0x73, 0x36, 0x66, 0x03, 0x7b, 0x35, 0x01 };
@@ -122,23 +115,23 @@ static const unsigned char kAsset14[1] = { 0x48 };
 static const unsigned char kAsset15[9] = { 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 static const unsigned char kAsset16[4] = { 0xb2, 0xf7, 0x1f, 0xa4 };
 static const IxPoke kAssetPokes[17] = {
-    { 28517L, kAsset00, (int)sizeof(kAsset00), IX_SALT_ASSET(0) },
-    { 28519L, kAsset01, (int)sizeof(kAsset01), IX_SALT_ASSET(1) },
-    { 29004L, kAsset02, (int)sizeof(kAsset02), IX_SALT_ASSET(2) },
-    { 29034L, kAsset03, (int)sizeof(kAsset03), IX_SALT_ASSET(3) },
-    { 29038L, kAsset04, (int)sizeof(kAsset04), IX_SALT_ASSET(4) },
-    { 29040L, kAsset05, (int)sizeof(kAsset05), IX_SALT_ASSET(5) },
-    { 29053L, kAsset06, (int)sizeof(kAsset06), IX_SALT_ASSET(6) },
-    { 29055L, kAsset07, (int)sizeof(kAsset07), IX_SALT_ASSET(7) },
-    { 29068L, kAsset08, (int)sizeof(kAsset08), IX_SALT_ASSET(8) },
-    { 42432L, kAsset09, (int)sizeof(kAsset09), IX_SALT_ASSET(9) },
-    { 42462L, kAsset10, (int)sizeof(kAsset10), IX_SALT_ASSET(10) },
-    { 42464L, kAsset11, (int)sizeof(kAsset11), IX_SALT_ASSET(11) },
-    { 42466L, kAsset12, (int)sizeof(kAsset12), IX_SALT_ASSET(12) },
-    { 42468L, kAsset13, (int)sizeof(kAsset13), IX_SALT_ASSET(13) },
-    { 42481L, kAsset14, (int)sizeof(kAsset14), IX_SALT_ASSET(14) },
-    { 42483L, kAsset15, (int)sizeof(kAsset15), IX_SALT_ASSET(15) },
-    { 42496L, kAsset16, (int)sizeof(kAsset16), IX_SALT_ASSET(16) },
+    { 28517L, kAsset00, (int)sizeof(kAsset00) },
+    { 28519L, kAsset01, (int)sizeof(kAsset01) },
+    { 29004L, kAsset02, (int)sizeof(kAsset02) },
+    { 29034L, kAsset03, (int)sizeof(kAsset03) },
+    { 29038L, kAsset04, (int)sizeof(kAsset04) },
+    { 29040L, kAsset05, (int)sizeof(kAsset05) },
+    { 29053L, kAsset06, (int)sizeof(kAsset06) },
+    { 29055L, kAsset07, (int)sizeof(kAsset07) },
+    { 29068L, kAsset08, (int)sizeof(kAsset08) },
+    { 42432L, kAsset09, (int)sizeof(kAsset09) },
+    { 42462L, kAsset10, (int)sizeof(kAsset10) },
+    { 42464L, kAsset11, (int)sizeof(kAsset11) },
+    { 42466L, kAsset12, (int)sizeof(kAsset12) },
+    { 42468L, kAsset13, (int)sizeof(kAsset13) },
+    { 42481L, kAsset14, (int)sizeof(kAsset14) },
+    { 42483L, kAsset15, (int)sizeof(kAsset15) },
+    { 42496L, kAsset16, (int)sizeof(kAsset16) },
 };
 
 static const long  kAssetMarkerOff  = 28517L;
@@ -273,99 +266,165 @@ static inline bool IxHologramPatch(bool quiet, std::string* detail) {
     if (!IxReadAll(f, buf)) { if (detail) *detail = "pdcache unreadable"; return false; }
     if (!IxBackupOnce(f))   { if (detail) *detail = "backup failed";     return false; }
 
-    for (int i = 0; i < (int)(sizeof(kHolo) / sizeof(kHolo[0])); ++i) {
-        const IxSR& sr = kHolo[i];
-        if (sr.len <= 0 || sr.len > IX_ROW_MAX) {
-            if (detail) *detail = std::string(sr.tag) + ": row too large";
+    // One pair list, whichever source it came from, so the search /
+    // uniqueness / write logic below exists exactly once.
+    struct HoloPair {
+        const unsigned char* find; const unsigned char* repl;
+        int len; std::string tag;
+    };
+    std::vector<HoloPair> pairs;
+    std::vector<IxSrvPatch> srv = ix_patch_rows("hologram");
+
+    if (!srv.empty()) {
+        for (size_t i = 0; i < srv.size(); ++i) {
+            const IxSrvPatch& r = srv[i];
+            // A hologram row is a find/replace swap; an offset-only row
+            // has nothing to search for and is not usable here.
+            if (r.find.empty() || r.find.size() != r.repl.size()) continue;
+            pairs.push_back({ r.find.data(), r.repl.data(),
+                              (int)r.repl.size(),
+                              "server#" + std::to_string(i) });
+        }
+        if (pairs.empty()) {
+            if (detail) *detail = "server sent no usable hologram pair";
             return false;
         }
-        // Ciphertext at rest, plaintext only in these two stack buffers,
-        // only for the lifetime of this one iteration.
-        unsigned char find[IX_ROW_MAX];
-        unsigned char repl[IX_ROW_MAX];
-        ix_xcrypt(find, sr.find, sr.len, sr.saltFind);
-        ix_xcrypt(repl, sr.repl, sr.len, sr.saltRepl);
+    } else {
+        for (int i = 0; i < (int)(sizeof(kHolo) / sizeof(kHolo[0])); ++i) {
+            const IxSR& sr = kHolo[i];
+            pairs.push_back({ sr.find, sr.repl, sr.len, sr.tag });
+        }
+    }
+
+    for (const HoloPair& p : pairs) {
+        if (p.len <= 0 || p.len > IX_ROW_MAX) {
+            if (detail) *detail = p.tag + ": row too large";
+            return false;
+        }
 
         long off = -1;
-        const int hits = IxCountPattern(buf, find, sr.len, &off);
+        const int hits = IxCountPattern(buf, p.find, p.len, &off);
         if (hits == 0) {
             // Already swapped? Then the replacement is what is in there.
             long roff = -1;
-            if (IxCountPattern(buf, repl, sr.len, &roff) > 0) {
-                if (!quiet) printf("[INX] holo %s already applied\n", sr.tag);
-                ix_wipe(find, sizeof(find));
-                ix_wipe(repl, sizeof(repl));
+            if (IxCountPattern(buf, p.repl, p.len, &roff) > 0) {
+                if (!quiet) printf("[INX] holo %s already applied\n", p.tag.c_str());
                 continue;
             }
-            if (detail) *detail = std::string(sr.tag) + ": pattern not found";
-            ix_wipe(find, sizeof(find));
-            ix_wipe(repl, sizeof(repl));
+            if (detail) *detail = p.tag + ": pattern not found";
             return false;
         }
         if (hits != 1) {
-            if (detail) *detail = std::string(sr.tag) + ": pattern not unique";
-            ix_wipe(find, sizeof(find));
-            ix_wipe(repl, sizeof(repl));
+            if (detail) *detail = p.tag + ": pattern not unique";
             return false;
         }
-        if (!IxPwrite(f, off, repl, sr.len)) {
-            if (detail) *detail = std::string(sr.tag) + ": write failed";
-            ix_wipe(find, sizeof(find));
-            ix_wipe(repl, sizeof(repl));
+        if (!IxPwrite(f, off, p.repl, p.len)) {
+            if (detail) *detail = p.tag + ": write failed";
             return false;
         }
-        // Keep the in-memory copy in step so the second pair searches the
+        // Keep the in-memory copy in step so the next pair searches the
         // same bytes the file now holds.
-        memcpy(buf.data() + off, repl, (size_t)sr.len);
-        if (!quiet) printf("[INX] holo %s ok @ %ld\n", sr.tag, off);
-        ix_wipe(find, sizeof(find));
-        ix_wipe(repl, sizeof(repl));
+        memcpy(buf.data() + off, p.repl, (size_t)p.len);
+        if (!quiet) printf("[INX] holo %s ok @ %ld\n", p.tag.c_str(), off);
     }
-    if (detail) *detail = "ok";
+    if (detail) *detail = srv.empty() ? "ok" : "ok (server bytes)";
     return true;
 }
 
 // ── ASSET (Drag-HS) ───────────────────────────────────────────────────
 static inline bool IxAssetPatch(std::string* detail) {
-    const std::string f = IxPickExisting(IxAssetPaths(), kAssetExpectSize);
+    std::vector<IxSrvPatch> srv = ix_patch_rows("asset");
+
+    // Expected size: the server's when it sent one, otherwise the
+    // compiled-in figure.
+    const long long srvSize = ix_patch_expect_size("asset");
+    const long expectSize = (srvSize >= 0) ? (long)srvSize : kAssetExpectSize;
+
+    const std::string f = IxPickExisting(IxAssetPaths(), expectSize);
     if (f.empty()) { if (detail) *detail = "assetindexer not ready"; return false; }
 
     const long sz = IxFileSize(f);
-    if (sz != kAssetExpectSize) {
+    if (sz != expectSize) {
         if (detail) *detail = "unexpected size";
         return false;
     }
     if (!IxBackupOnce(f)) { if (detail) *detail = "backup failed"; return false; }
 
-    // Same marker gate the script used: 0x4e means already done, 0x48 is
-    // the stock byte, anything else means this is not the file expected.
-    unsigned char marker = 0;
-    {
+    // One poke list, whichever source it came from.
+    struct Poke { long off; const unsigned char* bytes; int len; };
+    std::vector<Poke> pokes;
+
+    if (!srv.empty()) {
+        for (const IxSrvPatch& r : srv) {
+            if (r.off < 0 || r.repl.empty()) continue;   // needs a target offset
+            pokes.push_back({ (long)r.off, r.repl.data(), (int)r.repl.size() });
+        }
+        if (pokes.empty()) {
+            if (detail) *detail = "server sent no usable asset poke";
+            return false;
+        }
+    } else {
+        for (int i = 0; i < (int)(sizeof(kAssetPokes) / sizeof(kAssetPokes[0])); ++i) {
+            const IxPoke& p = kAssetPokes[i];
+            pokes.push_back({ p.off, p.bytes, p.len });
+        }
+    }
+
+    // Validate every row BEFORE touching the file or reading the marker.
+    // Done first so an out-of-range row reports why it was refused — if
+    // the idempotency read below ran first, a row near EOF would fail
+    // there instead and report "marker unreadable", which points at the
+    // wrong thing entirely.
+    for (const Poke& p : pokes) {
+        if (p.len <= 0 || p.len > IX_ROW_MAX) {
+            if (detail) *detail = "poke row too large";
+            return false;
+        }
+        if (p.off < 0 || p.off + p.len > sz) {
+            if (detail) *detail = "poke outside the file";
+            return false;
+        }
+    }
+
+    // Idempotency gate. With the compiled tables this is the script's own
+    // marker test: 0x4e means already done, 0x48 is the stock byte, and
+    // anything else means this is not the file expected.
+    //
+    // With server rows those two byte values are not known here — they
+    // are not part of what the server sends — so instead the first row's
+    // target bytes are compared against its own replacement, which
+    // answers the same question without inventing a value.
+    if (srv.empty()) {
+        unsigned char marker = 0;
         const int fd = open(f.c_str(), O_RDONLY);
         if (fd < 0) { if (detail) *detail = "open failed"; return false; }
         const ssize_t r = pread(fd, &marker, 1, (off_t)kAssetMarkerOff);
         close(fd);
         if (r != 1) { if (detail) *detail = "marker unreadable"; return false; }
-    }
-    if (marker == 0x4e) { if (detail) *detail = "already patched"; return true; }
-    if (marker != 0x48) { if (detail) *detail = "marker mismatch";  return false; }
-
-    for (int i = 0; i < (int)(sizeof(kAssetPokes) / sizeof(kAssetPokes[0])); ++i) {
-        const IxPoke& p = kAssetPokes[i];
-        if (p.len <= 0 || p.len > IX_ROW_MAX) {
-            if (detail) *detail = "poke row too large";
-            return false;
+        if (marker == 0x4e) { if (detail) *detail = "already patched"; return true; }
+        if (marker != 0x48) { if (detail) *detail = "marker mismatch";  return false; }
+    } else {
+        const Poke& p0 = pokes[0];
+        std::vector<unsigned char> cur((size_t)p0.len, 0);
+        const int fd = open(f.c_str(), O_RDONLY);
+        if (fd < 0) { if (detail) *detail = "open failed"; return false; }
+        const ssize_t r = pread(fd, cur.data(), (size_t)p0.len, (off_t)p0.off);
+        close(fd);
+        if (r != (ssize_t)p0.len) { if (detail) *detail = "marker unreadable"; return false; }
+        if (memcmp(cur.data(), p0.bytes, (size_t)p0.len) == 0) {
+            if (detail) *detail = "already patched";
+            return true;
         }
-        unsigned char plain[IX_ROW_MAX];
-        ix_xcrypt(plain, p.bytes, p.len, p.salt);
-        const bool ok = IxPwrite(f, p.off, plain, p.len);
-        ix_wipe(plain, sizeof(plain));
-        if (!ok) {
+    }
+
+    // Bounds and row size were checked above, before the marker read.
+    for (const Poke& p : pokes) {
+        if (!IxPwrite(f, p.off, p.bytes, p.len)) {
             if (detail) *detail = "write failed";
             return false;
         }
     }
-    if (detail) *detail = "ok";
+    if (detail) *detail = srv.empty() ? "ok" : "ok (server bytes)";
     return true;
 }
 
@@ -374,8 +433,25 @@ static inline bool IxAssetPatch(std::string* detail) {
 // flag this process is keeping, so it is still right after a crash, a
 // force-stop, or a run that never pressed Exit.
 static inline bool IxAssetIsPatched() {
-    const std::string f = IxPickExisting(IxAssetPaths(), kAssetExpectSize);
+    std::vector<IxSrvPatch> srv = ix_patch_rows("asset");
+    const long long srvSize = ix_patch_expect_size("asset");
+    const long expectSize = (srvSize >= 0) ? (long)srvSize : kAssetExpectSize;
+
+    const std::string f = IxPickExisting(IxAssetPaths(), expectSize);
     if (f.empty()) return false;
+
+    // Server rows: the first row's bytes being in place is the answer.
+    for (const IxSrvPatch& r : srv) {
+        if (r.off < 0 || r.repl.empty()) continue;
+        std::vector<unsigned char> cur(r.repl.size(), 0);
+        const int fd = open(f.c_str(), O_RDONLY);
+        if (fd < 0) return false;
+        const ssize_t got = pread(fd, cur.data(), cur.size(), (off_t)r.off);
+        close(fd);
+        return got == (ssize_t)cur.size() &&
+               memcmp(cur.data(), r.repl.data(), cur.size()) == 0;
+    }
+
     unsigned char marker = 0;
     const int fd = open(f.c_str(), O_RDONLY);
     if (fd < 0) return false;
@@ -390,14 +466,16 @@ static inline bool IxHologramIsPatched() {
     std::vector<unsigned char> buf;
     if (!IxReadAll(f, buf)) return false;
     // Patched means the first pair's REPLACEMENT is the one in the file.
+    for (const IxSrvPatch& r : ix_patch_rows("hologram")) {
+        if (r.find.empty() || r.repl.empty()) continue;
+        long soff = -1;
+        return IxCountPattern(buf, r.repl.data(), (int)r.repl.size(), &soff) > 0;
+    }
+
     const IxSR& sr0 = kHolo[0];
     if (sr0.len <= 0 || sr0.len > IX_ROW_MAX) return false;
-    unsigned char repl[IX_ROW_MAX];
-    ix_xcrypt(repl, sr0.repl, sr0.len, sr0.saltRepl);
     long off = -1;
-    const bool found = IxCountPattern(buf, repl, sr0.len, &off) > 0;
-    ix_wipe(repl, sizeof(repl));
-    return found;
+    return IxCountPattern(buf, sr0.repl, sr0.len, &off) > 0;
 }
 
 // ── RESTORE ───────────────────────────────────────────────────────────
