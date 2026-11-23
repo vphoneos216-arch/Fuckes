@@ -3177,6 +3177,15 @@ int main(int argc,char* argv[]){
         ix_features_lock();
         ix_rt_clear();
         printf("%sAuth/runtime gate failed — functions locked.%s\n", "\033[91m", "\033[0m");
+        // Say WHAT the server refused. Without this every refusal looks
+        // identical: an expired key, a banned reseller and a key bought
+        // for a different product all print the same line, and there is
+        // no way to tell from the device which one it was.
+        {
+            const std::string why = auth.getAuthMessage();
+            if (!why.empty()) printf("  %s\n", why.c_str());
+        }
+        fflush(stdout);
         sleep(3);
         return 0;
     }

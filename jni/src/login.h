@@ -1,5 +1,17 @@
 #ifndef LOGIN_H
 #define LOGIN_H
+
+// ── WHICH PRODUCT THIS BINARY IS ────────────────────────────────────
+// Must equal the Product Code set on this product in the admin panel
+// (Products -> Code). The server refuses any key belonging to a
+// different product, which is what keeps TESLA Internal and InvisibleX
+// External separately sellable.
+//
+// Change it in one place here, or clear the Product Code in the panel
+// to switch the gate off without rebuilding.
+#ifndef IX_BUILD_PRODUCT_CODE
+#define IX_BUILD_PRODUCT_CODE "TESLA"
+#endif
 /* ============================================================
    login.h — Application License Authentication Client v5.0
    (Double-sealed encrypted transport + Ed25519-signed +
@@ -17,7 +29,14 @@
      Inner plaintext (before either encryption layer, never sent raw):
        { "mode":"key", "key_name":"X-XXXXXXXX",
          "device_id":"<hwid>", "ts":<unix_ts>,
-         "nonce":"<64 hex>" }
+         "nonce":"<64 hex>", "build":"<product code>" }
+
+     "build" names the product this binary is, and is matched server-side
+     against keydock_cheats.product_code so a key sold for one product
+     cannot open another product's build. It rides inside the sealed
+     body like every other field, so it is not visible on the wire. A
+     server that does not know the field ignores it, and a build that
+     does not send it is not gated at all.
 
      INBOUND WIRE (JSON) — fully encrypted, same double layer:
        { "ct":"<hex>", "n":"<48hex>", "n2":"<48hex>",
@@ -1987,6 +2006,14 @@ static inline LoginResult perform_auth(
         {"ts", ts},
         {"nonce", nonce}
     };
+
+    // Which product this binary is. Server-side this is matched against
+    // keydock_cheats.product_code; a key from another product is refused
+    // with "This key is for a different product." Deliberately not added
+    // to the bind>=2 echo check below: that check exists to bind a reply
+    // to this request, and requiring a server to echo a field it may not
+    // know would break against an older panel.
+    reqBody["build"] = std::string(oxorany(IX_BUILD_PRODUCT_CODE));
 
     if (mode == "key")
         reqBody["key_name"] = kd_trim_upper(key);
