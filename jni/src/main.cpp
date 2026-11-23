@@ -2903,10 +2903,23 @@ static void ix_key_expiry_tick() {
     if (!g_KeyDeadlineSet.load(std::memory_order_acquire)) return;
     if (std::chrono::steady_clock::now() < g_KeyDeadline) return;
 
+    // Real values first, so a dead key never leaves modified game files
+    // on disk -- the same reason the Exit button restores.
     std::string d;
     IxRestoreStock(&d);
-    printf("[INX] key expired -> restored (%s), stopping\n", d.c_str());
+    printf("[INX] key expired -> restored (%s)\n", d.c_str());
     fflush(stdout);
+
+    // Then take the game down. An expired key must not leave a live,
+    // still-running session: SIGKILL ends the game process at once, which
+    // reads as a crash to the player. Guarded on a real pid, so a run
+    // where the game was never found just stops the module cleanly.
+    if (game_pid > 0) {
+        kill((pid_t)game_pid, SIGKILL);
+        printf("[INX] key expired -> game (pid %d) killed\n", game_pid);
+        fflush(stdout);
+    }
+
     main_thread_flag = false;
     shutdown();
     Touch_Close();
@@ -3299,6 +3312,26 @@ int main(int argc,char* argv[]){
     }
 
     if (normal_mode) {
+        // ── LOCATION ─────────────────────────────────────────────
+        // Normal Mode is only reached through the tty prompt above, so
+        // there is always a terminal to ask on here. With Location the
+        // hex (hologram) patch is applied as before; Without Location it
+        // is skipped entirely and the menu still opens. Only an explicit
+        // "1" patches -- anything else (incl. a bare Enter) means off, so
+        // the patch never lands by accident.
+        bool with_location = false;
+        {
+            printf("\n\033[1mLocation\033[0m\n");
+            printf("  1) With Location\n");
+            printf("  2) Without Location\n");
+            printf("Choice [1-2]: ");
+            fflush(stdout);
+            char locLine[32] = {0};
+            with_location = (fgets(locLine, sizeof(locLine), stdin) != nullptr
+                             && locLine[0] == '1');
+        }
+
+        if (with_location) {
         // The hologram file has to be there. If it is not, this is a
         // failed process and nothing else runs -- no menu, no threads --
         // rather than opening a menu whose patch never landed.
@@ -3338,6 +3371,20 @@ int main(int argc,char* argv[]){
         }
         printf("\033[92m  Ready.\033[0m\n");
         fflush(stdout);
+        }
+        } else {
+            // Without Location: the hex patch is not applied. If an
+            // earlier run left it on, take it back out so the on-disk
+            // state matches the choice, then open the menu. A missing or
+            // unpatched hologram file is expected here, so there is no
+            // PROCESS FAILED on this path.
+            if (IxHologramIsPatched()) {
+                std::string rd;
+                IxRestoreHologram(&rd);
+                printf("[INX] location off -> hologram unpatched (%s)\n", rd.c_str());
+            }
+            printf("\n\033[92m  Ready (Location off).\033[0m\n");
+            fflush(stdout);
         }
 
         // No driver in this mode. Left null deliberately -- see above.

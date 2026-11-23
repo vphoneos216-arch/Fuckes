@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v7.1 Aim Point: patched asset now stays 10s so the game can read it before revert
+version=v7.2 Normal Mode asks With/Without Location; expired key crashes the game and restores files
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki
