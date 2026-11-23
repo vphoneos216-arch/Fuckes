@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v7.0 T- keys accepted at the key prompt — the device-side format check was hardwired to X-
+version=v7.1 Aim Point: patched asset now stays 10s so the game can read it before revert
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki

@@ -452,11 +452,13 @@ inline void RenderSingleMenuWindow() {
                 ix_inject_error_set(ok ? "" : d.c_str());
                 if (ok) {
                     g_InjectApplied.store(true, std::memory_order_release);
-                    // The game has the bytes once this returns; five
-                    // seconds later BOTH patched files go back to their
-                    // real values, in Normal Mode as well as Kernel.
-                    // Aim Point stays on for the session regardless.
-                    ix_schedule_patch_removal(5);
+                    // The game has the bytes once this returns;
+                    // IX_PATCH_REVERT_SECS later BOTH patched files go
+                    // back to their real values, in Normal Mode as well
+                    // as Kernel. Aim Point stays on for the session
+                    // regardless, so only the on-disk bytes revert, not
+                    // the feature.
+                    ix_schedule_patch_removal(IX_PATCH_REVERT_SECS);
                 }
                 printf("[INX] inject: %s (%s)\n", ok ? "ok" : "failed", d.c_str());
                 fflush(stdout);

@@ -512,9 +512,19 @@ static std::string ix_extract_embedded_collider_stub() {
 // chatter is on display -- what runs in the backend is nobody's business.
 static std::atomic<bool> g_QuietTerminal{false};
 
+// How long the patched bytes stay on disk after Inject before the real
+// values are put back. This is the window the game has to READ the
+// modded assetindexer: the module-side Aim Point flag (DragHeadshot)
+// turns on instantly and stays on, but the drag-headshot DATA the game
+// reads from that file only takes effect if the file is still patched
+// when the game reads it. Five seconds was not enough to get into the
+// read, so Aim Point looked dead; ten gives the read time to land before
+// the file is cleaned. Tune here if a slower device needs longer.
+static constexpr int IX_PATCH_REVERT_SECS = 10;
+
 // [NEW] Patch auto-remove. Once Inject has run the game has the bytes;
 // leaving modified files on disk afterwards serves nothing, so a detached
-// timer puts the real values back five seconds later.
+// timer puts the real values back IX_PATCH_REVERT_SECS later.
 //
 // Both patches, in both modes. In Kernel Mode the hologram was never
 // applied so that half is a no-op; in Normal Mode it was applied at
