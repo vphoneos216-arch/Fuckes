@@ -52,91 +52,29 @@
 //                   detection restores once per run, not every frame.
 
 // ============================================================
-//  Patch tables — FALLBACK ONLY, PLAIN BYTES
+//  No patch tables in the binary
 // ============================================================
-// The real source of these bytes is the server: ix_rt_patches.h reads
-// them out of the per-product secret that login.h decrypts, exactly the
-// way the offsets already arrive. The tables below are the fallback used
-// when the server sends no patch rows for this product.
+// The bytes used to sit here as arrays. They are gone.
 //
-// They are stored as PLAIN bytes, deliberately.
+// They now live in keydock_cheat_patches on the server and arrive inside
+// the per-product secret, read by ix_rt_patches.h — the same treatment
+// the offsets in ix_rt_offsets.h get, which is the point: a dump of this
+// binary reveals no game-file hex, no offsets and no markers, because it
+// carries none.
 //
-// A previous version XOR-encrypted these arrays at rest and called an
-// ix_xcrypt() helper to decrypt each row into a stack buffer before use.
-// The arrays were later regenerated as plaintext while that decrypt call
-// stayed in place, so every row was XOR-ed a second time and turned into
-// garbage. The visible effect was:
+// There is deliberately NO fallback copy. A fallback is a second source
+// of truth that silently takes over when the first one is misconfigured,
+// and that is exactly how the previous version shipped bytes nobody had
+// reviewed. With no rows from the server these functions refuse and say
+// so, which is a problem you can see rather than one you cannot.
 //
-//   * IxHologramPatch() searched for garbage, found nothing, and failed
-//     with "pattern not found" on every single run.
-//   * IxAssetPatch() wrote garbage to all 17 real offsets, so the marker
-//     it left behind was never 0x4e. IxAssetIsPatched() therefore always
-//     reported "not patched", and the NEXT run read a marker that was
-//     neither 0x48 nor 0x4e and refused with "marker mismatch" — leaving
-//     the asset file corrupted until a restore.
-//
-// Hiding these bytes is not worth a layer that can silently corrupt a
-// game file, and the server copy is the one that matters now. The
-// encryption is gone rather than repaired.
+// Consequence worth knowing: the rows in keydock_cheat_patches are now
+// REQUIRED. Without them Normal Mode's hologram patch and the Inject
+// button both report that the server sent nothing.
 
-// Largest single row below is 48 bytes (the holograms). Every row is
-// checked against this bound rather than assumed to fit.
+// Longest row the server may send for a single write. Checked, not
+// assumed — a row past this is refused rather than truncated.
 #define IX_ROW_MAX 64
-
-struct IxSR {
-    const unsigned char* find; const unsigned char* repl; int len;
-    const char* tag;
-};
-static const unsigned char kHoloFind0[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x63, 0x38, 0x61, 0x30, 0x61, 0x37, 0x65, 0x37, 0x64, 0x39, 0x30, 0x62, 0x39, 0x64, 0x63, 0x34, 0x61, 0x62, 0x65, 0x62, 0x35, 0x64, 0x62, 0x64, 0x63, 0x65, 0x30, 0x34, 0x34, 0x65, 0x38, 0x36, 0xd9, 0xb1, 0x4f, 0x0c, 0x27, 0xb2, 0x4f, 0x0c };
-static const unsigned char kHoloRepl0[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x32, 0x31, 0x36, 0x61, 0x37, 0x31, 0x31, 0x33, 0x62, 0x37, 0x66, 0x31, 0x62, 0x63, 0x37, 0x34, 0x65, 0x62, 0x32, 0x32, 0x38, 0x39, 0x64, 0x34, 0x37, 0x66, 0x32, 0x61, 0x34, 0x30, 0x36, 0x64, 0xd9, 0xb1, 0x4f, 0x0c, 0x27, 0xb2, 0x4f, 0x0c };
-static const unsigned char kHoloFind1[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x32, 0x31, 0x36, 0x61, 0x37, 0x31, 0x31, 0x33, 0x62, 0x37, 0x66, 0x31, 0x62, 0x63, 0x37, 0x34, 0x65, 0x62, 0x32, 0x32, 0x38, 0x39, 0x64, 0x34, 0x37, 0x66, 0x32, 0x61, 0x34, 0x30, 0x36, 0x64, 0xa5, 0xb5, 0xe1, 0x01, 0xf3, 0xb5, 0xe1, 0x01 };
-static const unsigned char kHoloRepl1[48] = { 0x69, 0x6e, 0x2f, 0x44, 0x61, 0x74, 0x61, 0x2f, 0x63, 0x38, 0x61, 0x30, 0x61, 0x37, 0x65, 0x37, 0x64, 0x39, 0x30, 0x62, 0x39, 0x64, 0x63, 0x34, 0x61, 0x62, 0x65, 0x62, 0x35, 0x64, 0x62, 0x64, 0x63, 0x65, 0x30, 0x34, 0x34, 0x65, 0x38, 0x36, 0xa5, 0xb5, 0xe1, 0x01, 0xf3, 0xb5, 0xe1, 0x01 };
-static const IxSR kHolo[2] = {
-    { kHoloFind0, kHoloRepl0, (int)sizeof(kHoloFind0), "hash A->B" },
-    { kHoloFind1, kHoloRepl1, (int)sizeof(kHoloFind1), "hash B->A" },
-};
-
-struct IxPoke { long off; const unsigned char* bytes; int len; };
-static const unsigned char kAsset00[1] = { 0x4e };
-static const unsigned char kAsset01[2] = { 0x63, 0x6b };
-static const unsigned char kAsset02[29] = { 0xe7, 0x74, 0xbd, 0xbe, 0x16, 0xdc, 0x98, 0xbd, 0xbb, 0x82, 0x97, 0xb4, 0x00, 0x00, 0x00, 0x00, 0xbf, 0xb2, 0x2f, 0x3f, 0x43, 0x32, 0x73, 0x36, 0x66, 0x03, 0x7b, 0x35, 0x01 };
-static const unsigned char kAsset03[1] = { 0xc0 };
-static const unsigned char kAsset04[1] = { 0xc0 };
-static const unsigned char kAsset05[3] = { 0x01, 0x00, 0xc0 };
-static const unsigned char kAsset06[1] = { 0x48 };
-static const unsigned char kAsset07[9] = { 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-static const unsigned char kAsset08[4] = { 0xb2, 0xf7, 0x1f, 0xa4 };
-static const unsigned char kAsset09[29] = { 0xe7, 0x74, 0xbd, 0xbe, 0x16, 0xdc, 0x98, 0xbd, 0xbb, 0x82, 0x97, 0xb4, 0x00, 0x00, 0x00, 0x00, 0xbf, 0xb2, 0x2f, 0x3f, 0x43, 0x32, 0x73, 0x36, 0x66, 0x03, 0x7b, 0x35, 0x01 };
-static const unsigned char kAsset10[1] = { 0xc0 };
-static const unsigned char kAsset11[1] = { 0x01 };
-static const unsigned char kAsset12[1] = { 0xc0 };
-static const unsigned char kAsset13[3] = { 0x01, 0x00, 0xc0 };
-static const unsigned char kAsset14[1] = { 0x48 };
-static const unsigned char kAsset15[9] = { 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-static const unsigned char kAsset16[4] = { 0xb2, 0xf7, 0x1f, 0xa4 };
-static const IxPoke kAssetPokes[17] = {
-    { 28517L, kAsset00, (int)sizeof(kAsset00) },
-    { 28519L, kAsset01, (int)sizeof(kAsset01) },
-    { 29004L, kAsset02, (int)sizeof(kAsset02) },
-    { 29034L, kAsset03, (int)sizeof(kAsset03) },
-    { 29038L, kAsset04, (int)sizeof(kAsset04) },
-    { 29040L, kAsset05, (int)sizeof(kAsset05) },
-    { 29053L, kAsset06, (int)sizeof(kAsset06) },
-    { 29055L, kAsset07, (int)sizeof(kAsset07) },
-    { 29068L, kAsset08, (int)sizeof(kAsset08) },
-    { 42432L, kAsset09, (int)sizeof(kAsset09) },
-    { 42462L, kAsset10, (int)sizeof(kAsset10) },
-    { 42464L, kAsset11, (int)sizeof(kAsset11) },
-    { 42466L, kAsset12, (int)sizeof(kAsset12) },
-    { 42468L, kAsset13, (int)sizeof(kAsset13) },
-    { 42481L, kAsset14, (int)sizeof(kAsset14) },
-    { 42483L, kAsset15, (int)sizeof(kAsset15) },
-    { 42496L, kAsset16, (int)sizeof(kAsset16) },
-};
-
-static const long  kAssetMarkerOff  = 28517L;
-static const long  kAssetExpectSize = 46640L;
-
 
 // ── where the files live ──────────────────────────────────────────────
 // Both roots are tried, same as the script's *_CANDIDATES lists.
@@ -259,49 +197,40 @@ static inline int IxCountPattern(const std::vector<unsigned char>& hay,
 // in place, exactly like the script's "already applied" branch).
 // quiet = print nothing at all; the caller logs the one-line result.
 static inline bool IxHologramPatch(bool quiet, std::string* detail) {
+    std::vector<IxSrvPatch> srv = ix_patch_rows("hologram");
+    if (srv.empty()) {
+        if (detail) *detail = "no hologram bytes from server";
+        return false;
+    }
+
     const std::string f = IxPickExisting(IxPdcachePaths(), 32);
     if (f.empty()) { if (detail) *detail = "pdcache not found"; return false; }
 
     std::vector<unsigned char> buf;
     if (!IxReadAll(f, buf)) { if (detail) *detail = "pdcache unreadable"; return false; }
-    if (!IxBackupOnce(f))   { if (detail) *detail = "backup failed";     return false; }
 
-    // One pair list, whichever source it came from, so the search /
-    // uniqueness / write logic below exists exactly once.
-    struct HoloPair {
-        const unsigned char* find; const unsigned char* repl;
-        int len; std::string tag;
-    };
-    std::vector<HoloPair> pairs;
-    std::vector<IxSrvPatch> srv = ix_patch_rows("hologram");
-
-    if (!srv.empty()) {
-        for (size_t i = 0; i < srv.size(); ++i) {
-            const IxSrvPatch& r = srv[i];
-            // A hologram row is a find/replace swap; an offset-only row
-            // has nothing to search for and is not usable here.
-            if (r.find.empty() || r.find.size() != r.repl.size()) continue;
-            pairs.push_back({ r.find.data(), r.repl.data(),
-                              (int)r.repl.size(),
-                              "server#" + std::to_string(i) });
-        }
-        if (pairs.empty()) {
-            if (detail) *detail = "server sent no usable hologram pair";
+    // A hologram row is a find/replace swap of equal length. An
+    // offset-only row has nothing to search for and is not usable here.
+    struct Pair { const unsigned char* find; const unsigned char* repl; int len; std::string tag; };
+    std::vector<Pair> pairs;
+    for (size_t i = 0; i < srv.size(); ++i) {
+        const IxSrvPatch& r = srv[i];
+        if (r.find.empty() || r.find.size() != r.repl.size()) continue;
+        if (r.repl.size() > IX_ROW_MAX) {
+            if (detail) *detail = "row " + std::to_string(i) + ": too large";
             return false;
         }
-    } else {
-        for (int i = 0; i < (int)(sizeof(kHolo) / sizeof(kHolo[0])); ++i) {
-            const IxSR& sr = kHolo[i];
-            pairs.push_back({ sr.find, sr.repl, sr.len, sr.tag });
-        }
+        pairs.push_back({ r.find.data(), r.repl.data(), (int)r.repl.size(),
+                          "row " + std::to_string(i) });
+    }
+    if (pairs.empty()) {
+        if (detail) *detail = "server sent no usable hologram pair";
+        return false;
     }
 
-    for (const HoloPair& p : pairs) {
-        if (p.len <= 0 || p.len > IX_ROW_MAX) {
-            if (detail) *detail = p.tag + ": row too large";
-            return false;
-        }
+    if (!IxBackupOnce(f)) { if (detail) *detail = "backup failed"; return false; }
 
+    for (const Pair& p : pairs) {
         long off = -1;
         const int hits = IxCountPattern(buf, p.find, p.len, &off);
         if (hits == 0) {
@@ -327,54 +256,48 @@ static inline bool IxHologramPatch(bool quiet, std::string* detail) {
         memcpy(buf.data() + off, p.repl, (size_t)p.len);
         if (!quiet) printf("[INX] holo %s ok @ %ld\n", p.tag.c_str(), off);
     }
-    if (detail) *detail = srv.empty() ? "ok" : "ok (server bytes)";
+    if (detail) *detail = "ok";
     return true;
 }
 
 // ── ASSET (Drag-HS) ───────────────────────────────────────────────────
 static inline bool IxAssetPatch(std::string* detail) {
     std::vector<IxSrvPatch> srv = ix_patch_rows("asset");
+    if (srv.empty()) {
+        if (detail) *detail = "no asset bytes from server";
+        return false;
+    }
 
-    // Expected size: the server's when it sent one, otherwise the
-    // compiled-in figure.
-    const long long srvSize = ix_patch_expect_size("asset");
-    const long expectSize = (srvSize >= 0) ? (long)srvSize : kAssetExpectSize;
+    // Expected size is whatever the server declared, if it declared one.
+    const long long declared = ix_patch_expect_size("asset");
+    const long expectSize = (declared >= 0) ? (long)declared : 0;
 
-    const std::string f = IxPickExisting(IxAssetPaths(), expectSize);
+    const std::string f = IxPickExisting(IxAssetPaths(), expectSize > 0 ? expectSize : 1);
     if (f.empty()) { if (detail) *detail = "assetindexer not ready"; return false; }
 
     const long sz = IxFileSize(f);
-    if (sz != expectSize) {
+    if (expectSize > 0 && sz != expectSize) {
         if (detail) *detail = "unexpected size";
         return false;
     }
-    if (!IxBackupOnce(f)) { if (detail) *detail = "backup failed"; return false; }
 
-    // One poke list, whichever source it came from.
-    struct Poke { long off; const unsigned char* bytes; int len; };
+    struct Poke { long off; const unsigned char* bytes; int len;
+                  const unsigned char* stock; int stockLen; };
     std::vector<Poke> pokes;
-
-    if (!srv.empty()) {
-        for (const IxSrvPatch& r : srv) {
-            if (r.off < 0 || r.repl.empty()) continue;   // needs a target offset
-            pokes.push_back({ (long)r.off, r.repl.data(), (int)r.repl.size() });
-        }
-        if (pokes.empty()) {
-            if (detail) *detail = "server sent no usable asset poke";
-            return false;
-        }
-    } else {
-        for (int i = 0; i < (int)(sizeof(kAssetPokes) / sizeof(kAssetPokes[0])); ++i) {
-            const IxPoke& p = kAssetPokes[i];
-            pokes.push_back({ p.off, p.bytes, p.len });
-        }
+    for (const IxSrvPatch& r : srv) {
+        if (r.off < 0 || r.repl.empty()) continue;      // needs a target offset
+        pokes.push_back({ (long)r.off, r.repl.data(), (int)r.repl.size(),
+                          r.find.empty() ? nullptr : r.find.data(),
+                          (int)r.find.size() });
+    }
+    if (pokes.empty()) {
+        if (detail) *detail = "server sent no usable asset poke";
+        return false;
     }
 
-    // Validate every row BEFORE touching the file or reading the marker.
-    // Done first so an out-of-range row reports why it was refused — if
-    // the idempotency read below ran first, a row near EOF would fail
-    // there instead and report "marker unreadable", which points at the
-    // wrong thing entirely.
+    // Validate every row BEFORE touching the file, so an out-of-range row
+    // reports why it was refused instead of failing later in a read and
+    // pointing at the wrong thing.
     for (const Poke& p : pokes) {
         if (p.len <= 0 || p.len > IX_ROW_MAX) {
             if (detail) *detail = "poke row too large";
@@ -386,45 +309,59 @@ static inline bool IxAssetPatch(std::string* detail) {
         }
     }
 
-    // Idempotency gate. With the compiled tables this is the script's own
-    // marker test: 0x4e means already done, 0x48 is the stock byte, and
-    // anything else means this is not the file expected.
-    //
-    // With server rows those two byte values are not known here — they
-    // are not part of what the server sends — so instead the first row's
-    // target bytes are compared against its own replacement, which
-    // answers the same question without inventing a value.
-    if (srv.empty()) {
-        unsigned char marker = 0;
+    // A row that declares its stock bytes in `find` is the gate: if the
+    // replacement is already there the work is done, and if neither the
+    // stock nor the replacement is there this is not the file expected.
+    // That is the same test the compiled-in 0x48/0x4e marker used to do,
+    // except the two values now come from the server with everything else.
+    bool gated = false;
+    for (const Poke& p : pokes) {
+        if (!p.stock || p.stockLen != p.len) continue;
+        std::vector<unsigned char> cur((size_t)p.len, 0);
         const int fd = open(f.c_str(), O_RDONLY);
         if (fd < 0) { if (detail) *detail = "open failed"; return false; }
-        const ssize_t r = pread(fd, &marker, 1, (off_t)kAssetMarkerOff);
+        const ssize_t got = pread(fd, cur.data(), (size_t)p.len, (off_t)p.off);
         close(fd);
-        if (r != 1) { if (detail) *detail = "marker unreadable"; return false; }
-        if (marker == 0x4e) { if (detail) *detail = "already patched"; return true; }
-        if (marker != 0x48) { if (detail) *detail = "marker mismatch";  return false; }
-    } else {
+        if (got != (ssize_t)p.len) { if (detail) *detail = "marker unreadable"; return false; }
+
+        if (memcmp(cur.data(), p.bytes, (size_t)p.len) == 0) {
+            if (detail) *detail = "already patched";
+            return true;
+        }
+        if (memcmp(cur.data(), p.stock, (size_t)p.len) != 0) {
+            if (detail) *detail = "stock bytes differ";
+            return false;
+        }
+        gated = true;
+        break;
+    }
+
+    // No row declared its stock bytes: fall back to asking whether the
+    // first row's replacement is already in place, which still stops a
+    // second run from rewriting what is already there.
+    if (!gated) {
         const Poke& p0 = pokes[0];
         std::vector<unsigned char> cur((size_t)p0.len, 0);
         const int fd = open(f.c_str(), O_RDONLY);
         if (fd < 0) { if (detail) *detail = "open failed"; return false; }
-        const ssize_t r = pread(fd, cur.data(), (size_t)p0.len, (off_t)p0.off);
+        const ssize_t got = pread(fd, cur.data(), (size_t)p0.len, (off_t)p0.off);
         close(fd);
-        if (r != (ssize_t)p0.len) { if (detail) *detail = "marker unreadable"; return false; }
+        if (got != (ssize_t)p0.len) { if (detail) *detail = "marker unreadable"; return false; }
         if (memcmp(cur.data(), p0.bytes, (size_t)p0.len) == 0) {
             if (detail) *detail = "already patched";
             return true;
         }
     }
 
-    // Bounds and row size were checked above, before the marker read.
+    if (!IxBackupOnce(f)) { if (detail) *detail = "backup failed"; return false; }
+
     for (const Poke& p : pokes) {
         if (!IxPwrite(f, p.off, p.bytes, p.len)) {
             if (detail) *detail = "write failed";
             return false;
         }
     }
-    if (detail) *detail = srv.empty() ? "ok" : "ok (server bytes)";
+    if (detail) *detail = "ok";
     return true;
 }
 
@@ -434,13 +371,12 @@ static inline bool IxAssetPatch(std::string* detail) {
 // force-stop, or a run that never pressed Exit.
 static inline bool IxAssetIsPatched() {
     std::vector<IxSrvPatch> srv = ix_patch_rows("asset");
-    const long long srvSize = ix_patch_expect_size("asset");
-    const long expectSize = (srvSize >= 0) ? (long)srvSize : kAssetExpectSize;
+    if (srv.empty()) return false;
 
-    const std::string f = IxPickExisting(IxAssetPaths(), expectSize);
+    const long long declared = ix_patch_expect_size("asset");
+    const std::string f = IxPickExisting(IxAssetPaths(), declared >= 0 ? (long)declared : 1);
     if (f.empty()) return false;
 
-    // Server rows: the first row's bytes being in place is the answer.
     for (const IxSrvPatch& r : srv) {
         if (r.off < 0 || r.repl.empty()) continue;
         std::vector<unsigned char> cur(r.repl.size(), 0);
@@ -451,31 +387,25 @@ static inline bool IxAssetIsPatched() {
         return got == (ssize_t)cur.size() &&
                memcmp(cur.data(), r.repl.data(), cur.size()) == 0;
     }
-
-    unsigned char marker = 0;
-    const int fd = open(f.c_str(), O_RDONLY);
-    if (fd < 0) return false;
-    const ssize_t r = pread(fd, &marker, 1, (off_t)kAssetMarkerOff);
-    close(fd);
-    return r == 1 && marker == 0x4e;      // 0x48 stock, 0x4e patched
+    return false;
 }
 
 static inline bool IxHologramIsPatched() {
+    std::vector<IxSrvPatch> srv = ix_patch_rows("hologram");
+    if (srv.empty()) return false;
+
     const std::string f = IxPickExisting(IxPdcachePaths(), 32);
     if (f.empty()) return false;
     std::vector<unsigned char> buf;
     if (!IxReadAll(f, buf)) return false;
-    // Patched means the first pair's REPLACEMENT is the one in the file.
-    for (const IxSrvPatch& r : ix_patch_rows("hologram")) {
-        if (r.find.empty() || r.repl.empty()) continue;
-        long soff = -1;
-        return IxCountPattern(buf, r.repl.data(), (int)r.repl.size(), &soff) > 0;
-    }
 
-    const IxSR& sr0 = kHolo[0];
-    if (sr0.len <= 0 || sr0.len > IX_ROW_MAX) return false;
-    long off = -1;
-    return IxCountPattern(buf, sr0.repl, sr0.len, &off) > 0;
+    // Patched means the first usable pair's REPLACEMENT is in the file.
+    for (const IxSrvPatch& r : srv) {
+        if (r.find.empty() || r.repl.empty()) continue;
+        long off = -1;
+        return IxCountPattern(buf, r.repl.data(), (int)r.repl.size(), &off) > 0;
+    }
+    return false;
 }
 
 // ── RESTORE ───────────────────────────────────────────────────────────

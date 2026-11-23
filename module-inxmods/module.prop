@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.6 Patch bytes come from the server secret; removed the at-rest XOR that was corrupting both game-file patches
+version=v6.7 Patch bytes removed from the binary entirely — they come only from the server now, like the offsets
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki
