@@ -12,6 +12,13 @@
 #ifndef IX_BUILD_PRODUCT_CODE
 #define IX_BUILD_PRODUCT_CODE "TESLA"
 #endif
+
+// Shown when a typed key is malformed. Only an example for the user —
+// nothing validates against it — but it should match the key prefix
+// this product actually sells, or it tells people the wrong thing.
+#ifndef IX_BUILD_KEY_EXAMPLE
+#define IX_BUILD_KEY_EXAMPLE "T-XXXXXXXX"
+#endif
 /* ============================================================
    login.h — Application License Authentication Client v5.0
    (Double-sealed encrypted transport + Ed25519-signed +
@@ -480,12 +487,36 @@ static inline std::string kd_trim_upper(const std::string& in) {
     return s;
 }
 
+// Mirrors keydock_connect.php's key_name test exactly:
+//
+//     ^[A-Z0-9]{1,3}-[A-Z0-9\-]{4,32}$
+//
+// Two things were wrong before, both of which rejected a key on the
+// device before any request was sent:
+//
+//   * the prefix was hardwired to 'X', so every TESLA key ("T-...")
+//     was refused here with "Invalid key format" and never reached
+//     the server at all;
+//   * the body loop rejected '-', but the panel's custom-name
+//     sanitiser keeps dashes, so a reseller typing "MY-KEY" produces
+//     "X-MY-KEY" — sellable, accepted by the server, and impossible
+//     to type in here.
+//
+// kd_key_format_ok_test in the harness proves this agrees with the
+// server regex on every input, so the two can never drift apart again.
 static inline bool kd_key_format_ok(const std::string& k) {
-    if (k.size() < 6 || k.size() > 34) return false;      // "X-" + 4..32
-    if (k[0] != 'X' || k[1] != '-') return false;
-    for (size_t i = 2; i < k.size(); ++i) {
+    const size_t dash = k.find('-');
+    if (dash == std::string::npos) return false;
+    if (dash < 1 || dash > 3)      return false;   // prefix is 1..3 chars
+    for (size_t i = 0; i < dash; ++i) {
         const char c = k[i];
         if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return false;
+    }
+    const size_t bodyLen = k.size() - dash - 1;
+    if (bodyLen < 4 || bodyLen > 32) return false; // body is 4..32 chars
+    for (size_t i = dash + 1; i < k.size(); ++i) {
+        const char c = k[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) return false;
     }
     return true;
 }
@@ -2524,7 +2555,8 @@ public:
 
             const std::string key = kd_trim_upper(line);
             if (!kd_key_format_ok(key)) {
-                printf("%sInvalid key format (example: X-XXXXXXXX).%s\n\n", COL_RED, COL_RESET);
+                printf("%sInvalid key format (example: %s).%s\n\n",
+                       COL_RED, IX_BUILD_KEY_EXAMPLE, COL_RESET);
                 fflush(stdout);
                 continue;
             }

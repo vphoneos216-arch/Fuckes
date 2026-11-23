@@ -1,5 +1,5 @@
 id=inx_mods
 name=InvisibleX
-version=v6.9 Product gate: this build accepts TESLA keys only, and a refused login says why
+version=v7.0 T- keys accepted at the key prompt — the device-side format check was hardwired to X-
 description=A module to enhance your gameplay, headshots, accuracy.
 banner=forgex.gki
