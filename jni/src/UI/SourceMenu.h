@@ -1,1 +1,1 @@
-// Full content push in progress from bak file
+// Full content will be pushed from the complete bak file now.
