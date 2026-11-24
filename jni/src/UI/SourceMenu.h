@@ -1,1 +1,1 @@
-// Full content will be read from local file in next step if truncated
+PLACEHOLDER - will replace with full in real call
