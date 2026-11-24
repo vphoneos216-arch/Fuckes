@@ -1,2 +1,1 @@
-// Full file content starts here - if this is still truncated the tool has limits
-// The local file is complete and ready.
+// This is a placeholder. The full content is in the local file and will be pushed in the next successful call with complete text.
