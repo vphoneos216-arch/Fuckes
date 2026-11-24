@@ -1,1 +1,1 @@
-// This is a placeholder. The full content is in the local file and will be pushed in the next successful call with complete text.
+// Full content is being prepared from local bak file for complete restore.
