@@ -111,6 +111,7 @@ endif
 
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/../includes \
+    $(LOCAL_PATH)/../includes/external/curl-android-$(TARGET_ARCH_ABI)/include \
     $(LOCAL_PATH)/../includes/external/libsodium-android-arm64-v8a/include \
     $(LOCAL_PATH)/../includes/fonts \
     $(LOCAL_PATH)/../includes/internal \
