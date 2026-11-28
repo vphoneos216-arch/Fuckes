@@ -23,6 +23,7 @@
 #include <android/log.h>
 #include "png/image.hpp"
 #include "png/images/logo1.hpp"
+#include "png/images/logo_inx.hpp"
 
 #include "driver.h"
 #include "other/addr.hpp"
@@ -512,43 +513,27 @@ namespace ui::menu {
     // Tab Contents (client.sh features + KernelSRC UI)
     // ============================================
 
-    void Info_1() {
-        wc::title("Account Info");
-
-        char line1[96];
-        snprintf(line1, sizeof(line1), "License Key : %s", cfg::account::license_key.c_str());
-        ImGui::TextColored(ImColor(255,255,255,255), "%s", line1);
-
-        char line2[160];
-        snprintf(line2, sizeof(line2), "Seller      : %s", cfg::account::seller_name.c_str());
-        ImGui::TextColored(ImColor(0,191,255,255), "%s", line2);
-
-        char line3[96];
-        snprintf(line3, sizeof(line3), "Expiry Date : %s", cfg::account::expiry_date.c_str());
-        ImGui::TextColored(ImColor(255,220,0,255), "%s", line3);
-
-        ImGui::TextColored(ImColor(200,200,200,255), "Status      : %s", cfg::account::status.c_str());
-        ImGui::TextColored(ImColor(200,200,200,255), "Days Left   : %d", cfg::account::days_remain);
-        ImGui::TextColored(ImColor(200,200,200,255), "Devices     : %d / %d",
-                            cfg::account::devices_used, cfg::account::devices_max);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextColored(ImColor(100,100,110,255), "LIB: 0x%lx  |  PID: %d", (unsigned long)proc::lib, proc::pid);
-        ImGui::Text("FPS: %.1f  |  Frame Time: %.3fms", ImGui::GetIO().Framerate, ImGui::GetIO().DeltaTime * 1000.0f);
-    }
-
     void Home_1() {
         ImVec4 oldBorderColor = ImGui::GetStyle().Colors[ImGuiCol_Border];
         ImGui::GetStyle().Colors[ImGuiCol_Border] = ImVec4(0, 0, 0, 1);
 
         ImGui::BeginChild("Home Info", ImVec2(ImGui::GetContentRegionAvail().x, 160), true, ImGuiWindowFlags_NoScrollbar);
-        ImGui::Text("            Disclaimer & Notice\n"
-                    "  1. For educational and research use only\n"
-                    "  2. Do not use for illegal purposes\n"
-                    "  3. Developer takes no responsibility\n"
-                    "  4. Have fun!");
+        char acc_line1[96];
+        snprintf(acc_line1, sizeof(acc_line1), "License Key : %s", cfg::account::license_key.c_str());
+        ImGui::TextColored(ImColor(255,255,255,255), "%s", acc_line1);
+
+        char acc_line2[160];
+        snprintf(acc_line2, sizeof(acc_line2), "Seller      : %s", cfg::account::seller_name.c_str());
+        ImGui::TextColored(ImColor(0,191,255,255), "%s", acc_line2);
+
+        char acc_line3[96];
+        snprintf(acc_line3, sizeof(acc_line3), "Expiry Date : %s", cfg::account::expiry_date.c_str());
+        ImGui::TextColored(ImColor(255,220,0,255), "%s", acc_line3);
+
+        ImGui::TextColored(ImColor(200,200,200,255), "Status      : %s", cfg::account::status.c_str());
+        ImGui::TextColored(ImColor(200,200,200,255), "Days Left   : %d", cfg::account::days_remain);
+        ImGui::TextColored(ImColor(200,200,200,255), "Devices     : %d / %d",
+                            cfg::account::devices_used, cfg::account::devices_max);
         ImGui::EndChild();
 
         int play_count = 0, bot_count = 0;
@@ -649,6 +634,8 @@ namespace ui::menu {
         wc::Checkbox("Crosshair", &cfg::esp::crosshair);
         ImGui::SameLine();
         wc::Checkbox("FOV Circle", &cfg::aim::fov_circle);
+        ImGui::SameLine();
+        wc::Checkbox("Head Dot", &cfg::esp::head_dot);
     }
 
     void Render_2() {
@@ -701,7 +688,7 @@ namespace ui::menu {
         }
         ImGui::TextDisabled("  Status Aimbot: %s", status.x.c_str());
 
-        changed |= wc::Checkbox("HWBP Y", &settings.y);
+        changed |= wc::Checkbox("Bullet Track", &settings.y);
         ImGui::SameLine();
         std::vector<std::string> y_opts = {"Opt A", "Opt B"};
         float y_opt_f = (float)settings.y_option;
@@ -710,7 +697,7 @@ namespace ui::menu {
             settings.y_option = (int)y_opt_f;
             changed = true;
         }
-        ImGui::TextDisabled("  Status Y: %s", status.y.c_str());
+        ImGui::TextDisabled("  Status Bullet Track: %s", status.y.c_str());
 
         changed |= wc::Checkbox("Fire Check", &settings.fire_check);
         ImGui::SameLine();
@@ -746,8 +733,8 @@ namespace ui::menu {
         ImGui::Spacing();
         ImGui::TextDisabled("Engine Status: %s", status.text.c_str());
         ImGui::Text(driver && !driver->breakpoint_has_total_hits()
-                    ? "Records: X=%llu | Y=%llu"
-                    : "Hits: X=%llu | Y=%llu",
+                    ? "Records: Aimbot=%llu | Bullet Track=%llu"
+                    : "Hits: Aimbot=%llu | Bullet Track=%llu",
                     (unsigned long long)status.x_hits, (unsigned long long)status.y_hits);
 
         static std::string saved_report;
@@ -778,30 +765,6 @@ namespace ui::menu {
             engine.configure(settings);
         }
 
-    }
-
-    void Items_1() {
-        wc::title("Items Section");
-        static bool dummy_med = false, dummy_arm = false, dummy_wep = false;
-        wc::Checkbox("Medical ESP", &dummy_med);
-        ImGui::SameLine();
-        wc::Checkbox("Armor & Helmet", &dummy_arm);
-        ImGui::SameLine();
-        wc::Checkbox("Weapon ESP", &dummy_wep);
-
-        static bool dummy_crate = false, dummy_drop = false, dummy_veh = false;
-        wc::Checkbox("Death Crate", &dummy_crate);
-        ImGui::SameLine();
-        wc::Checkbox("Airdrop ESP", &dummy_drop);
-        ImGui::SameLine();
-        wc::Checkbox("Vehicle ESP", &dummy_veh);
-    }
-
-    void Items_2() {
-        wc::title("Item Filter");
-        std::vector<std::string> item_level = {"All", "Level 1", "Level 2", "Level 3"};
-        static float item_level_f = 0.0f;
-        wc::SlidingSelector(item_level, item_level_f, false, 120.0f, 45.0f);
     }
 
     void settings_wc_1() {
@@ -992,13 +955,7 @@ namespace ui::menu {
             if (wc::button("Aimbot", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 2;
             ImGui::Separator();
 
-            if (wc::button("Items", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 3;
-            ImGui::Separator();
-
             if (wc::button("Settings", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 4;
-            ImGui::Separator();
-
-            if (wc::button("Info", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 5;
 
             ImGui::EndChild();
             ImGui::PopStyleColor(); // child bg
@@ -1052,29 +1009,10 @@ namespace ui::menu {
                     ImGui::EndChild();
                     break;
                 }
-                case 3: { // Items
-                    ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
-                    ImGui::BeginChild("Items Row 4 Col 1", ImVec2(aevrage_now * 3, window_y - 30.0f), true);
-                    Items_1();
-                    ImGui::EndChild();
-
-                    ImGui::SetCursorPos(ImVec2(aevrage_now * 4 + 45, 15));
-                    ImGui::BeginChild("Items Row 4 Col 2", ImVec2(aevrage_now * 2, window_y - 30.0f), true);
-                    Items_2();
-                    ImGui::EndChild();
-                    break;
-                }
                 case 4: { // Settings
                     ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
                     ImGui::BeginChild("Settings Child", ImVec2(aevrage_now * 5 + 15, window_y - 30.0f), true);
                     settings_wcPage();
-                    ImGui::EndChild();
-                    break;
-                }
-                case 5: { // Info
-                    ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
-                    ImGui::BeginChild("Info Child", ImVec2(aevrage_now * 5 + 15, window_y - 30.0f), true);
-                    Info_1();
                     ImGui::EndChild();
                     break;
                 }
@@ -1157,7 +1095,7 @@ namespace ui::menu {
 
         if (!g_LogoLoaded) {
             int w, h;
-            if (ui::image::LoadTextureFromMemory(logo1_data.data(), logo1_data.size(), &g_LogoTex, &w, &h)) {
+            if (ui::image::LoadTextureFromMemory(logo_inx_data.data(), logo_inx_data.size(), &g_LogoTex, &w, &h)) {
                 g_LogoLoaded = true;
             }
         }

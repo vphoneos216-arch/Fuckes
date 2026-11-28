@@ -106,7 +106,8 @@ inline bool button(const std::string& name, ImVec2 size, float dingsize = 15.0f,
 }
 
 inline bool Checkbox(const char* label, bool* value) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 9999.0f);
+    // Square toggle, not the circular/pill shape 9999.0f rounding produced.
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -169,13 +170,22 @@ inline bool Toggle(const char* label, bool* value) {
     ImU32 col_bg = ImGui::GetColorU32((held && hovered) ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
 
     const ImRect frame_bb(pos, ImVec2(pos.x + width, pos.y + height));
-    ImGui::RenderFrame(frame_bb.Min, frame_bb.Max, col_bg, true, height * 0.6f);
+    // Square track (no rounding) -- was height * 0.6f (pill-shaped).
+    ImGui::RenderFrame(frame_bb.Min, frame_bb.Max, col_bg, true, 0.0f);
     ImGui::RenderNavHighlight(total_bb, id);
 
     ImVec2 label_pos = ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y);
     ImGui::RenderText(label_pos, label);
 
-    window->DrawList->AddCircleFilled(ImVec2(pos.x + radius * 1.2f + t * (width - radius * 2.4f), pos.y + height * 0.5f), radius - 1.5f, ImGui::ColorConvertFloat4ToU32(checkMarkColor), 36);
+    // Square knob (was AddCircleFilled -- a circle).
+    {
+        float half = radius - 1.5f;
+        ImVec2 knobCenter(pos.x + radius * 1.2f + t * (width - radius * 2.4f), pos.y + height * 0.5f);
+        window->DrawList->AddRectFilled(
+            ImVec2(knobCenter.x - half, knobCenter.y - half),
+            ImVec2(knobCenter.x + half, knobCenter.y + half),
+            ImGui::ColorConvertFloat4ToU32(checkMarkColor));
+    }
 
     ImGui::PopStyleColor(3);
     return pressed;

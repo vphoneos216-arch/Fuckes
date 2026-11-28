@@ -172,6 +172,11 @@ namespace func::esp {
                 dl->AddCircleFilled(tp2, 3.f, col_box);
             }
 
+            if (cfg::esp::head_dot) {
+                dl->AddCircleFilled(ImVec2(p.Head.x, p.Head.y), cfg::esp::head_dot_radius,
+                                    ImGui::ColorConvertFloat4ToU32(cfg::esp::head_dot_col));
+            }
+
             if (cfg::esp::health) {
                 float hp01 = p.maxHP > 0 ? (float)p.curHP / (float)p.maxHP : 0.f;
                 if (hp01 < 0.f) hp01 = 0.f;

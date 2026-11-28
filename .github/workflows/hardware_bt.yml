@@ -13,11 +13,178 @@ env:
   NDK_VERSION: r29
 
 jobs:
+  # ===================================================================
+  # Builds a PRIVATE, renamed OpenSSL 3.x libcrypto.a for android-arm64,
+  # used ONLY for Ed448 verification -- ported verbatim from the main
+  # InvisibleX workflow's build-ed448-lib job (.github/workflows/build.yml).
+  # The bundled OpenSSL this project already has (openssl-android-arm64-v8a)
+  # predates Ed25519/Ed448 EVP support, and can't just be swapped since
+  # curl-android links against that exact ABI -- so every symbol in the
+  # new library is renamed with a kdoss3_ prefix (objcopy) and a matching
+  # #define header is shipped so Login.h's own calls resolve to the
+  # renamed names too. Zero chance of collision either side.
+  # ===================================================================
+  build-ed448-lib:
+    runs-on: ubuntu-24.04
+    outputs:
+      built: ${{ steps.build.outcome }}
+    steps:
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Clone OpenSSL (pinned release)
+        run: |
+          set -e
+          git clone --depth 1 --branch openssl-3.3.2 https://github.com/openssl/openssl /tmp/openssl-src
+
+      - name: Configure + build libcrypto for android-arm64
+        id: build
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          export ANDROID_NDK_ROOT="$NDK"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd /tmp/openssl-src
+          ./Configure android-arm64 -D__ANDROID_API__=28 \
+            no-shared no-tests no-apps no-engine no-deprecated
+          make -j"$(nproc)" build_libs
+          ls -la libcrypto.a
+          file libcrypto.a
+
+      - name: Rename every global symbol (kdoss3_ prefix)
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          OBJCOPY="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+          AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          cd /tmp/openssl-src
+
+          mkdir -p /tmp/objs && cd /tmp/objs
+          "$AR" x /tmp/openssl-src/libcrypto.a
+
+          "$NM" --defined-only -g *.o 2>/dev/null \
+            | awk '{print $3}' | sort -u | grep -v '^$' > /tmp/syms.txt
+          wc -l /tmp/syms.txt
+
+          awk '{print $1, "kdoss3_" $1}' /tmp/syms.txt > /tmp/redefine.txt
+
+          for o in *.o; do
+            "$OBJCOPY" --redefine-syms=/tmp/redefine.txt "$o"
+          done
+
+          "$AR" rcs /tmp/libcrypto_kdoss3.a *.o
+          "$NM" --defined-only -g /tmp/libcrypto_kdoss3.a | grep -c kdoss3_ || true
+
+          awk '{print "#define " $1 " kdoss3_" $1}' /tmp/syms.txt > /tmp/kd_ossl_rename.h
+
+      - name: Package headers + renamed lib
+        run: |
+          set -e
+          mkdir -p /tmp/ed448lib/include
+          cp -r /tmp/openssl-src/include/openssl /tmp/ed448lib/include/openssl
+          cp /tmp/libcrypto_kdoss3.a /tmp/ed448lib/libcrypto_kdoss3.a
+          cp /tmp/kd_ossl_rename.h /tmp/ed448lib/kd_ossl_rename.h
+          cd /tmp/ed448lib && tar czf /tmp/ed448lib.tar.gz .
+
+      - name: Upload (consumed by the main build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-bt-ed448lib
+          path: /tmp/ed448lib.tar.gz
+          if-no-files-found: error
+
+  # ===================================================================
+  # ML-DSA-65 (FIPS 204, post-quantum) -- cross-compiles liboqs for
+  # android-arm64, ported verbatim from the main InvisibleX workflow's
+  # build-mldsa-android-lib job. liboqs' OQS_* symbols don't collide
+  # with anything in this project, so no renaming is needed here.
+  # ===================================================================
+  build-mldsa-android-lib:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Clone liboqs (pinned release)
+        run: |
+          set -e
+          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs /tmp/liboqs-src
+
+      - name: Configure + build for android-arm64
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          cmake -S /tmp/liboqs-src -B /tmp/liboqs-build-android \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DOQS_USE_OPENSSL=OFF \
+            -DOQS_BUILD_ONLY_LIB=ON \
+            -DOQS_MINIMAL_BUILD="SIG_ml_dsa_65" \
+            -DCMAKE_INSTALL_PREFIX=/tmp/liboqs-install-android
+          cmake --build /tmp/liboqs-build-android -j"$(nproc)"
+          cmake --install /tmp/liboqs-build-android
+          ls -la /tmp/liboqs-install-android/lib
+          file /tmp/liboqs-install-android/lib/liboqs.a
+
+      - name: Package for the main build job
+        run: |
+          set -e
+          mkdir -p /tmp/liboqs-android-pkg
+          cp -r /tmp/liboqs-install-android/lib /tmp/liboqs-android-pkg/lib
+          cp -r /tmp/liboqs-install-android/include /tmp/liboqs-android-pkg/include
+          cd /tmp/liboqs-android-pkg && tar czf /tmp/liboqs-android.tar.gz .
+
+      - name: Upload (consumed by the main build job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-bt-liboqs-android
+          path: /tmp/liboqs-android.tar.gz
+          if-no-files-found: error
+
   build:
+    needs: [build-ed448-lib, build-mldsa-android-lib]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Ed448 lib (from build-ed448-lib job)
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-bt-ed448lib
+          path: /tmp/ed448lib-download
+
+      - name: Unpack Ed448 lib into hardware_bt/includes/external
+        run: |
+          set -e
+          mkdir -p hardware_bt/includes/external/openssl3-ed448
+          tar xzf /tmp/ed448lib-download/ed448lib.tar.gz -C hardware_bt/includes/external/openssl3-ed448
+          ls -la hardware_bt/includes/external/openssl3-ed448
+
+      - name: Download liboqs (ML-DSA-65) lib (from build-mldsa-android-lib job)
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-bt-liboqs-android
+          path: /tmp/liboqs-android-download
+
+      - name: Unpack liboqs lib into hardware_bt/includes/external
+        run: |
+          set -e
+          mkdir -p hardware_bt/includes/external/liboqs-android
+          tar xzf /tmp/liboqs-android-download/liboqs-android.tar.gz -C hardware_bt/includes/external/liboqs-android
+          ls -la hardware_bt/includes/external/liboqs-android
 
       - name: Set up Android NDK ${{ env.NDK_VERSION }}
         id: ndk

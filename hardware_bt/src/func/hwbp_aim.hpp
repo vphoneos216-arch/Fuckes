@@ -300,7 +300,16 @@ class Controller {
             status.target=0;
             try{step(settings,status);}catch(const std::exception& e){pause(status,e.what());}
             publish(status);
-            std::this_thread::sleep_until(begin+std::chrono::microseconds(8333));
+            // Tightened from 8333us (120Hz) to 2000us (500Hz): every poll
+            // re-writes the breakpoint's register-write mask with the
+            // current direction/quaternion, and the hardware breakpoint
+            // replays whatever is currently armed on EVERY hit at that PC
+            // (not just once) -- so a narrower poll period shrinks the
+            // window in which a stale (not-yet-refreshed) write could be
+            // in effect when a shot's raycast executes, for weapons that
+            // fire several rounds close together. Still fully breakpoint-
+            // based; no fallback path of any kind was added.
+            std::this_thread::sleep_until(begin+std::chrono::microseconds(2000));
         }
         disarm(status);
     }

@@ -42,6 +42,38 @@ LOCAL_SRC_FILES := ../includes/external/libsodium-android-arm64-v8a/lib/libsodiu
 LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/../includes/external/libsodium-android-arm64-v8a/include
 include $(PREBUILT_STATIC_LIBRARY)
 
+# =====================================================================
+#  Ed448 crypto -- PRIVATE renamed OpenSSL 3.x (kdoss3_ prefixed symbols),
+#  built only in CI (see .github/workflows/hardware_bt.yml's
+#  build-ed448-lib job). Only present there, never on a phone/AIDE build,
+#  so everything about it is guarded by `wildcard`: a phone build just
+#  compiles without Ed448 verification (Ed25519 still fully protects it)
+#  rather than failing because the file isn't there. Ported verbatim
+#  from the main InvisibleX build (jni/Android.mk / build.yml).
+# =====================================================================
+KD_ED448_LIB := $(LOCAL_PATH)/../includes/external/openssl3-ed448/libcrypto_kdoss3.a
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+include $(CLEAR_VARS)
+LOCAL_MODULE    := openssl3_ed448
+LOCAL_SRC_FILES := ../includes/external/openssl3-ed448/libcrypto_kdoss3.a
+LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/../includes/external/openssl3-ed448/include
+include $(PREBUILT_STATIC_LIBRARY)
+endif
+
+# =====================================================================
+#  ML-DSA-65 (post-quantum, FIPS 204) -- liboqs, built only in CI (see
+#  hardware_bt.yml's build-mldsa-android-lib job). Same wildcard-guard
+#  pattern as Ed448.
+# =====================================================================
+KD_MLDSA_LIB := $(LOCAL_PATH)/../includes/external/liboqs-android/lib/liboqs.a
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+include $(CLEAR_VARS)
+LOCAL_MODULE    := oqs_mldsa
+LOCAL_SRC_FILES := ../includes/external/liboqs-android/lib/liboqs.a
+LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/../includes/external/liboqs-android/include
+include $(PREBUILT_STATIC_LIBRARY)
+endif
+
 include $(CLEAR_VARS)
 LOCAL_MODULE := paradise_api
 ifeq ($(TOUCHBASE_DIAGNOSTICS),1)
@@ -75,7 +107,17 @@ LOCAL_SRC_FILES := \
     ../includes/draw/ImGui/backends/imgui_impl_android.cpp \
     ../includes/draw/ImGui/backends/imgui_impl_opengl3.cpp
 
-LOCAL_C_INCLUDES := \
+# Ed448's new OpenSSL headers MUST be found before the old bundled
+# openssl-android ones for the SAME <openssl/evp.h> name to resolve to
+# the new (Ed448-capable) version -- clang's -I search is first-match-
+# wins. Safe: Login.h is the only file including <openssl/...> directly.
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/../includes/external/openssl3-ed448/include
+else
+LOCAL_C_INCLUDES :=
+endif
+
+LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/../includes \
     $(LOCAL_PATH)/../includes/external/libsodium-android-arm64-v8a/include \
     $(LOCAL_PATH)/../includes/fonts \
@@ -89,6 +131,10 @@ LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/../src/protect \
     $(LOCAL_PATH)/../src/ui \
     $(LOCAL_PATH)/../src/game
+
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/../includes/external/liboqs-android/include
+endif
 
 LOCAL_CPPFLAGS := \
     -std=c++17 \
@@ -110,6 +156,18 @@ LOCAL_CPPFLAGS := \
     -fno-color-diagnostics \
     -fmerge-all-constants \
     -fno-ident
+
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_CPPFLAGS += -DKD_HAVE_ED448=1
+# Force-included BEFORE any <openssl/...> header in every source file, so
+# every EVP_* call gets rewritten to kdoss3_EVP_* and matches the renamed
+# archive -- zero per-file #include changes needed.
+LOCAL_CPPFLAGS += -include $(LOCAL_PATH)/../includes/external/openssl3-ed448/kd_ossl_rename.h
+endif
+
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_CPPFLAGS += -DKD_HAVE_MLDSA=1
+endif
 
 LOCAL_LDFLAGS := \
     -Wl,--gc-sections \
@@ -133,5 +191,12 @@ LOCAL_LDLIBS := \
 
 # Static libs (curl, ssl, crypto)
 LOCAL_STATIC_LIBRARIES := paradise_api curl ssl crypto sodium
+
+ifneq ($(wildcard $(KD_ED448_LIB)),)
+LOCAL_STATIC_LIBRARIES += openssl3_ed448
+endif
+ifneq ($(wildcard $(KD_MLDSA_LIB)),)
+LOCAL_STATIC_LIBRARIES += oqs_mldsa
+endif
 
 include $(BUILD_EXECUTABLE)

@@ -23,6 +23,12 @@ namespace esp {
     inline bool  crosshair    = true;
     inline bool  fov_circle   = false;
     inline bool  name         = true;
+    // Head Dot, ported from InvisibleX's hook.h (showHeadDot/showHeadDotRadius/
+    // headDotColor) -- the one piece of hook.h's ESP visual set this project's
+    // own (already-working) esp.hpp draw() didn't have yet.
+    inline bool  head_dot        = false;
+    inline float head_dot_radius = 4.0f;
+    inline ImVec4 head_dot_col   = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
 
     inline float max_range     = 250.f;
     inline float box_rounding  = 3.f;
