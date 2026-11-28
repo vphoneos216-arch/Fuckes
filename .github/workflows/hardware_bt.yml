@@ -1,0 +1,129 @@
+name: Build Hardware BT (Aimbot + HWBPY, O-MVLL)
+
+on:
+  push:
+    branches:
+      - hardware-bt-aimbot-hwbpy
+    paths:
+      - 'hardware_bt/**'
+      - '.github/workflows/hardware_bt.yml'
+  workflow_dispatch: {}
+
+env:
+  NDK_VERSION: r29
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Android NDK ${{ env.NDK_VERSION }}
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      # Same O-MVLL fetch as the main InvisibleX workflow — kept identical
+      # so this binary gets the same obfuscation pipeline/version.
+      - name: Download O-MVLL plugin (latest linux build)
+        run: |
+          set -e
+          CANDIDATES=(
+            "https://open-obfuscator.build38.io/ci/omvll_v1-10-0_linux_2026-09-29T09:26:56.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-11-13T11:32:29.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-11-09T09:56:31.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T11:58:24.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-29T09:09:16.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-06T09:20:43.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-10-01T09:30:05.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:51:26.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T11:41:51.tar.gz"
+            "https://open-obfuscator.build38.io/ci/omvll_v1-12-0_linux_2026-09-29T10:01:31.tar.gz"
+          )
+          URL=""
+          for c in "${CANDIDATES[@]}"; do
+            echo "Trying: $c"
+            if curl -fL --head -s -o /dev/null "$c"; then
+              URL="$c"
+              break
+            fi
+          done
+          if [ -z "$URL" ]; then
+            echo "::error::None of the known O-MVLL build URLs are reachable."
+            exit 1
+          fi
+          echo "Using: $URL"
+          curl -fL -o "$HOME/omvll.tar.gz" "$URL"
+          mkdir -p "$HOME/omvll"
+          tar xzf "$HOME/omvll.tar.gz" -C "$HOME/omvll"
+
+          SO=$(find "$HOME/omvll" -iname "*omvll*.so" | head -1)
+          if [ -z "$SO" ]; then
+            echo "::error::No .so file found inside the downloaded archive."
+            exit 1
+          fi
+          echo "OMVLL_SO=$SO" >> "$GITHUB_ENV"
+
+          PYDIR=$(find "$HOME/omvll" -maxdepth 2 -type d -iname "Python-*" | head -1)
+          if [ -z "$PYDIR" ]; then
+            echo "::error::No bundled Python-3.x stdlib folder found inside the archive."
+            exit 1
+          fi
+          echo "OMVLL_PYTHONPATH=$PYDIR/Lib" >> "$GITHUB_ENV"
+
+      - name: Build (ndk-build + O-MVLL)
+        id: ndkbuild
+        continue-on-error: true
+        env:
+          OMVLL_CONFIG: ${{ github.workspace }}/hardware_bt/omvll_config.py
+        working-directory: hardware_bt
+        run: |
+          set -o pipefail
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          export LD_LIBRARY_PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib:$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH:-}"
+          echo "OMVLL_CONFIG=$OMVLL_CONFIG"
+          echo "OMVLL_PYTHONPATH=$OMVLL_PYTHONPATH"
+          echo "OMVLL_SO=$OMVLL_SO"
+          "$NDK/ndk-build" \
+            NDK_PROJECT_PATH=. \
+            NDK_APPLICATION_MK=jni/Application.mk \
+            OMVLL_PLUGIN="$OMVLL_SO" \
+            V=1 \
+            -j"$(nproc)" 2>&1 | tee /tmp/build.log
+
+      - name: Report build failure as an issue
+        if: steps.ndkbuild.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Hardware BT build failed on run ${{ github.run_id }} (commit ${{ github.sha }})."
+            echo
+            echo '```'
+            tail -c 55000 /tmp/build.log
+            echo '```'
+          } > /tmp/build_tail.md
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Hardware BT CI build failure: run ${{ github.run_id }}" \
+            --body-file /tmp/build_tail.md
+
+      - name: Fail job if the build step failed
+        if: steps.ndkbuild.outcome == 'failure'
+        run: exit 1
+
+      - name: Show result
+        working-directory: hardware_bt
+        run: |
+          echo "=== built binary ==="
+          ls -la libs/arm64-v8a/ || true
+          file libs/arm64-v8a/client.sh || true
+
+      - name: Upload client.sh (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-bt-client-arm64
+          path: hardware_bt/libs/arm64-v8a/client.sh
+          if-no-files-found: error

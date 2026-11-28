@@ -1,0 +1,1655 @@
+#pragma once
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <cstdlib>
+#include <cstdio>
+#include <dirent.h>
+#include <unistd.h>
+#include <cctype>
+#include <ctime>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <sys/utsname.h>
+#include <sys/system_properties.h>
+#include <sys/prctl.h>
+#include <cstdint>
+#include <cerrno>
+#include <sys/syscall.h>
+#include <sys/reboot.h>
+#include <linux/input.h>
+#include <mutex>
+#include "kernel.h"
+
+inline int select_driver_option = 0;
+
+// ==================== TB KPM STRUCTURES ====================
+struct mem_operation {
+    pid_t target_pid;
+    uint64_t addr;
+    void *buffer;
+    uint64_t size;
+};
+
+#define PRCTL_MEM_READ  0x63687501
+#define PRCTL_MEM_WRITE 0x63687502
+
+// ==================== NEO KPM STRUCTURES ====================
+#define NA_PRCTL_MAGIC      0x4E41
+#define NA_CMD_READ_MEM     1
+#define NA_CMD_WRITE_MEM    2
+#define NA_CMD_GET_PID      5
+#define NA_MAX_RW_SIZE      4096
+#define NA_MAX_PKG_NAME     256
+
+struct na_cmd {
+    uint32_t op;
+    uint32_t pid;
+    uint64_t addr;
+    uint32_t size;
+    int32_t  result;
+    int32_t  screen_w;
+    int32_t  screen_h;
+    char     pkg[NA_MAX_PKG_NAME];
+    uint8_t  data[NA_MAX_RW_SIZE];
+};
+
+// ==================== BING DRIVER (FT / VIP & RT) ====================
+enum OPERATIONS_VIP {
+    VIP_OP_INIT_KEY    = 0x100,
+    VIP_OP_READ_MEM    = 0x101,
+    VIP_OP_WRITE_MEM   = 0x102,
+    VIP_OP_MODULE_BASE = 0x103,
+};
+
+enum OPERATIONS_OLD {
+    OLD_OP_INIT_KEY    = 0x800,
+    OLD_OP_READ_MEM    = 0x801,
+    OLD_OP_WRITE_MEM   = 0x802,
+    OLD_OP_MODULE_BASE = 0x803,
+};
+
+static constexpr const char* BING_VIP_KEY = "bingByNULL1337";
+
+// ==================== PARADISE DRIVER USER DEFINITIONS ====================
+#ifndef PARADISE_DRIVER_USER_H
+#define PARADISE_DRIVER_USER_H
+
+#define PARADISE_TOUCH_MODE_FOPS_HOOK 0
+#define PARADISE_TOUCH_MODE_KPROBE    1
+#define PARADISE_TOUCH_MODE_DIRECT    2
+
+#ifndef __NR_reboot
+#if defined(__aarch64__) || defined(__arm__)
+#define __NR_reboot 142
+#elif defined(__x86_64__)
+#define __NR_reboot 169
+#elif defined(__i386__)
+#define __NR_reboot 88
+#elif defined(SYS_reboot)
+#define __NR_reboot SYS_reboot
+#else
+#define __NR_reboot 142
+#endif
+#endif
+
+// Magic numbers for reboot syscall to install fd
+#define PARADISE_INSTALL_MAGIC1 0xDEADBEEF
+#define PARADISE_INSTALL_MAGIC2 0xCAFEBABE
+
+// Driver name in /proc/self/fd
+#define PARADISE_DRIVER_NAME "[paradise_driver]"
+
+// IOCTL command structures
+struct paradise_get_pid_cmd {
+    pid_t pid;
+    char name[256];
+};
+
+struct paradise_get_module_base_cmd {
+    pid_t pid;
+    char name[256];
+    uintptr_t base;
+    int vm_flag;
+};
+
+struct paradise_memory_cmd {
+    pid_t pid;
+    uintptr_t src_va;
+    uintptr_t dst_va;
+    size_t size;
+    uintptr_t phy_addr;
+};
+
+struct paradise_memory_ioremap_cmd {
+    pid_t pid;
+    uintptr_t src_va;
+    uintptr_t dst_va;
+    size_t size;
+    uintptr_t phy_addr;
+    int prot;
+};
+
+struct paradise_gyro_config_cmd {
+    int enable;
+    uint32_t type_mask;
+    float x;
+    float y;
+};
+
+#define PARADISE_GYRO_MASK_GYRO  (1u << 0)
+#define PARADISE_GYRO_MASK_UNCAL (1u << 1)
+#define PARADISE_GYRO_MASK_ALL   (PARADISE_GYRO_MASK_GYRO | PARADISE_GYRO_MASK_UNCAL)
+
+struct paradise_touch_down_cmd {
+    int slot;
+    int x;
+    int y;
+};
+
+struct paradise_touch_move_cmd {
+    int slot;
+    int x;
+    int y;
+};
+
+struct paradise_touch_up_cmd {
+    int slot;
+};
+
+struct paradise_touch_mode_cmd {
+    int mode;
+};
+
+// IOCTL commands
+#define PARADISE_IOCTL_GET_PID              _IOWR('W', 11, struct paradise_get_pid_cmd)
+#define PARADISE_IOCTL_GET_MODULE_BASE      _IOWR('W', 10, struct paradise_get_module_base_cmd)
+#define PARADISE_IOCTL_READ_MEMORY          _IOWR('W', 9, struct paradise_memory_cmd)
+#define PARADISE_IOCTL_WRITE_MEMORY         _IOWR('W', 12, struct paradise_memory_cmd)
+#define PARADISE_IOCTL_READ_MEMORY_IOREMAP  _IOWR('W', 16, struct paradise_memory_ioremap_cmd)
+#define PARADISE_IOCTL_WRITE_MEMORY_IOREMAP _IOWR('W', 17, struct paradise_memory_ioremap_cmd)
+#define PARADISE_IOCTL_GYRO_CONFIG          _IOWR('W', 21, struct paradise_gyro_config_cmd)
+#define PARADISE_IOCTL_TOUCH_DOWN           _IOWR('W', 22, struct paradise_touch_down_cmd)
+#define PARADISE_IOCTL_TOUCH_MOVE           _IOWR('W', 23, struct paradise_touch_move_cmd)
+#define PARADISE_IOCTL_TOUCH_UP             _IOWR('W', 24, struct paradise_touch_up_cmd)
+#define PARADISE_IOCTL_TOUCH_SET_MODE       _IOWR('W', 25, struct paradise_touch_mode_cmd)
+
+// ==================== TWT DRIVER STRUCTURES (Option 6) ====================
+typedef struct _twt_request {
+    pid_t pid;
+    uintptr_t addr;
+    void *buffer;
+    size_t size;
+} twt_request;
+
+#define TWT_MARK 'T'
+#define TWT_GET_PID     _IOW(TWT_MARK, 0, twt_request)
+#define TWT_MODULE_BASE _IOW(TWT_MARK, 1, twt_request)
+#define TWT_READ_MEM    _IOW(TWT_MARK, 4, twt_request)
+#define TWT_WRITE_MEM   _IOW(TWT_MARK, 5, twt_request)
+
+struct TouchState {
+    uint32_t device_min_x, device_max_x;
+    uint32_t device_min_y, device_max_y;
+    uint32_t screen_width, screen_height;
+    int screen_orientation; // 0=normal, 1=90, 2=180, 3=270
+    float device_scale_x, device_scale_y;
+    bool initialized;
+
+    TouchState() : device_min_x(0), device_max_x(0), device_min_y(0), device_max_y(0),
+                   screen_width(0), screen_height(0), screen_orientation(0),
+                   device_scale_x(0.0f), device_scale_y(0.0f), initialized(false) {}
+};
+
+inline TouchState g_touch_state;
+
+inline bool is_touch_device(int fd) {
+    unsigned long abs_bits[(ABS_MAX + sizeof(long) * 8 - 1) / (sizeof(long) * 8)] = {0};
+    if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bits)), abs_bits) < 0) return false;
+
+    auto test_bit = [](int bit, const unsigned long *array) -> bool {
+        return (array[bit / (sizeof(long) * 8)] >> (bit % (sizeof(long) * 8))) & 1;
+    };
+
+    return test_bit(ABS_MT_SLOT, abs_bits) &&
+           test_bit(ABS_MT_TRACKING_ID, abs_bits) &&
+           test_bit(ABS_MT_POSITION_X, abs_bits) &&
+           test_bit(ABS_MT_POSITION_Y, abs_bits);
+}
+
+inline bool get_touch_device_range(uint32_t *min_x, uint32_t *max_x, uint32_t *min_y, uint32_t *max_y) {
+    DIR *input_dir = opendir("/dev/input/");
+    if (!input_dir) return false;
+
+    struct dirent *file_entry;
+    bool found = false;
+
+    while ((file_entry = readdir(input_dir)) != nullptr) {
+        std::string filename = file_entry->d_name;
+        if (filename.find("event") != 0) continue;
+
+        std::string path = "/dev/input/" + filename;
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd == -1) continue;
+
+        if (is_touch_device(fd)) {
+            struct input_absinfo abs_x, abs_y;
+            if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &abs_x) == 0 &&
+                ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &abs_y) == 0) {
+                *min_x = abs_x.minimum;
+                *max_x = abs_x.maximum;
+                *min_y = abs_y.minimum;
+                *max_y = abs_y.maximum;
+                found = true;
+            }
+            close(fd);
+            break;
+        }
+        close(fd);
+    }
+    closedir(input_dir);
+    return found;
+}
+
+inline void convert_screen_to_physical(int screen_x, int screen_y, int *phys_x, int *phys_y) {
+    int physical_x = 0, physical_y = 0;
+    switch (g_touch_state.screen_orientation) {
+    case 0:
+        physical_x = screen_x;
+        physical_y = screen_y;
+        break;
+    case 1:
+        physical_x = g_touch_state.screen_height - screen_y;
+        physical_y = screen_x;
+        break;
+    case 3:
+        physical_x = screen_y;
+        physical_y = g_touch_state.screen_width - screen_x;
+        break;
+    default:
+        physical_x = g_touch_state.screen_height - screen_y;
+        physical_y = g_touch_state.screen_width - screen_x;
+        break;
+    }
+    *phys_x = physical_x;
+    *phys_y = physical_y;
+}
+
+inline void convert_physical_to_device(int phys_x, int phys_y, uint32_t *dev_x, uint32_t *dev_y) {
+    if (g_touch_state.device_scale_x > 0.0f && g_touch_state.device_scale_y > 0.0f) {
+        *dev_x = (uint32_t)((float)phys_x / g_touch_state.device_scale_x);
+        *dev_y = (uint32_t)((float)phys_y / g_touch_state.device_scale_y);
+    } else {
+        *dev_x = (uint32_t)phys_x;
+        *dev_y = (uint32_t)phys_y;
+    }
+
+    if (*dev_x < g_touch_state.device_min_x) *dev_x = g_touch_state.device_min_x;
+    if (*dev_x > g_touch_state.device_max_x) *dev_x = g_touch_state.device_max_x;
+    if (*dev_y < g_touch_state.device_min_y) *dev_y = g_touch_state.device_min_y;
+    if (*dev_y > g_touch_state.device_max_y) *dev_y = g_touch_state.device_max_y;
+}
+
+inline bool paradise_touch_init(int width, int height) {
+    if (width <= 0 || height <= 0) return false;
+    if (!g_touch_state.initialized) {
+        uint32_t min_x, max_x, min_y, max_y;
+        if (get_touch_device_range(&min_x, &max_x, &min_y, &max_y)) {
+            g_touch_state.device_min_x = min_x;
+            g_touch_state.device_max_x = max_x;
+            g_touch_state.device_min_y = min_y;
+            g_touch_state.device_max_y = max_y;
+
+            if (width > height) {
+                g_touch_state.screen_width = width;
+                g_touch_state.screen_height = height;
+            } else {
+                g_touch_state.screen_width = height;
+                g_touch_state.screen_height = width;
+            }
+
+            if (g_touch_state.device_max_x > g_touch_state.device_min_x) {
+                g_touch_state.device_scale_x = (float)g_touch_state.screen_height / (float)g_touch_state.device_max_x;
+            }
+            if (g_touch_state.device_max_y > g_touch_state.device_min_y) {
+                g_touch_state.device_scale_y = (float)g_touch_state.screen_width / (float)g_touch_state.device_max_y;
+            }
+            g_touch_state.initialized = true;
+        }
+    }
+    return g_touch_state.initialized;
+}
+
+#endif // PARADISE_DRIVER_USER_H
+
+// ==================== MAIN DRIVER CLASS ====================
+class c_driver {
+private:
+    int bing_fd_vip = -1;    // Bing VIP fd (0x100)
+    int bing_fd_old = -1;    // Bing RT/OLD fd (0x800)
+    int paradise_fd = -1;    // Paradise driver fd
+    int twt_fd = -1;         // TWT driver fd (Option 6)
+    pid_t pid = -1;
+
+    std::mutex paradise_lock;
+    std::mutex m_driver_mutex;
+
+    int bing_active_fd = -1;
+    uint32_t bing_active_read_op = 0;
+    uint32_t bing_active_write_op = 0;
+
+    bool paradise_use_ioremap = true;
+    int paradise_ioremap_fail_count = 0;
+
+    typedef struct _COPY_MEMORY {
+        pid_t pid;
+        uintptr_t addr;
+        void* buffer;
+        size_t size;
+    } COPY_MEMORY, *PCOPY_MEMORY;
+
+    typedef struct _MODULE_BASE {
+        pid_t pid;
+        char* name;
+        uintptr_t base;
+    } MODULE_BASE, *PMODULE_BASE;
+
+    // Probe Neo KPM (0x4E41)
+    bool probe_neo_kpm() {
+        na_cmd cmd;
+        prctl(0xDEAD, 0, 0, 0, 0);
+        memset(&cmd, 0, sizeof(cmd));
+        errno = 0;
+        return (prctl(NA_PRCTL_MAGIC, NA_CMD_GET_PID, (unsigned long)&cmd, 0, 0) == 0);
+    }
+
+    bool neo_kpm_read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        uint8_t *ptr = reinterpret_cast<uint8_t*>(buffer);
+        size_t remaining = size;
+        uintptr_t curr_addr = addr;
+        while (remaining > 0) {
+            size_t chunk = (remaining > NA_MAX_RW_SIZE) ? NA_MAX_RW_SIZE : remaining;
+            na_cmd cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.op   = NA_CMD_READ_MEM;
+            cmd.pid  = (uint32_t)this->pid;
+            cmd.addr = (uint64_t)curr_addr;
+            cmd.size = (uint32_t)chunk;
+            if (prctl(NA_PRCTL_MAGIC, NA_CMD_READ_MEM, (unsigned long)&cmd, 0, 0) == 0 && cmd.result == 0) {
+                memcpy(ptr, cmd.data, chunk);
+                ptr += chunk;
+                curr_addr += chunk;
+                remaining -= chunk;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool neo_kpm_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        const uint8_t *ptr = reinterpret_cast<const uint8_t*>(buffer);
+        size_t remaining = size;
+        uintptr_t curr_addr = addr;
+        while (remaining > 0) {
+            size_t chunk = (remaining > NA_MAX_RW_SIZE) ? NA_MAX_RW_SIZE : remaining;
+            na_cmd cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.op   = NA_CMD_WRITE_MEM;
+            cmd.pid  = (uint32_t)this->pid;
+            cmd.addr = (uint64_t)curr_addr;
+            cmd.size = (uint32_t)chunk;
+            memcpy(cmd.data, ptr, chunk);
+            if (prctl(NA_PRCTL_MAGIC, NA_CMD_WRITE_MEM, (unsigned long)&cmd, 0, 0) == 0 && cmd.result == 0) {
+                ptr += chunk;
+                curr_addr += chunk;
+                remaining -= chunk;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool tb_kpm_read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        struct mem_operation op = { this->pid, (uint64_t)addr, buffer, (uint64_t)size };
+        long r = prctl(PRCTL_MEM_READ, (unsigned long)&op, 0, 0, 0);
+        return r >= 0;
+    }
+
+    bool tb_kpm_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        struct mem_operation op = { this->pid, (uint64_t)addr, const_cast<void*>(buffer), (uint64_t)size };
+        long r = prctl(PRCTL_MEM_WRITE, (unsigned long)&op, 0, 0, 0);
+        return r >= 0;
+    }
+
+    // ==================== BING DRIVER CONNECTION LOGIC ====================
+    char *bing_FT() {
+        struct stat sb;
+        const char *candidates[] = {
+            "/dev/ft_driver",
+            "/dev/bing_rw",
+            "/dev/Bing_rw",
+            "/dev/Bing",
+            "/dev/bing",
+            "/dev/w1a3n3a7n",
+        };
+
+        for (const char *path : candidates) {
+            if (stat(path, &sb) != 0) continue;
+            if (!S_ISCHR(sb.st_mode) && !S_ISBLK(sb.st_mode)) continue;
+            char *result = strdup(path);
+            if (result) {
+                printf("[c_driver] Bing FT node found: %s\n", path);
+                return result;
+            }
+        }
+        return nullptr;
+    }
+
+    char *bing_qx10() {
+        const char *command = "dir=$(ls -l /proc/*/exe 2>/dev/null | grep -E '/data/[^/]* \\(deleted\\)' | sed 's/ /\\n/g' | grep '/proc' | sed 's/\\/[^/]*$//g');if [[ \"$dir\" ]]; then sbwj=$(head -n 1 \"$dir/comm\");open_file=\"\";for file in \"$dir\"/fd/*; do link=$(readlink \"$file\");if [[ \"$link\" == \"/dev/$sbwj (deleted)\" ]]; then open_file=\"$file\";break;fi;done;if [[ -n \"$open_file\" ]]; then nhjd=$(echo \"$open_file\");sbid=$(ls -L -l \"$nhjd\" | sed 's/\\([^,]*\\).*/\\1/' | sed 's/.*root //');echo \"/dev/$sbwj\";rm -rf \"/dev/$sbwj\";mknod \"/dev/$sbwj\" c \"$sbid\" 0;fi;fi;";
+        FILE *file = popen(command, "r");
+        if (file == nullptr) return nullptr;
+        static char result[512];
+        if (fgets(result, sizeof(result), file) == nullptr) {
+            pclose(file);
+            return nullptr;
+        }
+        pclose(file);
+        size_t len = strlen(result);
+        if (len > 0 && (result[len - 1] == '\n' || result[len - 1] == '\r')) {
+            result[len - 1] = '\0';
+        }
+        return result;
+    }
+
+    bool open_bing_driver() {
+        // 1. Check hidden driver -> bing_fd_old (RT)
+        char *dev_path3 = bing_qx10();
+        if (dev_path3 != nullptr && dev_path3[0] != '\0') {
+            bing_fd_old = open(dev_path3, O_RDWR);
+            if (bing_fd_old > 0) {
+                printf("[c_driver] Bing hidden driver (RT): %s (fd=%d)\n", dev_path3, bing_fd_old);
+                unlink(dev_path3);
+            }
+        }
+
+        // 2. Check FT() candidate nodes -> open VIP & OLD
+        char *dev_path_bing = bing_FT();
+        if (dev_path_bing != nullptr) {
+            if (bing_fd_vip <= 0) {
+                bing_fd_vip = open(dev_path_bing, O_RDWR);
+                if (bing_fd_vip > 0) {
+                    printf("[c_driver] Bing VIP driver (FT): %s (fd=%d)\n", dev_path_bing, bing_fd_vip);
+                    char keybuf[0x100] = {0};
+                    strncpy(keybuf, BING_VIP_KEY, sizeof(keybuf) - 1);
+                    if (ioctl(bing_fd_vip, VIP_OP_INIT_KEY, keybuf) == 0) {
+                        printf("[c_driver] Bing VIP init_key success\n");
+                    } else {
+                        printf("[c_driver] Bing VIP init_key: %s (continuing)\n", strerror(errno));
+                    }
+                }
+            }
+            if (bing_fd_old <= 0 && bing_fd_vip <= 0) {
+                bing_fd_old = open(dev_path_bing, O_RDWR);
+                if (bing_fd_old > 0) {
+                    printf("[c_driver] Bing OLD driver (RT): %s (fd=%d)\n", dev_path_bing, bing_fd_old);
+                    bing_active_fd = bing_fd_old;
+                    bing_active_read_op = OLD_OP_READ_MEM;
+                    bing_active_write_op = OLD_OP_WRITE_MEM;
+                }
+            }
+            free(dev_path_bing);
+        }
+
+        if (bing_fd_vip > 0 && bing_active_fd <= 0) {
+            bing_active_fd = bing_fd_vip;
+            bing_active_read_op = VIP_OP_READ_MEM;
+            bing_active_write_op = VIP_OP_WRITE_MEM;
+        } else if (bing_fd_old > 0 && bing_active_fd <= 0) {
+            bing_active_fd = bing_fd_old;
+            bing_active_read_op = OLD_OP_READ_MEM;
+            bing_active_write_op = OLD_OP_WRITE_MEM;
+        }
+
+        return (bing_fd_vip > 0 || bing_fd_old > 0);
+    }
+
+    bool bing_read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        COPY_MEMORY cm;
+        cm.pid = this->pid;
+        cm.addr = addr;
+        cm.buffer = buffer;
+        cm.size = size;
+
+        // Try remembered active fd and op first!
+        if (bing_active_fd > 0 && bing_active_read_op > 0) {
+            if (ioctl(bing_active_fd, bing_active_read_op, &cm) == 0) {
+                return true;
+            }
+            if (errno == EAGAIN || errno == EBUSY) {
+                sched_yield();
+                if (ioctl(bing_active_fd, bing_active_read_op, &cm) == 0) return true;
+            }
+        }
+
+        // Try OLD (RT)
+        if (bing_fd_old > 0 && bing_active_fd != bing_fd_old) {
+            if (ioctl(bing_fd_old, OLD_OP_READ_MEM, &cm) == 0) {
+                bing_active_fd = bing_fd_old;
+                bing_active_read_op = OLD_OP_READ_MEM;
+                bing_active_write_op = OLD_OP_WRITE_MEM;
+                return true;
+            }
+        }
+
+        // Try VIP (FT)
+        if (bing_fd_vip > 0 && bing_active_fd != bing_fd_vip) {
+            if (ioctl(bing_fd_vip, VIP_OP_READ_MEM, &cm) == 0) {
+                bing_active_fd = bing_fd_vip;
+                bing_active_read_op = VIP_OP_READ_MEM;
+                bing_active_write_op = VIP_OP_WRITE_MEM;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool bing_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+        COPY_MEMORY cm;
+        cm.pid = this->pid;
+        cm.addr = addr;
+        cm.buffer = const_cast<void*>(buffer);
+        cm.size = size;
+
+        if (bing_active_fd > 0 && bing_active_write_op > 0) {
+            if (ioctl(bing_active_fd, bing_active_write_op, &cm) == 0) {
+                return true;
+            }
+            if (errno == EAGAIN || errno == EBUSY) {
+                sched_yield();
+                if (ioctl(bing_active_fd, bing_active_write_op, &cm) == 0) return true;
+            }
+        }
+
+        if (bing_fd_old > 0 && bing_active_fd != bing_fd_old) {
+            if (ioctl(bing_fd_old, OLD_OP_WRITE_MEM, &cm) == 0) {
+                bing_active_fd = bing_fd_old;
+                bing_active_read_op = OLD_OP_READ_MEM;
+                bing_active_write_op = OLD_OP_WRITE_MEM;
+                return true;
+            }
+        }
+
+        if (bing_fd_vip > 0 && bing_active_fd != bing_fd_vip) {
+            if (ioctl(bing_fd_vip, VIP_OP_WRITE_MEM, &cm) == 0) {
+                bing_active_fd = bing_fd_vip;
+                bing_active_read_op = VIP_OP_READ_MEM;
+                bing_active_write_op = VIP_OP_WRITE_MEM;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    uintptr_t bing_get_module_base(const char *name) {
+        if (this->pid <= 0) return 0;
+        MODULE_BASE mb;
+        char buf[0x100] = {0};
+        strncpy(buf, name, sizeof(buf) - 1);
+        mb.pid = this->pid;
+        mb.name = buf;
+        mb.base = 0;
+
+        if (bing_active_fd == bing_fd_vip && bing_fd_vip > 0) {
+            MODULE_BASE mb_vip = mb;
+            char buf_vip[0x100] = {0};
+            strncpy(buf_vip, name, sizeof(buf_vip) - 1);
+            mb_vip.name = buf_vip;
+            if (ioctl(bing_fd_vip, VIP_OP_MODULE_BASE, &mb_vip) == 0 && mb_vip.base > 0) {
+                return mb_vip.base;
+            }
+        } else if (bing_fd_old > 0) {
+            MODULE_BASE mb_old = mb;
+            char buf_old[0x100] = {0};
+            strncpy(buf_old, name, sizeof(buf_old) - 1);
+            mb_old.name = buf_old;
+            if (ioctl(bing_fd_old, OLD_OP_MODULE_BASE, &mb_old) == 0 && mb_old.base > 0) {
+                return mb_old.base;
+            }
+        }
+
+        if (bing_fd_vip > 0 && bing_active_fd != bing_fd_vip) {
+            MODULE_BASE mb_vip = mb;
+            char buf_vip[0x100] = {0};
+            strncpy(buf_vip, name, sizeof(buf_vip) - 1);
+            mb_vip.name = buf_vip;
+            if (ioctl(bing_fd_vip, VIP_OP_MODULE_BASE, &mb_vip) == 0 && mb_vip.base > 0) {
+                return mb_vip.base;
+            }
+        }
+
+        return parse_maps_module_base(name);
+    }
+
+    // ==================== PARADISE DRIVER CONNECTION LOGIC ====================
+    int scan_paradise_fd() {
+        DIR *dir = opendir("/proc/self/fd");
+        if (!dir) return -1;
+
+        struct dirent *entry;
+        char link_path[256];
+        char target[256];
+
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            int fd_num = atoi(entry->d_name);
+            if (fd_num < 0) continue;
+
+            snprintf(link_path, sizeof(link_path), "/proc/self/fd/%d", fd_num);
+            ssize_t len = readlink(link_path, target, sizeof(target) - 1);
+            if (len < 0) continue;
+            target[len] = '\0';
+
+            if (strstr(target, PARADISE_DRIVER_NAME) != nullptr) {
+                closedir(dir);
+                return fd_num;
+            }
+        }
+        closedir(dir);
+        return -1;
+    }
+
+    int install_paradise_fd() {
+        int installed_fd = -1;
+        long ret = syscall(__NR_reboot, PARADISE_INSTALL_MAGIC1, PARADISE_INSTALL_MAGIC2, 0, &installed_fd);
+        if (installed_fd < 0) {
+            printf("[c_driver] Paradise install_driver_fd: not installed, ret=%ld, errno=%d (%s)\n",
+                   ret, errno, strerror(errno));
+            return -1;
+        }
+        printf("[c_driver] Paradise install_driver_fd: fd=%d installed successfully\n", installed_fd);
+        return installed_fd;
+    }
+
+    int open_paradise_driver() {
+        int pfd = scan_paradise_fd();
+        if (pfd >= 0) {
+            paradise_fd = pfd;
+            return pfd;
+        }
+        pfd = install_paradise_fd();
+        if (pfd >= 0) {
+            paradise_fd = pfd;
+            return pfd;
+        }
+        return -1;
+    }
+
+    bool paradise_read(uintptr_t addr, void *buffer, size_t size) {
+        if (paradise_fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        std::lock_guard<std::mutex> lock(this->paradise_lock);
+
+        if (paradise_use_ioremap) {
+            struct paradise_memory_ioremap_cmd cmd = {};
+            cmd.pid = this->pid;
+            cmd.src_va = addr;
+            cmd.dst_va = (uintptr_t)buffer;
+            cmd.size = size;
+            cmd.prot = 2; // WMT_NORMAL_NC
+            if (ioctl(paradise_fd, PARADISE_IOCTL_READ_MEMORY_IOREMAP, &cmd) == 0) return true;
+
+            paradise_ioremap_fail_count++;
+            if (paradise_ioremap_fail_count > 5) {
+                paradise_use_ioremap = false;
+            }
+        }
+
+        // Fallback to safe hardware read
+        struct paradise_memory_cmd cmd_safe = {};
+        cmd_safe.pid = this->pid;
+        cmd_safe.src_va = addr;
+        cmd_safe.dst_va = (uintptr_t)buffer;
+        cmd_safe.size = size;
+        if (ioctl(paradise_fd, PARADISE_IOCTL_READ_MEMORY, &cmd_safe) == 0) return true;
+
+        if (errno == EAGAIN || errno == EBUSY) {
+            sched_yield();
+            if (ioctl(paradise_fd, PARADISE_IOCTL_READ_MEMORY, &cmd_safe) == 0) return true;
+        }
+
+        return false;
+    }
+
+    bool paradise_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (paradise_fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        std::lock_guard<std::mutex> lock(this->paradise_lock);
+
+        if (paradise_use_ioremap) {
+            struct paradise_memory_ioremap_cmd cmd = {};
+            cmd.pid = this->pid;
+            cmd.src_va = addr;
+            cmd.dst_va = (uintptr_t)buffer;
+            cmd.size = size;
+            cmd.prot = 2; // WMT_NORMAL_NC
+            if (ioctl(paradise_fd, PARADISE_IOCTL_WRITE_MEMORY_IOREMAP, &cmd) == 0) return true;
+
+            paradise_ioremap_fail_count++;
+            if (paradise_ioremap_fail_count > 5) {
+                paradise_use_ioremap = false;
+            }
+        }
+
+        // Fallback to safe hardware write
+        struct paradise_memory_cmd cmd_safe = {};
+        cmd_safe.pid = this->pid;
+        cmd_safe.src_va = addr;
+        cmd_safe.dst_va = (uintptr_t)buffer;
+        cmd_safe.size = size;
+        if (ioctl(paradise_fd, PARADISE_IOCTL_WRITE_MEMORY, &cmd_safe) == 0) return true;
+
+        if (errno == EAGAIN || errno == EBUSY) {
+            sched_yield();
+            if (ioctl(paradise_fd, PARADISE_IOCTL_WRITE_MEMORY, &cmd_safe) == 0) return true;
+        }
+
+        return false;
+    }
+
+    uintptr_t paradise_get_module_base(const char *name) {
+        if (this->pid <= 0 || paradise_fd < 0) return 0;
+        struct paradise_get_module_base_cmd cmd = { this->pid, "", 0, 0 };
+        strncpy(cmd.name, name, sizeof(cmd.name) - 1);
+        if (ioctl(paradise_fd, PARADISE_IOCTL_GET_MODULE_BASE, &cmd) == 0 && cmd.base > 0) {
+            return cmd.base;
+        }
+        return parse_maps_module_base(name);
+    }
+
+    uintptr_t parse_maps_module_base(const char *name) {
+        if (this->pid <= 0) return 0;
+        uintptr_t candidate_base = 0;
+        uintptr_t valid_elf_base = 0;
+
+        char maps_path[64];
+        snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", this->pid);
+        FILE *f = fopen(maps_path, "r");
+        if (f != nullptr) {
+            char line[1024];
+            while (fgets(line, sizeof(line), f)) {
+                if (strstr(line, name)) {
+                    uint64_t start = 0, end = 0, offset = 0;
+                    char perms[8] = {0};
+                    int parsed = sscanf(line, "%lx-%lx %4s %lx", &start, &end, perms, &offset);
+                    if (parsed >= 1 && start > 0) {
+                        bool is_readable = (parsed >= 3 && perms[0] == 'r');
+                        bool is_header_offset = (parsed >= 4 && offset == 0);
+
+                        if (is_readable && is_header_offset && candidate_base == 0) {
+                            candidate_base = static_cast<uintptr_t>(start);
+                        } else if (candidate_base == 0 && is_readable) {
+                            candidate_base = static_cast<uintptr_t>(start);
+                        }
+
+                        if (is_readable) {
+                            uint32_t magic = 0;
+                            if (this->read(static_cast<uintptr_t>(start), &magic, sizeof(magic)) && magic == 0x464C457F) {
+                                valid_elf_base = static_cast<uintptr_t>(start);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            fclose(f);
+        }
+
+        if (valid_elf_base != 0) {
+            printf("[c_driver] Module '%s' base verified via ELF magic: 0x%lx (pid=%d)\n",
+                   name, (unsigned long)valid_elf_base, this->pid);
+            return valid_elf_base;
+        }
+
+        if (candidate_base != 0) {
+            printf("[c_driver] Module '%s' base resolved from maps: 0x%lx (pid=%d)\n",
+                   name, (unsigned long)candidate_base, this->pid);
+            return candidate_base;
+        }
+
+        // Rate-limit su fallback to once every 3s to prevent flooding render thread
+        static time_t s_last_su_time = 0;
+        time_t now = time(nullptr);
+        if (now - s_last_su_time >= 3) {
+            s_last_su_time = now;
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd), "su -c 'cat /proc/%d/maps 2>/dev/null | grep %s'", this->pid, name);
+            f = popen(cmd, "r");
+            if (f != nullptr) {
+                char line[1024];
+                while (fgets(line, sizeof(line), f)) {
+                    if (strstr(line, name)) {
+                        uint64_t start = 0, end = 0, offset = 0;
+                        char perms[8] = {0};
+                        int parsed = sscanf(line, "%lx-%lx %4s %lx", &start, &end, perms, &offset);
+                        if (parsed >= 1 && start > 0) {
+                            bool is_readable = (parsed >= 3 && perms[0] == 'r');
+                            bool is_header_offset = (parsed >= 4 && offset == 0);
+
+                            if (is_readable && is_header_offset && candidate_base == 0) {
+                                candidate_base = static_cast<uintptr_t>(start);
+                            } else if (candidate_base == 0 && is_readable) {
+                                candidate_base = static_cast<uintptr_t>(start);
+                            }
+
+                            if (is_readable) {
+                                uint32_t magic = 0;
+                                if (this->read(static_cast<uintptr_t>(start), &magic, sizeof(magic)) && magic == 0x464C457F) {
+                                    valid_elf_base = static_cast<uintptr_t>(start);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                pclose(f);
+            }
+        }
+
+        if (valid_elf_base != 0) {
+            printf("[c_driver] Module '%s' base verified via su ELF magic: 0x%lx\n", name, (unsigned long)valid_elf_base);
+            return valid_elf_base;
+        }
+
+        if (candidate_base != 0) {
+            printf("[c_driver] Module '%s' base fallback from maps: 0x%lx\n", name, (unsigned long)candidate_base);
+            return candidate_base;
+        }
+
+        return 0;
+    }
+
+    // ==================== TWT DRIVER CONNECTION & OPS (Option 6) ====================
+    int twt_get_fd(const char *str) {
+        DIR *dir = opendir("/proc/self/fd");
+        if (!dir) return -1;
+        struct dirent *entry;
+        char path[512], link[512];
+        int found_fd = -1;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            snprintf(path, sizeof(path), "/proc/self/fd/%s", entry->d_name);
+            ssize_t len = readlink(path, link, sizeof(link) - 1);
+            if (len == -1) continue;
+            link[len] = '\0';
+            if (strstr(link, str) != nullptr && strstr(link, "anon_inode:") != nullptr) {
+                found_fd = atoi(entry->d_name);
+                break;
+            }
+        }
+        closedir(dir);
+        return found_fd;
+    }
+
+    int open_twt_driver() {
+        twt_fd = -1;
+        // TWT MY_CALL reboot syscall
+        {
+            register long _x0 __asm__("x0") = (long)(0x114514);
+            register long _x1 __asm__("x1") = (long)(0x1919810);
+            register long _x2 __asm__("x2") = (long)(0x2778);
+            register long _x3 __asm__("x3") = (long)(&twt_fd);
+            register long _nr __asm__("x8") = __NR_reboot;
+            __asm__ __volatile__(
+                "svc #0"
+                : "=r"(_x0)
+                : "r"(_x0), "r"(_x1), "r"(_x2), "r"(_x3), "r"(_nr)
+                : "memory", "cc"
+            );
+        }
+        printf("[c_driver] TWT reboot syscall -> twt_fd=%d %s\n", twt_fd, twt_fd >= 0 ? "OK" : "TRYING FALLBACK");
+        if (twt_fd < 0) {
+            printf("[c_driver] TWT syscall failed, scanning /proc/self/fd for TwT_driver...\n");
+            twt_fd = twt_get_fd("TwT_driver");
+            printf("[c_driver] TWT fallback getFd -> twt_fd=%d %s\n", twt_fd, twt_fd >= 0 ? "OK" : "FAIL");
+        }
+        return twt_fd;
+    }
+
+    bool twt_read(uintptr_t addr, void *buffer, size_t size) {
+        if (twt_fd < 0 || this->pid <= 0 || !buffer || size == 0) return false;
+        twt_request req = {};
+        req.pid = this->pid;
+        req.addr = addr & 0xFFFFFFFFFFFF;
+        req.buffer = buffer;
+        req.size = size;
+        return (ioctl(twt_fd, TWT_READ_MEM, &req) == 0);
+    }
+
+    bool twt_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (twt_fd < 0 || this->pid <= 0 || !buffer || size == 0) return false;
+        twt_request req = {};
+        req.pid = this->pid;
+        req.addr = addr & 0xFFFFFFFFFFFF;
+        req.buffer = const_cast<void*>(buffer);
+        req.size = size;
+        return (ioctl(twt_fd, TWT_WRITE_MEM, &req) == 0);
+    }
+
+    pid_t twt_get_pid(const char* name) {
+        if (twt_fd < 0 || !name) return 0;
+        twt_request req = {};
+        char buf[0x100] = {0};
+        snprintf(buf, sizeof(buf), "%s", name);
+        req.pid = 0;
+        req.buffer = buf;
+        if (ioctl(twt_fd, TWT_GET_PID, &req) != 0) {
+            return 0;
+        }
+        return req.pid;
+    }
+
+    uintptr_t twt_get_module_base(const char* name) {
+        if (twt_fd < 0 || this->pid <= 0 || !name) return 0;
+        twt_request req = {};
+        char buf[0x100] = {0};
+        snprintf(buf, sizeof(buf), "%s", name);
+        req.pid = this->pid;
+        req.addr = 0;
+        req.buffer = buf;
+        if (ioctl(twt_fd, TWT_MODULE_BASE, &req) != 0) {
+            return 0;
+        }
+        return req.addr;
+    }
+
+public:
+    c_driver() {
+        printf("\033[1;36m[+] 1. Neo KPM (prctl 0x4E41)\033[0m\n");
+        printf("\033[1;36m[+] 2. TB KPM  (prctl 0x63687501)\033[0m\n");
+        printf("\033[1;36m[+] 3. Bing Driver (FT/VIP & RT Dual)\033[0m\n");
+        printf("\033[1;36m[+] 4. Paradise Driver (Reboot / IOCTL)\033[0m\n");
+        printf("\033[1;36m[+] 5. NB9 Kernel Driver (HWBP / IOCTL 0)\033[0m\n");
+        printf("\033[1;36m[+] 6. TWT Driver (Reboot / TwT_driver)\033[0m\n");
+        printf("\033[1;33m[?] Select an option (1-6): \033[0m");
+        fflush(stdout);
+
+        if (scanf("%d", &select_driver_option) != 1) {
+            select_driver_option = 1;
+        }
+
+        if (select_driver_option == 1) {
+            if (probe_neo_kpm()) {
+                printf("\033[42m\033[37m[+] Neo KPM backend active (prctl 0x4E41)\033[0m\n");
+            } else {
+                printf("\033[41m\033[37m[!] Neo KPM not available on this kernel!\033[0m\n");
+                exit(0);
+            }
+        } else if (select_driver_option == 2) {
+            printf("\033[42m\033[37m[+] TB KPM backend active (prctl 0x63687501)\033[0m\n");
+            if (getuid() != 0) {
+                printf("\033[41m\033[37m[WARNING] Root access (uid 0) is required for TB KPM!\033[0m\n");
+            }
+        } else if (select_driver_option == 3) {
+            if (open_bing_driver()) {
+                printf("\033[42m\033[37m[+] Bing Driver ready (VIP fd=%d, OLD fd=%d)\033[0m\n", bing_fd_vip, bing_fd_old);
+            } else {
+                printf("\033[41m\033[37m[-] Failed to open Bing driver!\033[0m\n");
+                exit(0);
+            }
+        } else if (select_driver_option == 4) {
+            if (open_paradise_driver() >= 0) {
+                printf("\033[42m\033[37m[+] Paradise Driver connected (fd=%d)\033[0m\n", paradise_fd);
+            } else {
+                printf("\033[41m\033[37m[!] Failed to connect or install Paradise driver!\033[0m\n");
+                exit(0);
+            }
+        } else if (select_driver_option == 5) {
+            nb9::HOOK_STATUS st{};
+            int ret = ::ioctl(0, OP_CMD_HOOK_STATUS, &st);
+            if (ret == 0) {
+                printf("\033[42m\033[37m[+] NB9 Kernel Driver connected (IOCTL 0x258+ hooked, status OK)\033[0m\n");
+            } else {
+                printf("\033[43m\033[30m[*] NB9 Kernel Driver selected (IOCTL 0, probe ret=%d errno=%d: %s)\033[0m\n",
+                       ret, errno, strerror(errno));
+            }
+        } else if (select_driver_option == 6) {
+            if (open_twt_driver() >= 0) {
+                printf("\033[42m\033[37m[+] TWT Driver connected successfully (fd=%d)\033[0m\n", twt_fd);
+                printf("\033[32m[+] TWT ioctl protocol ready (READ/WRITE/PID/MODULE)\033[0m\n");
+            } else {
+                printf("\033[41m\033[37m[!] Failed to connect to TWT driver! Make sure TWT kernel module is loaded.\033[0m\n");
+                exit(0);
+            }
+        } else {
+            printf("\033[41m\033[37mInvalid option!\033[0m\n");
+            exit(0);
+        }
+        system("clear");
+    }
+
+    ~c_driver() {
+        if (bing_fd_vip > 0) close(bing_fd_vip);
+        if (bing_fd_old > 0) close(bing_fd_old);
+        if (paradise_fd > 0) close(paradise_fd);
+        if (twt_fd >= 0) close(twt_fd);
+    }
+
+    void initialize(pid_t target_pid) {
+        this->pid = target_pid;
+        nb9::driver->initialize(target_pid);
+    }
+
+    bool init_key(const char* key) {
+        if (bing_fd_vip <= 0) return false;
+        char buf[0x100] = {0};
+        strncpy(buf, key, sizeof(buf) - 1);
+        return ioctl(bing_fd_vip, VIP_OP_INIT_KEY, buf) == 0;
+    }
+
+    bool raw_read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+
+        if (select_driver_option == 1) { // Neo KPM
+            return neo_kpm_read(addr, buffer, size);
+        } else if (select_driver_option == 2) { // TB KPM
+            return tb_kpm_read(addr, buffer, size);
+        } else if (select_driver_option == 3) { // Bing Driver
+            return bing_read(addr, buffer, size);
+        } else if (select_driver_option == 4) { // Paradise Driver
+            return paradise_read(addr, buffer, size);
+        } else if (select_driver_option == 5) { // NB9 Kernel Driver
+            bool ok = nb9::driver->read(addr, buffer, size);
+            if (!ok) {
+                static uint64_t s_err_count = 0;
+                if (++s_err_count <= 5 || (s_err_count % 500 == 0)) {
+                    printf("[Driver 5 Error] read failed at 0x%lx (size=%zu, pid=%d, errno=%d: %s)\n",
+                           (unsigned long)addr, size, this->pid, errno, strerror(errno));
+                }
+            }
+            return ok;
+        } else if (select_driver_option == 6) { // TWT Driver
+            return twt_read(addr, buffer, size);
+        }
+        return false;
+    }
+
+    bool raw_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (this->pid <= 0 || addr == 0 || buffer == nullptr || size == 0) return false;
+
+        if (select_driver_option == 1) { // Neo KPM
+            return neo_kpm_write(addr, buffer, size);
+        } else if (select_driver_option == 2) { // TB KPM
+            return tb_kpm_write(addr, buffer, size);
+        } else if (select_driver_option == 3) { // Bing Driver
+            return bing_write(addr, buffer, size);
+        } else if (select_driver_option == 4) { // Paradise Driver
+            return paradise_write(addr, buffer, size);
+        } else if (select_driver_option == 5) { // NB9 Kernel Driver
+            bool ok = nb9::driver->write(addr, buffer, size);
+            if (!ok) {
+                static uint64_t s_err_count = 0;
+                if (++s_err_count <= 5 || (s_err_count % 500 == 0)) {
+                    printf("[Driver 5 Error] write failed at 0x%lx (size=%zu, pid=%d, errno=%d: %s)\n",
+                           (unsigned long)addr, size, this->pid, errno, strerror(errno));
+                }
+            }
+            return ok;
+        } else if (select_driver_option == 6) { // TWT Driver
+            return twt_write(addr, buffer, size);
+        }
+        return false;
+    }
+
+    bool read(uintptr_t addr, void *buffer, size_t size) {
+        if (this->pid <= 0 || addr < 0x1000 || buffer == nullptr || size == 0) return false;
+        std::lock_guard<std::mutex> lock(this->m_driver_mutex);
+
+        if (select_driver_option == 5 || select_driver_option == 6) {
+            if (raw_read(addr, buffer, size)) {
+                return true;
+            }
+        }
+
+        uint8_t *out = reinterpret_cast<uint8_t*>(buffer);
+        size_t done = 0;
+        while (done < size) {
+            uintptr_t cur_addr = addr + done;
+            size_t page_offset = cur_addr & 0xFFF;
+            size_t page_remaining = 0x1000 - page_offset;
+            size_t chunk = (size - done < page_remaining) ? (size - done) : page_remaining;
+
+            if (!raw_read(cur_addr, out + done, chunk)) {
+                return false;
+            }
+            done += chunk;
+        }
+        return true;
+    }
+
+    bool Read(uintptr_t addr, void *buffer, size_t size) {
+        return this->read(addr, buffer, size);
+    }
+
+    bool write(uintptr_t addr, const void *buffer, size_t size) {
+        if (this->pid <= 0 || addr < 0x1000 || buffer == nullptr || size == 0) return false;
+        std::lock_guard<std::mutex> lock(this->m_driver_mutex);
+
+        if (select_driver_option == 5 || select_driver_option == 6) {
+            if (raw_write(addr, buffer, size)) {
+                return true;
+            }
+        }
+
+        const uint8_t *in = reinterpret_cast<const uint8_t*>(buffer);
+        size_t done = 0;
+        while (done < size) {
+            uintptr_t cur_addr = addr + done;
+            size_t page_offset = cur_addr & 0xFFF;
+            size_t page_remaining = 0x1000 - page_offset;
+            size_t chunk = (size - done < page_remaining) ? (size - done) : page_remaining;
+
+            if (!raw_write(cur_addr, in + done, chunk)) {
+                return false;
+            }
+            done += chunk;
+        }
+        return true;
+    }
+
+    bool read_safe(uintptr_t addr, void *buffer, size_t size) {
+        return this->read(addr, buffer, size);
+    }
+
+    bool write_safe(uintptr_t addr, const void *buffer, size_t size) {
+        return this->write(addr, buffer, size);
+    }
+
+    template <typename T>
+    T read(uintptr_t addr) {
+        T res{};
+        if (this->read(addr, &res, sizeof(T))) {
+            return res;
+        }
+        return res;
+    }
+
+    template <typename T>
+    T Read(uintptr_t addr) {
+        return this->read<T>(addr);
+    }
+
+    template <typename T>
+    T read_safe(uintptr_t addr) {
+        T res{};
+        if (this->read_safe(addr, &res, sizeof(T))) {
+            return res;
+        }
+        return res;
+    }
+
+    template <typename T>
+    bool write(uintptr_t addr, T value) {
+        return this->write(addr, &value, sizeof(T));
+    }
+
+    template <typename T>
+    bool write_safe(uintptr_t addr, T value) {
+        return this->write_safe(addr, &value, sizeof(T));
+    }
+
+    uintptr_t getModuleBase(const char* name) {
+        if (this->pid <= 0) return 0;
+
+        if (select_driver_option == 1 || select_driver_option == 2) { // Neo KPM or TB KPM
+            return parse_maps_module_base(name);
+        } else if (select_driver_option == 3) { // Bing Driver
+            return bing_get_module_base(name);
+        } else if (select_driver_option == 4) { // Paradise Driver
+            return paradise_get_module_base(name);
+        } else if (select_driver_option == 5) { // NB9 Kernel Driver
+            uintptr_t base = nb9::driver->get_module_base(name);
+            if (base > 0) {
+                printf("[c_driver] Module '%s' resolved via NB9 driver ioctl: 0x%lx\n",
+                       name, (unsigned long)base);
+                return base;
+            }
+            return parse_maps_module_base(name);
+        } else if (select_driver_option == 6) { // TWT Driver
+            uintptr_t base = twt_get_module_base(name);
+            if (base > 0) {
+                printf("[c_driver] Module '%s' resolved via TWT driver ioctl: 0x%lx\n",
+                       name, (unsigned long)base);
+                return base;
+            }
+            return parse_maps_module_base(name);
+        }
+        return 0;
+    }
+
+    uintptr_t get_module_base(const char* name) {
+        return this->getModuleBase(name);
+    }
+
+    pid_t get_pid(const char *name) {
+        if (select_driver_option == 4 && paradise_fd >= 0) {
+            struct paradise_get_pid_cmd cmd = {0, ""};
+            strncpy(cmd.name, name, sizeof(cmd.name) - 1);
+            if (ioctl(paradise_fd, PARADISE_IOCTL_GET_PID, &cmd) == 0) {
+                return cmd.pid;
+            }
+        } else if (select_driver_option == 5) {
+            pid_t p = nb9::getPID(name);
+            if (p > 0) return p;
+        } else if (select_driver_option == 6) {
+            pid_t p = twt_get_pid(name);
+            if (p > 0) return p;
+        }
+
+        // Generic procfs fallback
+        DIR *dir = opendir("/proc");
+        if (!dir) return 0;
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+            int p = atoi(entry->d_name);
+            if (p <= 0) continue;
+            char cmdline_path[64];
+            snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", p);
+            FILE *fp = fopen(cmdline_path, "r");
+            if (fp) {
+                char cmdline[256] = {0};
+                if (fgets(cmdline, sizeof(cmdline), fp)) {
+                    if (strstr(cmdline, name)) {
+                        fclose(fp);
+                        closedir(dir);
+                        return p;
+                    }
+                }
+                fclose(fp);
+            }
+        }
+        closedir(dir);
+        return 0;
+    }
+
+    // Paradise gyro config
+    bool gyro_update(float x, float y, uint32_t type_mask = PARADISE_GYRO_MASK_ALL, bool enable = true) {
+        if (paradise_fd < 0) return false;
+        struct paradise_gyro_config_cmd cmd{};
+        cmd.enable = enable ? 1 : 0;
+        cmd.type_mask = type_mask ? type_mask : PARADISE_GYRO_MASK_ALL;
+        cmd.x = x;
+        cmd.y = y;
+        return ioctl(paradise_fd, PARADISE_IOCTL_GYRO_CONFIG, &cmd) == 0;
+    }
+
+    // Paradise touch methods
+    bool touch_init(int width, int height) {
+        return paradise_touch_init(width, height);
+    }
+
+    bool touch_down(int slot, int x, int y) {
+        if (paradise_fd < 0) return false;
+        uint32_t dev_x, dev_y;
+        if (g_touch_state.initialized) {
+            int phys_x, phys_y;
+            convert_screen_to_physical(x, y, &phys_x, &phys_y);
+            convert_physical_to_device(phys_x, phys_y, &dev_x, &dev_y);
+        } else {
+            dev_x = (uint32_t)x;
+            dev_y = (uint32_t)y;
+        }
+        paradise_touch_down_cmd cmd = {};
+        cmd.slot = slot;
+        cmd.x = dev_x;
+        cmd.y = dev_y;
+        return ioctl(paradise_fd, PARADISE_IOCTL_TOUCH_DOWN, &cmd) == 0;
+    }
+
+    bool touch_move(int slot, int x, int y) {
+        if (paradise_fd < 0) return false;
+        uint32_t dev_x, dev_y;
+        if (g_touch_state.initialized) {
+            int phys_x, phys_y;
+            convert_screen_to_physical(x, y, &phys_x, &phys_y);
+            convert_physical_to_device(phys_x, phys_y, &dev_x, &dev_y);
+        } else {
+            dev_x = (uint32_t)x;
+            dev_y = (uint32_t)y;
+        }
+        paradise_touch_move_cmd cmd = {};
+        cmd.slot = slot;
+        cmd.x = dev_x;
+        cmd.y = dev_y;
+        return ioctl(paradise_fd, PARADISE_IOCTL_TOUCH_MOVE, &cmd) == 0;
+    }
+
+    bool touch_up(int slot) {
+        if (paradise_fd < 0) return false;
+        paradise_touch_up_cmd cmd = {};
+        cmd.slot = slot;
+        return ioctl(paradise_fd, PARADISE_IOCTL_TOUCH_UP, &cmd) == 0;
+    }
+
+    bool touch_set_mode(int mode) {
+        if (paradise_fd < 0) return false;
+        paradise_touch_mode_cmd cmd = {};
+        cmd.mode = mode;
+        return ioctl(paradise_fd, PARADISE_IOCTL_TOUCH_SET_MODE, &cmd) == 0;
+    }
+
+    void hide_process() {
+    }
+
+    int get_fd() const { return -1; }
+    int get_bing_vip_fd() const { return bing_fd_vip; }
+    int get_bing_old_fd() const { return bing_fd_old; }
+    int get_paradise_fd() const { return paradise_fd; }
+
+    /* ---------------- NB9 Hardware Breakpoint & Hook APIs ---------------- */
+    bool AddHwBp(nb9::HW_BP_INFO *info) {
+        return nb9::driver->AddHwBp(info);
+    }
+    bool UpdateAndEnableHwBp(nb9::HW_BP_INFO *info) {
+        return nb9::driver->UpdateAndEnableHwBp(info);
+    }
+    bool DisableHwBp(pid_t target_pid, uintptr_t addr) {
+        return nb9::driver->DisableHwBp(target_pid, addr);
+    }
+    bool ClearHwBp() {
+        return nb9::driver->ClearHwBp();
+    }
+    bool GetHwBpHits(nb9::HWBP_HIT_ARGS *args) {
+        return nb9::driver->GetHwBpHits(args);
+    }
+    bool UpdateTrackingData(bool active, uintptr_t bp_addr, float x, float y, float z) {
+        return nb9::driver->UpdateTrackingData(active, bp_addr, x, y, z);
+    }
+    bool HookAttach(pid_t target_pid, uintptr_t addr) {
+        return nb9::driver->HookAttach(target_pid, addr);
+    }
+    bool HookDetach() {
+        return nb9::driver->HookDetach();
+    }
+    bool HookSetRot(const nb9::HOOK_SET_ROT *config) {
+        return nb9::driver->HookSetRot(config);
+    }
+    bool HookGetStatus(nb9::HOOK_STATUS *status) {
+        return nb9::driver->HookGetStatus(status);
+    }
+    bool PteUpdateFloat3(float x, float y, float z) {
+        return nb9::driver->PteUpdateFloat3(x, y, z);
+    }
+};
+
+// ==================== STANDALONE PARADISE HOOK DRIVER ====================
+class Paradise_hook_driver {
+private:
+    pid_t pid = 0;
+    int fd = -1;
+    std::mutex driver_lock;
+
+    int scan_driver_fd() {
+        DIR *dir = opendir("/proc/self/fd");
+        if (!dir) return -1;
+        struct dirent *entry;
+        char link_path[256];
+        char target[256];
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            int fd_num = atoi(entry->d_name);
+            if (fd_num < 0) continue;
+            snprintf(link_path, sizeof(link_path), "/proc/self/fd/%d", fd_num);
+            ssize_t len = readlink(link_path, target, sizeof(target) - 1);
+            if (len < 0) continue;
+            target[len] = '\0';
+            if (strstr(target, PARADISE_DRIVER_NAME) != nullptr) {
+                closedir(dir);
+                return fd_num;
+            }
+        }
+        closedir(dir);
+        return -1;
+    }
+
+    int install_driver_fd() {
+        int inst_fd = -1;
+        long ret = syscall(__NR_reboot, PARADISE_INSTALL_MAGIC1, PARADISE_INSTALL_MAGIC2, 0, &inst_fd);
+        if (inst_fd < 0) {
+            printf("[Paradise_hook_driver] install_driver_fd: not installed, ret=%ld, errno=%d\n", ret, errno);
+            return -1;
+        }
+        printf("[Paradise_hook_driver] install_driver_fd: fd=%d installed successfully\n", inst_fd);
+        return inst_fd;
+    }
+
+    int get_driver_fd() {
+        int sfd = scan_driver_fd();
+        if (sfd >= 0) return sfd;
+        return install_driver_fd();
+    }
+
+public:
+    Paradise_hook_driver(bool auto_connect = true) {
+        if (auto_connect) {
+            fd = get_driver_fd();
+            if (fd < 0) {
+                printf("[Paradise_hook_driver] Unable to locate Paradise driver\n");
+            } else {
+                printf("[Paradise_hook_driver] Connected to Paradise Driver | fd %d\n", fd);
+            }
+        }
+    }
+
+    ~Paradise_hook_driver() {
+        if (fd >= 0) {
+            close(fd);
+            fd = -1;
+        }
+    }
+
+    void initialize(pid_t target_pid) {
+        this->pid = target_pid;
+    }
+
+    pid_t get_pid(const char *name) {
+        if (fd < 0) return 0;
+        struct paradise_get_pid_cmd cmd = {0, ""};
+        strncpy(cmd.name, name, sizeof(cmd.name) - 1);
+        if (ioctl(fd, PARADISE_IOCTL_GET_PID, &cmd) != 0) return 0;
+        return cmd.pid;
+    }
+
+    uintptr_t get_module_base(const char *name) {
+        if (this->pid <= 0 || fd < 0) return 0;
+        struct paradise_get_module_base_cmd cmd = {this->pid, "", 0, 0};
+        strncpy(cmd.name, name, sizeof(cmd.name) - 1);
+        if (ioctl(fd, PARADISE_IOCTL_GET_MODULE_BASE, &cmd) != 0) return 0;
+        return cmd.base;
+    }
+
+    bool gyro_update(float x, float y, uint32_t type_mask = PARADISE_GYRO_MASK_ALL, bool enable = true) {
+        if (fd < 0) return false;
+        struct paradise_gyro_config_cmd cmd{};
+        cmd.enable = enable ? 1 : 0;
+        cmd.type_mask = type_mask ? type_mask : PARADISE_GYRO_MASK_ALL;
+        cmd.x = x;
+        cmd.y = y;
+        return ioctl(fd, PARADISE_IOCTL_GYRO_CONFIG, &cmd) == 0;
+    }
+
+    bool raw_read(uintptr_t addr, void *buffer, size_t size) {
+        if (fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        struct paradise_memory_ioremap_cmd cmd = {};
+        cmd.pid = this->pid;
+        cmd.src_va = addr;
+        cmd.dst_va = (uintptr_t)buffer;
+        cmd.size = size;
+        cmd.prot = 2; // WMT_NORMAL_NC
+        if (ioctl(fd, PARADISE_IOCTL_READ_MEMORY_IOREMAP, &cmd) == 0) return true;
+
+        struct paradise_memory_cmd cmd_safe = {};
+        cmd_safe.pid = this->pid;
+        cmd_safe.src_va = addr;
+        cmd_safe.dst_va = (uintptr_t)buffer;
+        cmd_safe.size = size;
+        return ioctl(fd, PARADISE_IOCTL_READ_MEMORY, &cmd_safe) == 0;
+    }
+
+    bool raw_write(uintptr_t addr, const void *buffer, size_t size) {
+        if (fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        struct paradise_memory_ioremap_cmd cmd = {};
+        cmd.pid = this->pid;
+        cmd.src_va = addr;
+        cmd.dst_va = (uintptr_t)buffer;
+        cmd.size = size;
+        cmd.prot = 2; // WMT_NORMAL_NC
+        if (ioctl(fd, PARADISE_IOCTL_WRITE_MEMORY_IOREMAP, &cmd) == 0) return true;
+
+        struct paradise_memory_cmd cmd_safe = {};
+        cmd_safe.pid = this->pid;
+        cmd_safe.src_va = addr;
+        cmd_safe.dst_va = (uintptr_t)buffer;
+        cmd_safe.size = size;
+        return ioctl(fd, PARADISE_IOCTL_WRITE_MEMORY, &cmd_safe) == 0;
+    }
+
+    bool read(uintptr_t addr, void *buffer, size_t size) {
+        if (fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        std::lock_guard<std::mutex> lock(this->driver_lock);
+        uint8_t *out = reinterpret_cast<uint8_t*>(buffer);
+        size_t done = 0;
+        while (done < size) {
+            uintptr_t cur_addr = addr + done;
+            size_t page_offset = cur_addr & 0xFFF;
+            size_t page_remaining = 0x1000 - page_offset;
+            size_t chunk = (size - done < page_remaining) ? (size - done) : page_remaining;
+            if (!raw_read(cur_addr, out + done, chunk)) return false;
+            done += chunk;
+        }
+        return true;
+    }
+
+    template <typename T>
+    T read(uintptr_t addr) {
+        T res{};
+        if (this->read(addr, &res, sizeof(T))) return res;
+        return {};
+    }
+
+    bool write(uintptr_t addr, const void *buffer, size_t size) {
+        if (fd < 0 || buffer == nullptr || this->pid <= 0) return false;
+        std::lock_guard<std::mutex> lock(this->driver_lock);
+        const uint8_t *in = reinterpret_cast<const uint8_t*>(buffer);
+        size_t done = 0;
+        while (done < size) {
+            uintptr_t cur_addr = addr + done;
+            size_t page_offset = cur_addr & 0xFFF;
+            size_t page_remaining = 0x1000 - page_offset;
+            size_t chunk = (size - done < page_remaining) ? (size - done) : page_remaining;
+            if (!raw_write(cur_addr, in + done, chunk)) return false;
+            done += chunk;
+        }
+        return true;
+    }
+
+    template <typename T>
+    T write(uintptr_t addr, T value) {
+        return this->write(addr, &value, sizeof(T));
+    }
+
+    bool read_safe(uintptr_t addr, void *buffer, size_t size) {
+        return this->read(addr, buffer, size);
+    }
+
+    template <typename T>
+    T read_safe(uintptr_t addr) {
+        return this->read<T>(addr);
+    }
+
+    bool write_safe(uintptr_t addr, const void *buffer, size_t size) {
+        return this->write(addr, buffer, size);
+    }
+
+    template <typename T>
+    T write_safe(uintptr_t addr, T value) {
+        return this->write_safe(addr, &value, sizeof(T));
+    }
+
+    bool touch_init(int width, int height) {
+        return paradise_touch_init(width, height);
+    }
+
+    bool touch_down(int slot, int x, int y) {
+        if (fd < 0) return false;
+        uint32_t dev_x, dev_y;
+        if (g_touch_state.initialized) {
+            int phys_x, phys_y;
+            convert_screen_to_physical(x, y, &phys_x, &phys_y);
+            convert_physical_to_device(phys_x, phys_y, &dev_x, &dev_y);
+        } else {
+            dev_x = (uint32_t)x;
+            dev_y = (uint32_t)y;
+        }
+        paradise_touch_down_cmd cmd = {};
+        cmd.slot = slot;
+        cmd.x = dev_x;
+        cmd.y = dev_y;
+        return ioctl(fd, PARADISE_IOCTL_TOUCH_DOWN, &cmd) == 0;
+    }
+
+    bool touch_move(int slot, int x, int y) {
+        if (fd < 0) return false;
+        uint32_t dev_x, dev_y;
+        if (g_touch_state.initialized) {
+            int phys_x, phys_y;
+            convert_screen_to_physical(x, y, &phys_x, &phys_y);
+            convert_physical_to_device(phys_x, phys_y, &dev_x, &dev_y);
+        } else {
+            dev_x = (uint32_t)x;
+            dev_y = (uint32_t)y;
+        }
+        paradise_touch_move_cmd cmd = {};
+        cmd.slot = slot;
+        cmd.x = dev_x;
+        cmd.y = dev_y;
+        return ioctl(fd, PARADISE_IOCTL_TOUCH_MOVE, &cmd) == 0;
+    }
+
+    bool touch_up(int slot) {
+        if (fd < 0) return false;
+        paradise_touch_up_cmd cmd = {};
+        cmd.slot = slot;
+        return ioctl(fd, PARADISE_IOCTL_TOUCH_UP, &cmd) == 0;
+    }
+
+    bool touch_set_mode(int mode) {
+        if (fd < 0) return false;
+        paradise_touch_mode_cmd cmd = {};
+        cmd.mode = mode;
+        return ioctl(fd, PARADISE_IOCTL_TOUCH_SET_MODE, &cmd) == 0;
+    }
+};
+
+// Global unified driver instance
+inline c_driver *driver = nullptr;
+
+// Aliases for compatibility
+inline c_driver *&AR = driver;
+inline Paradise_hook_driver *paradise_driver = nullptr;
