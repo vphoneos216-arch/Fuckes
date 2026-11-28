@@ -812,6 +812,33 @@ namespace data {
             auto feetScreen = WorldToScreenPoint(viewMatrix, feetWorld);
             if (feetScreen.x < 0) {chain.reject(offset_chain_debug::FeetScreen,enemy,feetTF,Offsets::Feet);continue;}
 
+            // Full skeleton for hook.h's 9-bone chain -- best-effort, never
+            // rejects the enemy: a bone whose transform/position/screen
+            // projection fails just isn't drawn (skelOk[i]=false), same as
+            // Head/Spine/Feet are required above but every other limb here
+            // is optional, matching hook.h's own ok[b] check.
+            Vector3 skelScreen[BONE_COUNT];
+            bool    skelOk[BONE_COUNT] = {};
+            auto readBoneScreen = [&](int idx, uintptr_t offset) {
+                auto tf = GetPlayerBoneTF(enemy, offset);
+                if (!is_valid_ptr(tf)) return;
+                auto world = GetNodePosition(tf);
+                if (world == Vector3::Zero()) return;
+                auto screen = WorldToScreenPoint(viewMatrix, world);
+                if (screen.x < 0) return;
+                skelScreen[idx] = screen;
+                skelOk[idx] = true;
+            };
+            skelScreen[BONE_HEAD] = headScreen; skelOk[BONE_HEAD] = true;
+            readBoneScreen(BONE_CHEST,  Offsets::Spine);
+            readBoneScreen(BONE_HIP,    Offsets::Hip);
+            readBoneScreen(BONE_LSH,    Offsets::lShoulder);
+            readBoneScreen(BONE_RSH,    Offsets::rShoulder);
+            readBoneScreen(BONE_LHAND,  Offsets::lHand);
+            readBoneScreen(BONE_RHAND,  Offsets::rHand);
+            readBoneScreen(BONE_LFOOT,  Offsets::lAnkle);
+            readBoneScreen(BONE_RFOOT,  Offsets::rAnkle);
+
             local_player_count++;
 
             PlayerData pd;
@@ -824,6 +851,7 @@ namespace data {
             pd.headWorld  = headWorld;
             pd.spineWorld = spineWorld;
             pd.neckWorld  = neckWorld;
+            for (int b = 0; b < BONE_COUNT; b++) { pd.skelBones[b] = skelScreen[b]; pd.skelOk[b] = skelOk[b]; }
             pd.isKnocked  = isKnocked;
             pd.isVisible  = (isVis == 1);
             pd.isBot      = isBot;

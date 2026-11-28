@@ -127,11 +127,26 @@ namespace func::esp {
             }
 
             if (cfg::esp::skeleton) {
-                ImVec2 hp2(p.Head.x, p.Head.y);
-                ImVec2 tp2(p.Toe.x,  p.Toe.y);
-                dl->AddLine(hp2, tp2, col_box, 1.4f);
-                dl->AddCircleFilled(hp2, 3.f, col_box);
-                dl->AddCircleFilled(tp2, 3.f, col_box);
+                // hook.h's exact skeleton: Head-Chest-L/RShoulder-L/RHand,
+                // Chest-Hip-L/RFoot, plus a chest dot. Same color/thickness
+                // as hook.h (fixed green, 2.4f), same ok[a]&&ok[b] guard per
+                // segment -- a bone this frame's read didn't produce just
+                // isn't drawn, the rest of the chain still is.
+                const ImU32 SK = IM_COL32(0, 255, 80, 255);
+                constexpr float tk = 2.4f;
+                auto Pt = [&](int b) { return ImVec2(p.skelBones[b].x, p.skelBones[b].y); };
+                auto Ln = [&](int a, int b) {
+                    if (p.skelOk[a] && p.skelOk[b]) dl->AddLine(Pt(a), Pt(b), SK, tk);
+                };
+                Ln(BONE_HEAD,  BONE_CHEST);
+                Ln(BONE_CHEST, BONE_LSH);
+                Ln(BONE_CHEST, BONE_RSH);
+                Ln(BONE_LSH,   BONE_LHAND);
+                Ln(BONE_RSH,   BONE_RHAND);
+                Ln(BONE_CHEST, BONE_HIP);
+                Ln(BONE_HIP,   BONE_LFOOT);
+                Ln(BONE_HIP,   BONE_RFOOT);
+                if (p.skelOk[BONE_CHEST]) dl->AddCircleFilled(Pt(BONE_CHEST), 2.4f, SK, 10);
             }
 
             if (cfg::esp::head_dot) {

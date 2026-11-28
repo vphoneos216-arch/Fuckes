@@ -71,6 +71,10 @@ inline Vector3 GetNodePosition(uint64_t nodeTransform) {
 inline uint64_t GetPlayerHeadTF(uint64_t player) { return rpm<uint64_t>(player + Offsets::Head); }
 inline uint64_t GetPlayerSpineTF(uint64_t player) { return rpm<uint64_t>(player + Offsets::Spine); }
 inline uint64_t GetPlayerPeTF  (uint64_t player) { return rpm<uint64_t>(player + Offsets::Feet); }
+// Generic bone transform read -- same one-line pattern as the three
+// above, just parameterized on the offset, for the rest of the
+// skeleton (shoulders/hands/hip/ankles) used by the full ESP skeleton.
+inline uint64_t GetPlayerBoneTF(uint64_t player, uintptr_t offset) { return rpm<uint64_t>(player + offset); }
 
 inline Vector3 WorldToScreenPoint(const matrix& vm, const Vector3& pos) {
     float v12 = (pos.x * vm.m14) + (pos.y * vm.m24) + (pos.z * vm.m34) + vm.m44;
