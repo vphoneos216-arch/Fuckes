@@ -8,7 +8,7 @@
 
 inline float g_sw, g_sh;
 
-namespace UI {
+namespace NeoUI {  // was `UI` -- collides with OpenSSL's `typedef struct ui_st UI;`
     inline ImVec4 bg           = ImVec4(9/255.f, 13/255.f, 19/255.f, 1.f);
     inline ImVec4 bg_two       = ImVec4(14/255.f, 20/255.f, 28/255.f, 1.f);
     inline ImVec4 sidebar      = ImVec4(8/255.f, 11/255.f, 16/255.f, 1.f);

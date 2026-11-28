@@ -25,13 +25,13 @@ namespace widgets {
 
         dl->AddRectFilledMultiColor(
             ImVec2(pos.x, y), ImVec2(pos.x + ww * 0.4f, y + 1),
-            col(UI::border, a * 0.6f), col(UI::border, 0.f),
-            col(UI::border, 0.f), col(UI::border, a * 0.6f)
+            col(NeoUI::border, a * 0.6f), col(NeoUI::border, 0.f),
+            col(NeoUI::border, 0.f), col(NeoUI::border, a * 0.6f)
         );
         dl->AddRectFilledMultiColor(
             ImVec2(pos.x + ww * 0.6f, y), ImVec2(pos.x + ww, y + 1),
-            col(UI::border, 0.f), col(UI::border, a * 0.6f),
-            col(UI::border, a * 0.6f), col(UI::border, 0.f)
+            col(NeoUI::border, 0.f), col(NeoUI::border, a * 0.6f),
+            col(NeoUI::border, a * 0.6f), col(NeoUI::border, 0.f)
         );
 
         ImGui::Dummy(ImVec2(0, 8.f * S));
@@ -66,11 +66,11 @@ namespace widgets {
         }
 
         ImDrawList* dl = w->DrawList;
-        ImVec4 bg = hov ? UI::widget : UI::panel;
+        ImVec4 bg = hov ? NeoUI::widget : NeoUI::panel;
         dl->AddRectFilled(r.Min, r.Max, col(bg, a));
-        dl->AddRect(r.Min, r.Max, col(UI::border, a));
+        dl->AddRect(r.Min, r.Max, col(NeoUI::border, a));
 
-        ImU32 btnText = UI::g_dark_mode ? IM_COL32(240, 244, 250, 255) : IM_COL32(30, 35, 45, 255);
+        ImU32 btnText = NeoUI::g_dark_mode ? IM_COL32(240, 244, 250, 255) : IM_COL32(30, 35, 45, 255);
         ImGui::PushFont(fontMedium);
         ImVec2 ts = ImGui::CalcTextSize(name);
         dl->AddText(ImVec2(r.GetCenter().x - ts.x * 0.5f, r.GetCenter().y - ts.y * 0.5f),
@@ -130,7 +130,7 @@ namespace widgets {
 
         // Label color
         ImU32 label_col;
-        if (UI::g_dark_mode) {
+        if (NeoUI::g_dark_mode) {
             if (*v) {
                 label_col = IM_COL32(255, 255, 255, 255);
             } else {
@@ -152,11 +152,11 @@ namespace widgets {
         ImGui::PopFont();
 
         // Track colors
-        ImU32 off_track = UI::g_dark_mode ? IM_COL32(28, 38, 52, 255) : IM_COL32(185, 195, 205, 255);
+        ImU32 off_track = NeoUI::g_dark_mode ? IM_COL32(28, 38, 52, 255) : IM_COL32(185, 195, 205, 255);
         ImU32 on_track  = IM_COL32(0, 195, 255, 255);
         ImU32 track_col = ImLerp(off_track, on_track, t);
 
-        ImU32 off_border = UI::g_dark_mode ? IM_COL32(0, 160, 220, 80) : IM_COL32(150, 165, 180, 200);
+        ImU32 off_border = NeoUI::g_dark_mode ? IM_COL32(0, 160, 220, 80) : IM_COL32(150, 165, 180, 200);
         ImU32 on_border  = IM_COL32(60, 220, 255, 255);
         ImU32 border_col = ImLerp(off_border, on_border, t);
 
@@ -203,9 +203,9 @@ namespace widgets {
 
         ImDrawList* dl = w->DrawList;
 
-        dl->AddRectFilled(pos, ImVec2(pos.x + 3.f * S, pos.y + h), col(UI::accent, a), 2.f);
+        dl->AddRectFilled(pos, ImVec2(pos.x + 3.f * S, pos.y + h), col(NeoUI::accent, a), 2.f);
 
-        ImU32 titleCol = UI::g_dark_mode ? IM_COL32(240, 244, 250, 255) : IM_COL32(30, 35, 45, 255);
+        ImU32 titleCol = NeoUI::g_dark_mode ? IM_COL32(240, 244, 250, 255) : IM_COL32(30, 35, 45, 255);
 
         ImGui::PushFont(fontMedium);
         dl->AddText(ImVec2(pos.x + 10.f * S, pos.y + (h - fontMedium->FontSize) * 0.5f),
@@ -225,7 +225,7 @@ namespace widgets {
         float ww = content_w > 0 ? content_w : ImGui::GetContentRegionAvail().x;
         ImVec2 end_pos = ImVec2(start.x + ww, w->DC.CursorPos.y + 4.f * S);
 
-        dl->AddRect(start, end_pos, col(UI::border, 0.45f * a), 8.f);
+        dl->AddRect(start, end_pos, col(NeoUI::border, 0.45f * a), 8.f);
 
         ImGui::Dummy(ImVec2(0, 8.f * S));
     }
@@ -244,8 +244,8 @@ namespace widgets {
         char val_buf[32];
         snprintf(val_buf, sizeof(val_buf), fmt, *val);
 
-        ImU32 labelCol = UI::g_dark_mode ? IM_COL32(185, 195, 210, 255) : IM_COL32(70, 75, 85, 255);
-        ImU32 valueCol = UI::g_dark_mode ? IM_COL32(0, 215, 255, 255) : IM_COL32(0, 135, 195, 255);
+        ImU32 labelCol = NeoUI::g_dark_mode ? IM_COL32(185, 195, 210, 255) : IM_COL32(70, 75, 85, 255);
+        ImU32 valueCol = NeoUI::g_dark_mode ? IM_COL32(0, 215, 255, 255) : IM_COL32(0, 135, 195, 255);
 
         ImGui::PushFont(fontMedium);
         dl->AddText(ImVec2(pos.x + 8.f * S, pos.y), labelCol, label);
@@ -256,10 +256,10 @@ namespace widgets {
         ImVec2 bmin(pos.x + ww - bw - 8.f * S, pos.y);
         ImVec2 bmax(bmin.x + bw, bmin.y + bh);
 
-        ImU32 badgeBg = UI::g_dark_mode ? IM_COL32(12, 34, 50, (int)(210 * a))
+        ImU32 badgeBg = NeoUI::g_dark_mode ? IM_COL32(12, 34, 50, (int)(210 * a))
                                         : IM_COL32(220, 238, 248, (int)(220 * a));
         dl->AddRectFilled(bmin, bmax, badgeBg, 4.f);
-        dl->AddRect(bmin, bmax, col(UI::accent, 0.4f * a), 4.f);
+        dl->AddRect(bmin, bmax, col(NeoUI::accent, 0.4f * a), 4.f);
         dl->AddText(ImVec2(bmin.x + 5.f * S, bmin.y + 2.f * S), valueCol, val_buf);
         ImGui::PopFont();
 

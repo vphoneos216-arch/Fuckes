@@ -109,7 +109,7 @@ bool ImGui_init() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    UI::ApplyGothTheme();
+    NeoUI::ApplyGothTheme();
     ImGui_ImplAndroid_Init(native_window);
     ImGui_ImplOpenGL3_Init(oxorany("#version 300 es"));
 
