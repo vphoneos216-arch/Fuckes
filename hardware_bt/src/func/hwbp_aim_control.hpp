@@ -8,7 +8,10 @@ inline bool retain_target(float locked_distance,float best_distance) {
     return !(best_distance < locked_distance*0.65f && locked_distance-best_distance > 20.f);
 }
 struct Settings {
-    bool x=false, y=false, fire_check=false, draw_fov=true;
+    // fire_check is always on now -- it only gates Aimbot's (X) rotation
+    // write, has no menu toggle, and defaults true with no way to turn it
+    // off (see hwbp_aim.hpp's step(), per-point loop).
+    bool x=false, y=false, fire_check=true, draw_fov=true;
     int x_option=0, y_option=0, bone=0;
     float fov=200, range=250, lead_ms=16;
 };

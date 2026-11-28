@@ -144,16 +144,19 @@ class Controller {
         if(pid<=0||!base||!data::inMatch.load()||!bp_capture::valid_pointer(local)||cfg::aim::visible_enabled){
             pause(status,"Waiting for local player (legacy HWBP must be off)");locked_=0;motion_.reset();return;
         }
-        if(settings.fire_check){
-            uint8_t firing=0;
-            status.fire_address=Offsets::isFiring?local+Offsets::isFiring:0;
-            status.fire_read_ok=status.fire_address&&driver->read(status.fire_address,&firing,1);status.fire_value=firing;
-            if(!status.fire_read_ok||!firing){
-                if(armed_)capture_without_writes(settings,pid,base,status);
-                else pause(status,"Fire Check: waiting for firing");
-                return;
-            }
-        }
+        // Fire Check applies to Aimbot's (X) rotation write only now, and
+        // only gates that one point's write further down in the per-point
+        // loop. It must NOT gate target selection or Bullet Track (Y) at
+        // all: Y needs its register kept continuously fresh with the
+        // correct head direction so that whenever the game's own raycast
+        // actually executes -- whether that's a real fired shot or the
+        // engine's own continuous "is the reticle on target" check -- it
+        // reads a current value, not one that was just cleared because
+        // the firing byte happened to read false a moment earlier. Gating
+        // the whole function here (old behaviour) was clearing Y's write
+        // between shots and was the real cause of both the reticle only
+        // turning red sometimes and shots landing on the body instead of
+        // the head.
         Vector3 origin{};uint64_t info=0,adjusted=0;
         if(!local_origin(local,origin,info,adjusted)){target_wait(settings,pid,base,status,"Waiting for local ray origin");return;}
         Vector3 world{},headWorld{};data::TouchFrame frame;
@@ -172,29 +175,30 @@ class Controller {
         }
 
         // Bullet Track (HWBPY) direction: this register write lands inside
-        // the hitscan raycast itself at the exact moment the shot resolves
-        // -- there is no bullet travel time left to lead for. The only
-        // correction that belongs here is "age" (time since this player
-        // sample was taken), already folded into predicted() via
-        // now-sample; the operator-configurable settings.lead_ms is an
-        // EXTRA anticipatory offset meant for the visual aimbot (X) only.
-        // Feeding that same extra lead into Y's raycast direction is what
-        // was causing "redirects, but still misses sometimes" on a moving
-        // target -- it aims slightly ahead of where the target really is
-        // at resolve time. Y always targets the real head bone position
-        // (not settings.bone) with zero extra lead, so every redirected
-        // shot lands exactly where the breakpoint-captured ray actually
-        // resolves. If this frame's explicit head read failed (best-
-        // effort, same as the skeleton bones), use the already-selected
-        // bone point rather than skip the write outright -- still the
-        // same single breakpoint-based path, no alternate aiming method.
+        // the game's raycast itself at the exact instant it executes --
+        // there is no bullet travel time to lead for, and no safe way to
+        // extrapolate it further either. Any velocity-based prediction,
+        // even just an "age" correction, multiplies a noisy estimate
+        // (jump-shooting, strafing, direction changes) by a time delta and
+        // adds that error on top of the real sample -- against a head-
+        // sized target, that is exactly the kind of small, inconsistent
+        // overshoot that reads as "redirects, but lands on the body, not
+        // the head." Y is snapped straight onto the real, currently-
+        // sampled head-bone world position every single poll (no lead, no
+        // velocity term at all) -- the data thread already resamples this
+        // every ~2ms, so the value is never more than one poll old, and
+        // it is never shifted away from where the head actually is. Y
+        // always targets the real head bone (not settings.bone, which
+        // only affects X). If this frame's explicit head read failed
+        // (best-effort, same as the skeleton bones), use the already-
+        // selected bone point rather than skip the write outright -- still
+        // the same single breakpoint-based path, no alternate aiming
+        // method.
         const bool haveHead = finite(headWorld) && headWorld != Vector3::Zero();
-        const Vector3 headTarget = haveHead ? headWorld : world;
-        const auto lead_y = predicted({headTarget.x,headTarget.y,headTarget.z},velocity,now-sample,0.f);
-        const Vector3 target_y{lead_y[0],lead_y[1],lead_y[2]};
-        if(!finite(target_y)){target_wait(settings,pid,base,status,"Invalid bullet-track target");return;}
+        const Vector3 target_y = haveHead ? headWorld : world;
+        if(!finite(target_y)||target_y==Vector3::Zero()){target_wait(settings,pid,base,status,"Invalid bullet-track target");return;}
         std::array<float,3> dir_y{};
-        if(!bp_capture::direction_between({origin.x,origin.y,origin.z},lead_y,dir_y)){
+        if(!bp_capture::direction_between({origin.x,origin.y,origin.z},{target_y.x,target_y.y,target_y.z},dir_y)){
             target_wait(settings,pid,base,status,"Invalid bullet-track ray direction");return;
         }
 
@@ -307,10 +311,21 @@ class Controller {
             if(!fresh(seconds(std::chrono::steady_clock::now()),sample)){
                 target_wait(settings,pid,base,status,"Target sample became stale; writes removed");return;
             }
-            if(settings.fire_check){uint8_t fire=0;status.fire_read_ok=driver->read(local+Offsets::isFiring,&fire,1);status.fire_value=fire;
+            // Fire Check gates Aimbot's (X) rotation write only, and is
+            // always on (no menu toggle, no off state) -- see Settings.
+            // Bullet Track (Y) is never gated on the firing byte: skipping
+            // just this one point's write, instead of returning out of the
+            // whole loop, is what lets Y's point below still run on every
+            // single poll regardless of X's firing state.
+            if(points_[point].quaternion){
+                uint8_t fire=0;status.fire_read_ok=driver->read(local+Offsets::isFiring,&fire,1);status.fire_value=fire;
                 if(!status.fire_read_ok||!fire){
-                    if(armed_)capture_without_writes(settings,pid,base,status);
-                    else pause(status,"Fire Check: waiting for firing");return;
+                    // Not firing: remove just X's own register write (same
+                    // per-point clear the old whole-function gate used) so
+                    // the visual rotation doesn't keep replaying while idle
+                    // -- Y's point below is untouched and keeps writing.
+                    if(!clear_point(point,record)){pause(status,"Context cleanup failed");return;}
+                    text="Waiting for firing";continue;
                 }
             }
             templates_written_=true; // preserve the need to clear even if only some native writes succeed

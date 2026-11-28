@@ -103,28 +103,31 @@ namespace func::esp {
             if (p.Head.x < 0 || p.Toe.x < 0) continue;
             if (p.curHP <= 0) continue;
 
+            // hook.h's exact box math -- rawH is literally feet.y - head.y
+            // in screen space, bh/bw/bx/by are derived from it with no
+            // distance-based height GUESS of any kind. This replaces the
+            // old est_h/body_h<20 fallback formulas, which is what was
+            // making far-away boxes come out the wrong size: those
+            // formulas overrode the real (naturally shrinking-with-
+            // distance) screen height with an invented one whenever it
+            // read as "too small", instead of just letting perspective do
+            // its job the way hook.h does. Degenerate cases are skipped
+            // outright here too (rawH too small, box off-screen), same as
+            // hook.h -- never patched over with a guessed size.
+            float rawH = p.Toe.y - p.Head.y;
+            if (rawH < 2.f) continue;
+            float bh = rawH * 1.12f;
+            if (bh < 8.f || bh > g_sh * 1.2f) continue;
+            float bw = bh * 0.45f;
+            if (bw < 4.f) bw = 4.f;
+            float bx = p.Head.x - bw * 0.5f;
+            float by = p.Head.y - bh * 0.08f;
+            if (by < -bh) continue;
+            if (bx + bw < -20.f || bx > g_sw + 20.f) continue;
 
-            float toe_y = p.Toe.y;
-            float head_y = p.Head.y;
-            if (p.Toe.x < 0) {
-                float est_h = (p.distance > 0.1f) ? (500.f / p.distance * 2.f) : 100.f;
-                if (est_h < 30.f) est_h = 30.f;
-                if (est_h > 300.f) est_h = 300.f;
-                toe_y = head_y + est_h;
-            }
-
-            float top_y  = (head_y < toe_y ? head_y : toe_y);
-            float bot_y  = (head_y > toe_y ? head_y : toe_y);
-            float body_h = bot_y - top_y;
-            if (body_h < 20.f) {
-                body_h = 200.f - 1.5f * p.distance;
-                if (body_h < 40.f) body_h = 40.f;
-                if (body_h > 250.f) body_h = 250.f;
-            }
-            float w = body_h * 0.48f;
-            float cx = (p.Toe.x >= 0) ? ((p.Head.x + p.Toe.x) * 0.5f) : p.Head.x;
-            ImVec2 tl(cx - w * 0.5f, top_y - body_h * 0.05f);
-            ImVec2 br(cx + w * 0.5f, bot_y);
+            ImVec2 tl(bx, by);
+            ImVec2 br(bx + bw, by + bh);
+            float cx = p.Head.x; // hx in hook.h -- the line/tracer origin point
 
             const ImU32 col_box = ix_box_color(
                 p.isKnocked, p.curHP, p.maxHP, p.distance,

@@ -664,8 +664,10 @@ namespace ui::menu {
         changed |= wc::Checkbox("Bullet Track", &settings.y);
         ImGui::TextDisabled("  Status Bullet Track: %s", status.y.c_str());
 
-        changed |= wc::Checkbox("Fire Check", &settings.fire_check);
-        ImGui::SameLine();
+        // Fire Check toggle removed -- it's Aimbot (X) only now, and
+        // stays on by default with no way to turn it off from the menu
+        // (settings.fire_check defaults true in Settings and is never
+        // written from here anymore).
         changed |= wc::Checkbox("Draw FOV Circle", &settings.draw_fov);
 
         if (changed) {
