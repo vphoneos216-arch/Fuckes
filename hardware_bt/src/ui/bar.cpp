@@ -189,32 +189,10 @@ namespace ui::bar {
                 ImColor(30, 144, 255), bynh.c_str());
         }
 
-        ImVec2 childWindowSize(w, h);
-        ImGui::SetNextWindowPos(tl);
-        ImGui::SetNextWindowSize(childWindowSize);
-
-        ImVec4 transparentColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, transparentColor);
-        ImGui::PushStyleColor(ImGuiCol_Border, transparentColor);
-        ImGui::PushStyleColor(ImGuiCol_BorderShadow, transparentColor);
-        ImGui::PushStyleColor(ImGuiCol_Button, transparentColor);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparentColor);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparentColor);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100.0f);
-
-        ImGui::Begin("VolumeClickEvent", NULL,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoScrollWithMouse);
-
-        if (ImGui::Button("##volume_click_btn", childWindowSize)) {
-            toggle();
-        }
-
-        ImGui::End();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(6);
+        // Volume style has no tap target at all -- in this mode the menu
+        // only opens/closes via the physical Volume Up key (see
+        // func/volume_key.hpp), so there is no click-region window here
+        // the way Bar style has one. This widget is purely a display.
     }
 
     void render() {

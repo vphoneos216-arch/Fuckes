@@ -11,6 +11,7 @@
 #include "game/data.hpp"
 #include "func/esp.hpp"
 #include "func/silent.hpp"
+#include "func/volume_key.hpp"
 #include "ui/cfg.hpp"
 #include "protect/security.hpp"
 #include <cstdio>
@@ -158,6 +159,12 @@ int main() {
     driver = &drv;
 
     select_counter_style();
+    // Volume style has no on-screen tap target for the menu at all --
+    // the physical Volume Up key is the only open/close control in that
+    // mode (see func/volume_key.hpp). Bar style keeps the existing
+    // tap-the-pill toggle in bar.cpp, so this listener is never started
+    // for it.
+    if (cfg::hud::counter_style == 1) volume_key::start();
 
     screen_config();
     int max_size = (displayInfo.height > displayInfo.width

@@ -64,7 +64,16 @@ inline bool same_plan(const Settings& a,const Settings& b) {
     return a.x==b.x && a.y==b.y && (!a.x||a.x_option==b.x_option) && (!a.y||a.y_option==b.y_option);
 }
 inline bool fresh(double now,double sample) {
-    return std::isfinite(now)&&std::isfinite(sample)&&sample>0&&now>=sample&&now-sample<=0.12;
+    // Tightened from 0.12s: the player-data scan thread normally
+    // resamples every ~12ms (see data.cpp), so 120ms of slack was only
+    // ever needed to tolerate a scan-thread hiccup -- but on exactly
+    // those hiccups, redirecting Bullet Track onto a position that's up
+    // to 120ms old (a full body-width or more of drift against a
+    // strafing target) is what reads as "redirects, but hits the body."
+    // 40ms stays comfortably above normal scan jitter while rejecting
+    // (and skipping the write outright, not aiming at stale data) any
+    // sample old enough to matter.
+    return std::isfinite(now)&&std::isfinite(sample)&&sample>0&&now>=sample&&now-sample<=0.04;
 }
 inline std::array<float,3> predicted(std::array<float,3> world,std::array<float,3> velocity,
                                     double age,float lead_ms) {

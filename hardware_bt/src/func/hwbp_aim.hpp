@@ -381,16 +381,20 @@ class Controller {
             status.target=0;
             try{step(settings,status);}catch(const std::exception& e){pause(status,e.what());}
             publish(status);
-            // Tightened from 8333us (120Hz) to 2000us (500Hz): every poll
-            // re-writes the breakpoint's register-write mask with the
-            // current direction/quaternion, and the hardware breakpoint
-            // replays whatever is currently armed on EVERY hit at that PC
-            // (not just once) -- so a narrower poll period shrinks the
-            // window in which a stale (not-yet-refreshed) write could be
-            // in effect when a shot's raycast executes, for weapons that
-            // fire several rounds close together. Still fully breakpoint-
+            // Tightened again: 8333us (120Hz) -> 2000us (500Hz) -> now
+            // 500us (2kHz). Checked the actual driver backend (includes/
+            // driver_native_breakpoints.inl) to get this right instead of
+            // assuming: aim_hwbp_write() sets a per-register READ/WRITE
+            // mask the hardware breakpoint unit substitutes at the
+            // kernel/silicon level on every future hit at that PC -- it
+            // is NOT a synchronous trap this userspace loop has to
+            // answer in real time to release the target. That means
+            // whatever direction we last armed stays armed until the
+            // NEXT aim_hwbp_write call, so the real staleness window is
+            // exactly this poll period -- a shorter period is a direct,
+            // verified way to shrink it further. Still fully breakpoint-
             // based; no fallback path of any kind was added.
-            std::this_thread::sleep_until(begin+std::chrono::microseconds(2000));
+            std::this_thread::sleep_until(begin+std::chrono::microseconds(500));
         }
         disarm(status);
     }
