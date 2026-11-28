@@ -109,6 +109,17 @@ int main() {
     cfg::account::devices_used = g_auth.getDevicesUsed();
     cfg::account::devices_max  = g_auth.getMaxDevices();
 
+    // Bind this project's own security subsystem to the real login that
+    // just happened. sec::Security::IsSessionAuthenticated() was always
+    // false before this -- nothing ever called AuthenticateSession() for
+    // the new Authentication class -- so every run fell into the branch
+    // below, nullified Offsets::, and printed "Cannot apply version
+    // offsets." (and, downstream, broke HWBPY, which reads those same
+    // offsets). getSessionToken() returns the server-issued token only
+    // when g_auth.run() actually authenticated, so this call is exactly
+    // as strict as the check it feeds.
+    sec::Security::AuthenticateSession(g_auth.getSessionToken());
+
     if (!sec::Security::IsSessionAuthenticated()) {
         sec::Security::TriggerTamperAction();
         Offsets::Nullify();
