@@ -30,6 +30,7 @@
 #include "func/esp.hpp"
 #include "func/silent.hpp"
 #include "func/hwbp_aim.hpp"
+#include "func/misc.hpp"
 #include "game/data.hpp"
 #include "cfg.hpp"
 
@@ -684,6 +685,90 @@ namespace ui::menu {
 
     }
 
+    // Misc -- No Reload (shown as "Brutal BT"), No Recoil, Ghost Hack,
+    // ported from hook.h's own IxUpdateNoReload/IxUpdateNoRecoil/
+    // IxUpdateGhost using Hardware_bt's own already-verified offsets
+    // (see func/misc.hpp). Ghost Hack Float is hook.h's "floating icon"
+    // concept -- a small draggable ON/OFF badge drawn independent of the
+    // main menu, same idea as hook.h's DrawExploitFloatUI "Ghost Mod"
+    // button (see RenderMiscGhostFloat() below).
+    void Misc_1() {
+        wc::title("Misc");
+        auto& engine = misc::controller();
+        auto settings = engine.settings();
+        const auto status = engine.status();
+        bool changed = false;
+
+        changed |= wc::Checkbox("Brutal BT", &settings.no_reload);
+        ImGui::TextDisabled("  (No Reload)");
+        ImGui::Spacing();
+
+        changed |= wc::Checkbox("No Recoil", &settings.no_recoil);
+        ImGui::Spacing();
+
+        changed |= wc::Checkbox("Ghost Hack", &settings.ghost_hack);
+        changed |= wc::Checkbox("Ghost Hack Float", &settings.ghost_float);
+        ImGui::TextDisabled("  Floating on-screen Ghost Hack ON/OFF badge");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("  Status: %s", status.text.c_str());
+
+        if (changed) {
+            engine.configure(settings);
+        }
+    }
+
+    // Draggable floating badge: "Ghost Mod [ON/OFF]" -- toggles
+    // misc::Settings::ghost_hack directly, shown whenever Ghost Hack
+    // Float is on, independent of whether the main menu is open. Same
+    // concept as hook.h's DrawExploitFloatUI "Ghost Mod" drawOne() row,
+    // reduced to just the toggle button (no drag handle dots/hint text).
+    static void RenderMiscGhostFloat() {
+        auto settings = misc::controller().settings();
+        if (!settings.ghost_float) return;
+
+        static ImVec2 pos(50.f, 300.f);
+        static bool   pos_init = false;
+        if (!pos_init) { pos_init = true; pos = ImVec2(50.f, 300.f); }
+
+        const float w = 170.f, h = 48.f;
+        ImVec2 tl = pos, br = {pos.x + w, pos.y + h};
+
+        ImGuiIO& io = ImGui::GetIO();
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+        bool on = settings.ghost_hack;
+        ImU32 fill = on ? IM_COL32(20, 130, 90, 230) : IM_COL32(40, 40, 46, 230);
+        dl->AddRectFilled(tl, br, fill, 10.f);
+        dl->AddRect(tl, br, IM_COL32(30, 184, 242, 255), 10.f, 0, 2.f);
+
+        char lab[32];
+        snprintf(lab, sizeof(lab), "Ghost  [%s]", on ? "ON" : "OFF");
+        ImVec2 ts = ImGui::CalcTextSize(lab);
+        dl->AddText({tl.x + (w - ts.x) * 0.5f, tl.y + (h - ts.y) * 0.5f}, IM_COL32_WHITE, lab);
+
+        static bool dragging = false;
+        static ImVec2 drag_offset(0, 0);
+        ImVec2 mouse = io.MousePos;
+        bool hovered = mouse.x >= tl.x && mouse.x <= br.x && mouse.y >= tl.y && mouse.y <= br.y;
+
+        if (hovered && io.MouseClicked[0]) { dragging = true; drag_offset = {mouse.x - pos.x, mouse.y - pos.y}; }
+        if (dragging) {
+            if (io.MouseDown[0]) {
+                pos.x = ImClamp(mouse.x - drag_offset.x, 0.f, g_sw - w);
+                pos.y = ImClamp(mouse.y - drag_offset.y, 0.f, g_sh - h);
+            } else {
+                dragging = false;
+                if (hovered) {
+                    auto s = misc::controller().settings();
+                    s.ghost_hack = !s.ghost_hack;
+                    misc::controller().configure(s);
+                }
+            }
+        }
+    }
+
     void settings_wcPage() {
         wc::Checkbox("Enemy Count (top HUD)", &cfg::hud::counter_enabled);
         ImGui::Spacing();
@@ -773,6 +858,9 @@ namespace ui::menu {
             if (wc::button("Home", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 0;
             ImGui::Separator();
 
+            if (wc::button("Misc", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 3;
+            ImGui::Separator();
+
             if (wc::button("ESP", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 1;
             ImGui::Separator();
 
@@ -836,6 +924,13 @@ namespace ui::menu {
                     ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
                     ImGui::BeginChild("Settings Child", ImVec2(aevrage_now * 5 + 15, window_y - 30.0f), true);
                     settings_wcPage();
+                    ImGui::EndChild();
+                    break;
+                }
+                case 3: { // Misc -- single page, same layout as Home/Settings
+                    ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
+                    ImGui::BeginChild("Misc Page", ImVec2(aevrage_now * 5 + 15, window_y - 30.0f), true);
+                    Misc_1();
                     ImGui::EndChild();
                     break;
                 }
@@ -915,6 +1010,7 @@ namespace ui::menu {
 
         // Render Dynamic Island Pill (top of screen)
         bar::render();
+        RenderMiscGhostFloat();
 
         if (!g_LogoLoaded) {
             int w, h;
