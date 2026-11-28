@@ -48,18 +48,32 @@ namespace func::esp {
         }
     }
 
-    inline void draw_shadowed_text(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* txt) {
-        dl->AddText({pos.x + 1.f, pos.y + 1.f}, IM_COL32(0, 0, 0, 200), txt);
-        dl->AddText(pos, col, txt);
+    // Fixed-pixel-size text, same as hook.h's own ImGui::GetFont()->
+    // CalcTextSizeA(size,...)/dl->AddText(nullptr,size,...) pattern --
+    // size is independent of the menu's current window font scale, so
+    // HP/distance/name/weapon text renders at the exact size hook.h
+    // uses instead of whatever size the menu's ImGui font happens to
+    // be drawing at when the overlay is rendered.
+    inline ImVec2 calc_text_size_fixed(float size, const char* txt) {
+        return ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.f, txt);
+    }
+    inline void draw_shadowed_text(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* txt, float size = 0.f) {
+        if (size <= 0.f) {
+            dl->AddText({pos.x + 1.f, pos.y + 1.f}, IM_COL32(0, 0, 0, 200), txt);
+            dl->AddText(pos, col, txt);
+        } else {
+            dl->AddText(nullptr, size, {pos.x + 1.f, pos.y + 1.f}, IM_COL32(0, 0, 0, 200), txt);
+            dl->AddText(nullptr, size, pos, col, txt);
+        }
     }
 
     inline void draw_pill(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* txt, float pad = 4.f) {
-        ImVec2 ts = ImGui::CalcTextSize(txt);
+        ImVec2 ts = calc_text_size_fixed(cfg::esp::text_size, txt);
         ImVec2 tl(pos.x - pad, pos.y - pad * 0.5f);
         ImVec2 br(pos.x + ts.x + pad, pos.y + ts.y + pad * 0.5f);
         dl->AddRectFilled(tl, br, IM_COL32(10, 10, 15, 210), 4.f);
         dl->AddRect(tl, br, col, 4.f, 0, 1.2f);
-        dl->AddText(pos, IM_COL32_WHITE, txt);
+        dl->AddText(nullptr, cfg::esp::text_size, pos, IM_COL32_WHITE, txt);
     }
 
     inline void draw() {
@@ -175,13 +189,15 @@ namespace func::esp {
 
                 char hpbuf[16];
                 snprintf(hpbuf, sizeof(hpbuf), "%d", displayHP);
-                ImVec2 ts = ImGui::CalcTextSize(hpbuf);
-                draw_shadowed_text(dl, {bar_x_tl - ts.x - 3.f, tl.y - ts.y * 0.15f}, IM_COL32_WHITE, hpbuf);
+                // hook.h draws its HP number at a fixed 11.f pixel size,
+                // not the UI's text_size -- ported exactly, same constant.
+                ImVec2 ts = calc_text_size_fixed(11.f, hpbuf);
+                draw_shadowed_text(dl, {bar_x_tl - ts.x - 3.f, tl.y - ts.y * 0.15f}, IM_COL32_WHITE, hpbuf, 11.f);
             }
 
             float top_stack_y = tl.y - 6.f;
             if (cfg::esp::name && p.name[0]) {
-                ImVec2 ts = ImGui::CalcTextSize(p.name);
+                ImVec2 ts = calc_text_size_fixed(cfg::esp::text_size, p.name);
                 float nx = (tl.x + br.x - ts.x) * 0.5f;
                 float ny = top_stack_y - ts.y;
                 draw_pill(dl, {nx, ny}, col_box, p.name);
@@ -189,7 +205,7 @@ namespace func::esp {
             }
             if (p.isBot && cfg::esp::bot_tag) {
                 const char* tag = "BOT";
-                ImVec2 ts = ImGui::CalcTextSize(tag);
+                ImVec2 ts = calc_text_size_fixed(cfg::esp::text_size, tag);
                 float bx = (tl.x + br.x - ts.x) * 0.5f;
                 float by = top_stack_y - ts.y;
                 draw_pill(dl, {bx, by}, col_bot, tag, 3.f);
@@ -200,8 +216,8 @@ namespace func::esp {
             if (cfg::esp::distance) {
                 char buf[24];
                 snprintf(buf, sizeof(buf), "%.0f m", p.distance);
-                ImVec2 ts = ImGui::CalcTextSize(buf);
-                draw_shadowed_text(dl, {(tl.x + br.x - ts.x) * 0.5f, bottom_stack_y}, col_dist, buf);
+                ImVec2 ts = calc_text_size_fixed(cfg::esp::text_size, buf);
+                draw_shadowed_text(dl, {(tl.x + br.x - ts.x) * 0.5f, bottom_stack_y}, col_dist, buf, cfg::esp::text_size);
                 bottom_stack_y += ts.y + 2.f;
             }
             if (cfg::esp::weapon && p.weaponType >= 0) {
@@ -210,8 +226,8 @@ namespace func::esp {
                 };
                 const char* wn = (p.weaponType < (int)(sizeof(kNames)/sizeof(*kNames)))
                                  ? kNames[p.weaponType] : "WPN";
-                ImVec2 ts = ImGui::CalcTextSize(wn);
-                draw_shadowed_text(dl, {(tl.x + br.x - ts.x) * 0.5f, bottom_stack_y}, col_weapon, wn);
+                ImVec2 ts = calc_text_size_fixed(cfg::esp::text_size, wn);
+                draw_shadowed_text(dl, {(tl.x + br.x - ts.x) * 0.5f, bottom_stack_y}, col_weapon, wn, cfg::esp::text_size);
             }
 
             if (cfg::esp::line) {

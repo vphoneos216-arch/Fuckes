@@ -33,14 +33,25 @@ namespace esp {
     inline float box_thickness = 2.0f;
     inline float fov_radius    = 250.f;
 
+    // Distance/name/weapon text size, matching hook.h's own "textSize"
+    // field (default 15) exactly -- drawn at a fixed pixel size via
+    // ImGui::GetFont()->CalcTextSizeA/dl->AddText(nullptr,size,...),
+    // not the current ImGui window font scale, same as hook.h.
+    inline float text_size = 15.f;
+
     // Health bar -- matches hook.h's own fields (healthBarWidth/
     // healthBarRounding/showHealthColorGradient) exactly.
     inline float health_bar_width       = 5.f;
     inline float health_bar_rounding    = 1.5f;
     inline bool  health_color_gradient  = true;
 
-    inline ImVec4 box_col      = ImVec4(0.0f, 0.90f, 1.0f, 1.0f);
-    inline ImVec4 box_visible  = ImVec4(0.30f, 1.0f, 0.55f, 1.0f);
+    // White by default -- hook.h's box/line color (box_color_mode==0,
+    // Fixed) is the user's own boxCustomColor, which is white in their
+    // reference build; both the visible and non-visible fixed colors
+    // are set to white here so box AND line (which reuses the box's
+    // color) are white out of the box, matching that exactly.
+    inline ImVec4 box_col      = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    inline ImVec4 box_visible  = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     inline ImVec4 accent       = ImVec4(0.0f, 0.90f, 1.0f, 1.0f);
     inline ImVec4 name_col     = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     inline ImVec4 distance_col = ImVec4(0.95f, 0.95f, 0.30f, 1.0f);
@@ -134,6 +145,7 @@ inline bool save_config(const char* path = CONFIG_FILE_PATH) {
     fprintf(fp, "esp_health_bar_width=%.2f\n", cfg::esp::health_bar_width);
     fprintf(fp, "esp_health_bar_rounding=%.2f\n", cfg::esp::health_bar_rounding);
     fprintf(fp, "esp_health_color_gradient=%d\n", cfg::esp::health_color_gradient ? 1 : 0);
+    fprintf(fp, "esp_text_size=%.1f\n", cfg::esp::text_size);
     fprintf(fp, "esp_max_range=%.1f\n", cfg::esp::max_range);
     fprintf(fp, "esp_box_col=%.3f,%.3f,%.3f,%.3f\n", cfg::esp::box_col.x, cfg::esp::box_col.y, cfg::esp::box_col.z, cfg::esp::box_col.w);
 
@@ -190,6 +202,7 @@ inline bool load_config(const char* path = CONFIG_FILE_PATH) {
             else if (strcmp(key, "esp_health_bar_width") == 0) cfg::esp::health_bar_width = atof(val);
             else if (strcmp(key, "esp_health_bar_rounding") == 0) cfg::esp::health_bar_rounding = atof(val);
             else if (strcmp(key, "esp_health_color_gradient") == 0) cfg::esp::health_color_gradient = (atoi(val) != 0);
+            else if (strcmp(key, "esp_text_size") == 0) cfg::esp::text_size = atof(val);
             else if (strcmp(key, "esp_max_range") == 0 || strcmp(key, "max_range") == 0) cfg::esp::max_range = atof(val);
             else if (strcmp(key, "esp_box_col") == 0 || strcmp(key, "box_col") == 0) {
                 float r, g, b, a;

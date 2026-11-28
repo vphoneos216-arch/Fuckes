@@ -51,13 +51,18 @@ class Controller {
     void publish(const Status& status){std::lock_guard<std::mutex> lock(mutex_);status_=status;published_snapshots_=snapshots_;}
     void pause(Status& status,const char* reason){if(disarm(status))status.text=reason;}
     static double seconds(std::chrono::steady_clock::time_point at){return std::chrono::duration<double>(at.time_since_epoch()).count();}
-    uint64_t select(const Settings& settings,Vector3& world,data::TouchFrame& frame,Status& status) {
+    // headWorld is an extra out-param: the SAME selected enemy's actual
+    // head-bone world position, independent of settings.bone (which only
+    // decides the X/aimbot aim point and FOV/lock radius). Bullet Track
+    // (HWBPY) always redirects onto the real head bone -- see step() --
+    // regardless of what body part the operator picked for X.
+    uint64_t select(const Settings& settings,Vector3& world,Vector3& headWorld,data::TouchFrame& frame,Status& status) {
         std::lock_guard<std::mutex> lock(data::players_mutex);
         frame=data::touchFrame;
         const double now=seconds(std::chrono::steady_clock::now());
         if(!fresh(now,seconds(frame.sampled))){status.text="Waiting for fresh player data";return 0;}
         uint64_t best=0;float best_radius=settings.fov,locked_radius=0;
-        Vector3 locked_world{};bool eligible=false;
+        Vector3 locked_world{},locked_head{};bool eligible=false;
         for(const auto& player:data::players){
             if(!player.addr||player.curHP<=0||!player.isVisible||player.isKnocked||player.distance>settings.range)continue;
             const auto point=player.getTargetWorld(settings.bone);
@@ -66,10 +71,10 @@ class Controller {
             if(!finite(screen)||screen.x<1||screen.y<1||screen.x>=g_sw||screen.y>=g_sh)continue;
             const float radius=std::hypot(screen.x-g_sw*0.5f,screen.y-g_sh*0.5f);
             if(radius>settings.fov)continue;
-            if(player.addr==locked_){eligible=true;locked_world=point;locked_radius=radius;}
-            if(radius<best_radius){best=player.addr;best_radius=radius;world=point;}
+            if(player.addr==locked_){eligible=true;locked_world=point;locked_radius=radius;locked_head=player.headWorld;}
+            if(radius<best_radius){best=player.addr;best_radius=radius;world=point;headWorld=player.headWorld;}
         }
-        if(eligible&&retain_target(locked_radius,best_radius)){world=locked_world;return locked_;}
+        if(eligible&&retain_target(locked_radius,best_radius)){world=locked_world;headWorld=locked_head;return locked_;}
         if(!best)status.text="Waiting for target in FOV";
         return best;
     }
@@ -151,8 +156,8 @@ class Controller {
         }
         Vector3 origin{};uint64_t info=0,adjusted=0;
         if(!local_origin(local,origin,info,adjusted)){target_wait(settings,pid,base,status,"Waiting for local ray origin");return;}
-        Vector3 world{};data::TouchFrame frame;
-        const auto enemy=select(settings,world,frame,status);
+        Vector3 world{},headWorld{};data::TouchFrame frame;
+        const auto enemy=select(settings,world,headWorld,frame,status);
         if(!enemy){const auto reason=status.text;target_wait(settings,pid,base,status,reason.c_str());locked_=0;motion_.reset();return;}
         if(enemy!=locked_){motion_.reset();locked_=enemy;}
         const double now=seconds(std::chrono::steady_clock::now()),sample=seconds(frame.sampled);
@@ -164,6 +169,33 @@ class Controller {
         std::array<float,3> dir{};
         if(!bp_capture::direction_between({origin.x,origin.y,origin.z},lead,dir)){
             target_wait(settings,pid,base,status,"Invalid ray direction");return;
+        }
+
+        // Bullet Track (HWBPY) direction: this register write lands inside
+        // the hitscan raycast itself at the exact moment the shot resolves
+        // -- there is no bullet travel time left to lead for. The only
+        // correction that belongs here is "age" (time since this player
+        // sample was taken), already folded into predicted() via
+        // now-sample; the operator-configurable settings.lead_ms is an
+        // EXTRA anticipatory offset meant for the visual aimbot (X) only.
+        // Feeding that same extra lead into Y's raycast direction is what
+        // was causing "redirects, but still misses sometimes" on a moving
+        // target -- it aims slightly ahead of where the target really is
+        // at resolve time. Y always targets the real head bone position
+        // (not settings.bone) with zero extra lead, so every redirected
+        // shot lands exactly where the breakpoint-captured ray actually
+        // resolves. If this frame's explicit head read failed (best-
+        // effort, same as the skeleton bones), use the already-selected
+        // bone point rather than skip the write outright -- still the
+        // same single breakpoint-based path, no alternate aiming method.
+        const bool haveHead = finite(headWorld) && headWorld != Vector3::Zero();
+        const Vector3 headTarget = haveHead ? headWorld : world;
+        const auto lead_y = predicted({headTarget.x,headTarget.y,headTarget.z},velocity,now-sample,0.f);
+        const Vector3 target_y{lead_y[0],lead_y[1],lead_y[2]};
+        if(!finite(target_y)){target_wait(settings,pid,base,status,"Invalid bullet-track target");return;}
+        std::array<float,3> dir_y{};
+        if(!bp_capture::direction_between({origin.x,origin.y,origin.z},lead_y,dir_y)){
+            target_wait(settings,pid,base,status,"Invalid bullet-track ray direction");return;
         }
 
         // Camera origin anchor: in third-person view, using the true camera origin
@@ -258,9 +290,13 @@ class Controller {
                 snapshot_time_[point]=observed_at;
             }
             const auto spec=bp_capture::rewrite_spec(points_[point].rva);
+            // Y (bullet track) writes dir_y -- the zero-extra-lead,
+            // real-head-bone direction computed above -- not dir (which
+            // still carries X's full lead/prediction, correct for the
+            // visual aim rotation but the actual source of Y's misses).
             const std::array<float,4> values=points_[point].quaternion ?
                 std::array<float,4>{quaternion.x,quaternion.y,quaternion.z,quaternion.w} :
-                std::array<float,4>{dir[0],dir[1],dir[2],0};
+                std::array<float,4>{dir_y[0],dir_y[1],dir_y[2],0};
             for(int reg=0;reg<PARADISE_REG_COUNT;++reg)PARADISE_BP_SET_MASK(&record,reg,PARADISE_BP_OP_READ);
             for(unsigned i=0;i<(points_[point].quaternion?4u:3u);++i){
                 __uint128_t value=0;std::memcpy(&value,&values[i],4);

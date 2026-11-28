@@ -689,6 +689,7 @@ namespace ui::menu {
             cfg::aim::target_position = (int)bone_f;
             changed = true;
         }
+        ImGui::TextDisabled("  Applies to Aimbot only -- Bullet Track always locks the head.");
 
         ImGui::Spacing();
         wc::Checkbox("Ignore Knocked", &cfg::aim::target_knocked);
