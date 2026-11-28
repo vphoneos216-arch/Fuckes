@@ -6,6 +6,32 @@
 #include <thread>
 
 namespace hwbp_aim {
+
+// Forces the current weapon's recoil float to 0 -- same chain as
+// misc.hpp's No Recoil (invMgr -> activeItem -> wcomp -> NoRecoil
+// float), duplicated here (not shared/called across files) so Bullet
+// Track's own correctness doesn't depend on whatever state the Misc
+// tab's separate No Recoil toggle happens to be in. Bullet Track (Y)
+// computes one aim direction per poll and writes it once; the game's
+// own recoil pattern then nudges the ACTUAL fired shot away from that
+// exact direction on every following round in a burst (climbing
+// spread), which is exactly what reads as "redirects, but a lot of
+// bullets still miss/recoil off the body". So whenever Y is on, this
+// is called every poll, independent of the Misc toggle, to keep the
+// weapon's own recoil contribution at zero for as long as Bullet
+// Track is active -- Y's single computed direction then really is
+// where every round in the burst goes.
+static inline void force_zero_weapon_recoil(uint64_t local) {
+    if (!local || local <= 0x10000ULL) return;
+    uint64_t invMgr = rpm<uint64_t>(local + Offsets::InventoryManager);
+    if (!invMgr || invMgr <= 0x10000ULL) return;
+    uint64_t activeItem = rpm<uint64_t>(invMgr + Offsets::Item);
+    if (!activeItem || activeItem <= 0x10000ULL) return;
+    uint64_t wcomp = rpm<uint64_t>(activeItem + Offsets::WeaponComponent);
+    if (!wcomp || wcomp <= 0x10000ULL) return;
+    wpm<float>(wcomp + Offsets::NoRecoil, 0.0f);
+}
+
 struct Status {
     Settings configuration{};
     std::string text="OFF", x="OFF", y="OFF";
@@ -144,6 +170,10 @@ class Controller {
         if(pid<=0||!base||!data::inMatch.load()||!bp_capture::valid_pointer(local)||cfg::aim::visible_enabled){
             pause(status,"Waiting for local player (legacy HWBP must be off)");locked_=0;motion_.reset();return;
         }
+        // Bullet Track forces its own weapon recoil to zero every poll
+        // while Y is on, regardless of the Misc tab's separate No Recoil
+        // toggle -- see force_zero_weapon_recoil() above for why.
+        if(settings.y) force_zero_weapon_recoil(local);
         // Fire Check applies to Aimbot's (X) rotation write only now, and
         // only gates that one point's write further down in the per-point
         // loop. It must NOT gate target selection or Bullet Track (Y) at
