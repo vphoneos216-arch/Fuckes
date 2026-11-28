@@ -415,17 +415,15 @@ inline void RenderSingleMenuWindow() {
         if (chestRate < 1) chestRate = 1;
         if (chestRate > 3) chestRate = 3;
 
-        // [CHANGED] DragHeadshot is no longer force-cleared here: it is
-        // the "Aim Point" control on the Visual and Aim pages now, so
-        // clearing it every frame would make that toggle impossible to
-        // turn on. It is mirrored into g_Cfg like the other two owned
-        // flags instead. AimMagnet and g_ExploitFloatUI stay cleared --
-        // both features are removed and have no control at all.
-        // Aim Point belongs to Inject: off until the asset patch has
-        // actually been written, then held on so the greyed toggle in
-        // the menu cannot be argued with.
-        DragHeadshot       = g_InjectApplied.load(std::memory_order_acquire);
-        g_Cfg.dragHeadshot = DragHeadshot;
+        // Drag is gone. The Aim page is Aim Silent and Hardware BT
+        // again, both on hardware breakpoints, and nothing draws an
+        // "Aim Point" control any more — so DragHeadshot is force-
+        // cleared every frame like the other retired features rather
+        // than being driven by Inject. Leaving it tied to
+        // g_InjectApplied would keep the drag engine running with no
+        // control able to switch it off.
+        DragHeadshot       = false;
+        g_Cfg.dragHeadshot = false;
         AimMagnet          = false;
         g_ExploitFloatUI   = false;
         aimBotBoneIndex    = 0;

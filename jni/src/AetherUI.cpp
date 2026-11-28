@@ -885,62 +885,52 @@ void PageAim(ImDrawList* dl) {
   const Pal p = P();
   const Bindings& b = gBind;
   const float X = SIDEBAR + 24.f;
-  const bool injected = b.injectApplied && *b.injectApplied;
+
+  // Back to the two controls this page was built for, matching its own
+  // sidebar subtitle. The Aim Point / DRAG / INJECT card that replaced
+  // them is gone, along with the drag wording.
+  const bool normal = b.normalMode && *b.normalMode;
+  const bool silentOn = b.aimSilent && *b.aimSilent;
 
   TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
-  Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "AIM POINT", 0, 1.5f);
+  Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim,
-      injected ? "Active. Engages on its own while you drag."
-               : "Activate to unlock Aim Point.", 0);
+      "Both run on hardware breakpoints. No direct writes.", 0);
 
   const float y0 = 100.f, y1 = 252.f, wCol = 460.f;
 
   CardBg(dl, X, y0, X + wCol, y1);
-  CardHead(X + 18.f, y0 + 16.f, "Aim Point", "DRAG");
+  CardHead(X + 18.f, y0 + 16.f, "Aim", "HARDWARE BREAKPOINT");
 
-  if (!injected) {
-    // Locked: the toggle is drawn dimmed and dead, with INJECT as the
-    // only live control in the card.
+  if (normal) {
+    // Normal Mode has no driver, so neither breakpoint can be armed.
+    // Saying so is better than drawing two toggles that cannot do
+    // anything, because there is no write path to fall back to.
     const float keep = gAlpha;
     gLockInput = true;
     gAlpha = keep * 0.38f;
-    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimPoint, "Aim Point");
+    BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
+    BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
     gLockInput = false;
     gAlpha = keep;
 
-    if (Button(dl, H("inject"), X + 18.f, y0 + 104.f, 200.f, 32.f, "INJECT", true))
-      g.requestInject = true;
-
-    // Why the last press did not take. Shown here because the overlay
-    // is the only surface the user is looking at -- the handler's printf
-    // goes to a terminal that is usually long closed, which is what made
-    // a failed Inject look like a dead button.
-    const char* ierr = b.injectError;
-    if (ierr && ierr[0]) {
-      TxtWrap(X + 234.f, y0 + 96.f, wCol - 252.f, 4.5f, Col(206, 86, 72, 0.96f), ierr);
-      TxtWrap(X + 18.f, y0 + 142.f, wCol - 36.f, 4.3f, p.textFaint,
-              "\"no asset bytes from server\" means the panel has no patch "
-              "rows for this key's product.", 0.f);
-    } else {
-      TxtWrap(X + 234.f, y0 + 102.f, wCol - 252.f, 4.5f, p.textDim,
-              "Unlocks Aim Point. Exit reverts everything.");
-    }
+    Txt(X + 18.f, y0 + 142.f, 4.6f, Col(206, 86, 72, 0.96f), "DRIVER REQUIRED", 0, 1.4f);
+    Txt(X + 18.f, y0 + 160.f, 4.5f, p.textFaint,
+        "Restart in Kernel Mode — breakpoints need the driver", 0);
   } else {
-    // Forced on. gLockInput keeps the row from being pressed, so the
-    // toggle reads as "on and not yours to change" rather than simply
-    // refusing to move.
-    const float keep = gAlpha;
-    gLockInput = true;
-    gAlpha = keep * 0.55f;
-    BindToggle(dl, "a.aimpt", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimPoint, "Aim Point");
-    gLockInput = false;
-    gAlpha = keep;
+    BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
+    BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
 
-    dl->AddCircleFilled(Pr(X + 24.f, y0 + 114.f), 2.2f * Ds(X + 24.f, y0 + 114.f),
-                        Col(58, 208, 128, 0.95f), 12);
-    Txt(X + 34.f, y0 + 108.f, 5.4f, Col(56, 190, 120, 0.95f), "Injected", 0);
-    Txt(X + 18.f, y0 + 128.f, 4.6f, p.textFaint,
-        "When you drag it's activated automatically", 0);
+    // Both aim at the same address, so only one watchpoint group can
+    // hold it. Aim Silent wins; say so rather than letting Hardware BT
+    // look broken while it is standing down.
+    if (silentOn) {
+      Txt(X + 18.f, y0 + 142.f, 4.5f, p.textFaint,
+          "Aim Silent holds the aim address — Hardware BT waits", 0);
+    } else {
+      Txt(X + 18.f, y0 + 142.f, 4.5f, p.textFaint,
+          "Head / Body / Legit follow the Chest Rate setting", 0);
+    }
   }
 }
 
