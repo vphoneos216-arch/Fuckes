@@ -24,6 +24,34 @@
 #include <sys/ioctl.h>
 #include <csignal>      // kill() in ValidatePid; the source drop relied on a
                         // transitive include for this and would not build alone
+#include "Paradise/paradise_api.h"
+
+// ── WHY THE TRANSPORT CHANGED ──────────────────────────────────────────
+// The source drop reached the driver itself:
+//
+//     syscall(142, 0x7a3b9c4d, 0x2f8e1d6b, &out, &out);   // -> fd
+//     ioctl(fd, CMD_HWBP_SET / CMD_SET_REC / CMD_GET_RECS, ...)
+//
+// That handshake belongs to the kernel module that drop shipped with.
+// This module loads its own Paradise KPM, which does not answer it, so
+// the handshake returned -1, Arm() latched s_failed, and the feature was
+// dead before it ever looked at the game. That is why the toggle did
+// nothing at all.
+//
+// Everything else here is unchanged, because the two drivers are the
+// same family and the record layout is identical:
+//
+//     drop raw record            paradise_bp_record
+//     +0x00..0x15  2-bit flags   mask[18]
+//     +0x20        PC key        pc
+//     +0x90        x8            x8
+//     +0x18        hit count     hit_count
+//
+// So the same x8 override is expressed through paradise_api instead.
+//
+// It is planted on the PTE EXECUTE table (ptebp_*), which is a separate
+// 16-point table from the debug-register watchpoints Aim Silent and
+// Hardware BT use (hwbp_*). The three therefore cannot evict each other.
 #include <sys/syscall.h>
 
 namespace hwaim {
@@ -51,7 +79,7 @@ static const uint32_t RVA_ORIGIN    = 0x4C;        // muzzle origin inside aimin
 static const uint32_t FACADE_OFF    = 0x16095E18;  // static GameFacade slot (this build)
 static const uint64_t FIRE_TIME_OFF = 0x1854;      // float LastFireBtnDownTime on localPlayer
 
-static int   s_fd    = -1;
+static paradise_driver* s_pd = nullptr;   // owned by the module's driver
 static int   s_pid   = 0;
 static int   s_memfd = -1;
 static uint64_t s_scratch = 0;
@@ -64,6 +92,11 @@ static int   s_lastRet = 0, s_lastErr = 0;
 static uint32_t s_lastOut = 0;
 
 // ---------------- io helpers ----------------
+// The module already connected the driver and resolved the game pid, so
+// both are handed in rather than rediscovered here.
+inline void SetDriver(paradise_driver* pd) { s_pd = pd; }
+inline bool HaveDriver() { return s_pd != nullptr; }
+
 inline int rdmem(uint64_t a, void *b, size_t n) {
     if (s_memfd < 0) return -1;
     return pread64(s_memfd, b, n, (off_t)a) == (ssize_t)n ? 0 : -1;
@@ -122,12 +155,11 @@ inline int state_pid() {
 // Ask the driver itself which pid runs the target package (same path the
 // standalone tools use). Falls back to /proc scans if the driver says no.
 inline int driver_pid(const char *name) {
-    if (s_fd < 0) return 0;
-    bp_pid_req q; memset(&q, 0, sizeof(q));
-    strncpy(q.name, name, sizeof(q.name) - 1);
-    q.name_len = (uint32_t)strlen(name);
-    if (ioctl(s_fd, CMD_FIND_PID, &q) != 0 || q.pid <= 0) return 0;
-    return q.pid;
+    // CMD_FIND_PID was part of the drop's own ioctl protocol. The module
+    // passes its already-resolved pid into Arm(), and state.txt / the
+    // /proc scan remain as the fallbacks, so nothing is lost here.
+    (void)name;
+    return 0;
 }
 inline int find_pid(const char *name) {
     static int cached = 0;
@@ -347,24 +379,27 @@ inline bool ArmAll(int pid) {
             }
         }
     }
-    bp_cfg c; memset(&c, 0, sizeof(c));
-    c.pid = pid;
-    for (int i = 0; i < s_nhooks; i++) {
-        c.entries[i].addr = s_hooks[i];
-        c.entries[i].rwx = 4; c.entries[i].size = 4; c.entries[i].mode = 0;
+    (void)pid;
+    if (!s_pd) return false;
+
+    paradise_bp_point_config pts[8];
+    memset(pts, 0, sizeof(pts));
+    for (int i = 0; i < s_nhooks && i < 8; i++) {
+        pts[i].address = s_hooks[i];
+        pts[i].type    = PARADISE_BP_EXECUTE;   // same as the drop's rwx = 4
+        pts[i].length  = 4;                     // one A64 instruction
+        pts[i].scope   = 0;
     }
-    // some driver builds only accept a few entries -> shrink until it takes
+    // Some driver builds take fewer points than asked; shrink until it takes.
     for (int n = s_nhooks; n >= 1; n--) {
-        c.count = n;
-        errno = 0;
-        int r = ioctl(s_fd, CMD_HWBP_SET, &c);
-        if (r >= 0) {
+        if (s_pd->ptebp_set(pts, (size_t)n)) {
             s_nhooks = n;
-            s_hook = s_hooks[0];
-            fprintf(stderr, "[HW] bp_set ok count=%d errno=%d\n", n, errno);
+            s_hook   = s_hooks[0];
+            fprintf(stderr, "[HW] ptebp_set ok count=%d\n", n);
             return true;
         }
-        fprintf(stderr, "[HW] bp_set fail count=%d errno=%d pid=%d a0=%llx a1=%llx fd=%d\n", n, errno, pid, (unsigned long long)s_hooks[0], (unsigned long long)s_hooks[1], s_fd);
+        fprintf(stderr, "[HW] ptebp_set fail count=%d a0=%llx\n",
+                n, (unsigned long long)s_hooks[0]);
     }
     return false;
 }
@@ -395,12 +430,10 @@ inline bool Arm(int pid, uint64_t libBase = 0, uint64_t lpIn = 0, uint64_t aiIn 
     if (pid <= 0) return false;                 // game not running yet -> retry later
     s_pid = pid;
 
-    if (s_fd < 0) {
-        int out = -1;
-        syscall(142, 0x7a3b9c4dUL, 0x2f8e1d6bUL, (long)&out, (long)&out);
-        s_fd = out;
-        if (s_fd < 0) { s_failed = true; return fail("driver handshake"); }
-    }
+    // No private handshake any more: without the module's driver there is
+    // nothing to arm, and this is a retry rather than a hard failure so a
+    // later connect still works.
+    if (!s_pd) return fail("no paradise driver");
     if (s_memfd < 0) {
         char mp[64]; snprintf(mp, sizeof(mp), "/proc/%d/mem", pid);
         s_memfd = open(mp, O_RDWR);
@@ -437,9 +470,8 @@ inline bool Arm(int pid, uint64_t libBase = 0, uint64_t lpIn = 0, uint64_t aiIn 
     mark_scratch();
 
     // arm exec breakpoints: entry 0 = our override target, 1..4 = probes
-    int z = 0;
-    ioctl(s_fd, CMD_HWBP_REM, &z);
-    ioctl(s_fd, CMD_HWBP_CLR, &z);
+    s_pd->ptebp_remove();
+    s_pd->ptebp_clear_records(-1);
     s_scratch = scratch; s_ai = ai;
     if (!ArmAll(pid)) { s_failed = false; return fail("hwbp_set"); }   // retry: pid may still be settling
 
@@ -464,20 +496,21 @@ inline uint32_t LastOut() { return s_lastOut; }
 
 // switch the x8 override on/off (capture-only record while off)
 inline bool SetOverride(bool on) {
-    if (s_fd < 0 || !s_hook || s_nhooks <= 0) return false;
-    static unsigned char tmpl[0x360];
+    if (!s_pd || !s_hook || s_nhooks <= 0) return false;
     bool allOk = true;
-    // Descending order: bp 0 is written LAST. This driver keeps one record slot
-    // per call, and site 0 is the one that runs on every tap and burst.
+    // Descending order: point 0 is written LAST, because it is the site
+    // that runs on every tap and burst.
     for (int i = s_nhooks - 1; i >= 0; i--) {
-        memset(tmpl, 0, sizeof(tmpl));
-        unsigned char *rec = tmpl + 0x10;          // [0]=bp_idx, [4]=rec_idx, then 0x350
-        tmpl[0] = (unsigned char)i;                // bp index
-        tmpl[4] = 0;                               // record index
-        if (on) rec[3] = 0x80;                     // b3 sh6 -> x8 = override
-        *(uint64_t *)(rec + 0x20) = s_hooks[i];    // PC key, must match hit PC
-        *(uint64_t *)(rec + 0x90) = s_scratch + 8; // x8 -> private copy
-        if (ioctl(s_fd, CMD_SET_REC, tmpl) < 0) allOk = false;
+        paradise_bp_record rec;
+        memset(&rec, 0, sizeof(rec));
+        // mask[] is the 2-bit register operation mask. Byte 3, shift 6 is
+        // x8's slot -- the one field this feature ever overrides. PC / LR /
+        // SP / x29 / pstate are never touched; overriding those panics the
+        // kernel.
+        if (on) rec.mask[3] = 0x80;
+        rec.pc = s_hooks[i];        // PC key, must match the hit PC
+        rec.x8 = s_scratch + 8;     // x8 -> our private copy of aimingInfo
+        if (!s_pd->ptebp_set_record((uint32_t)i, 0, &rec)) allOk = false;
     }
     if (allOk) s_ovr = on;
     return allOk;
@@ -530,7 +563,7 @@ inline void Mirror() {
 // if the game restarted, drop the old breakpoint state and allow a fresh arm
 inline bool ValidatePid() {
     if (!s_armed) return false;
-    if (kill(s_pid, 0) != 0) { reset(); s_failed = false; s_fd = -1; s_memfd = -1; return false; }
+    if (kill(s_pid, 0) != 0) { reset(); s_failed = false; s_memfd = -1; return false; }
     return true;
 }
 
@@ -549,11 +582,10 @@ inline void SetPointers(uint64_t lp, uint64_t ai) {
 // carries our breakpoint and hits stop (that is exactly when shots go wild).
 // Re-install the same set without touching the mirror or our scratch block.
 inline bool Rearm() {
-    if (!s_armed || s_fd < 0) return false;
+    if (!s_armed || !s_pd) return false;
     SyncOverride(false);
-    int z = 0;
-    ioctl(s_fd, CMD_HWBP_REM, &z);
-    ioctl(s_fd, CMD_HWBP_CLR, &z);
+    s_pd->ptebp_remove();
+    s_pd->ptebp_clear_records(-1);
     if (!ArmAll(s_pid)) return false;
     // records are gone with the breakpoints: put them back (bp0 last)
     SetOverride(true);
@@ -561,16 +593,16 @@ inline bool Rearm() {
     return true;
 }
 inline uint32_t Hits() {
-    if (!s_armed || s_fd < 0) return 0;
-    static unsigned char recs[0x350];
-    memset(recs, 0, sizeof(recs));
-    bp_recs_req q; memset(&q, 0, sizeof(q));
-    q.count = 1; q.buffer = (uint64_t)(uintptr_t)recs;
-    errno = 0;
-    int r = ioctl(s_fd, CMD_GET_RECS, &q);
-    s_lastRet = r; s_lastErr = errno; s_lastOut = q.out_count;
-    if (r != 0) return 0;
-    return *(uint32_t *)(recs + 0x18);
+    if (!s_armed || !s_pd) return 0;
+    paradise_bp_record rec;
+    memset(&rec, 0, sizeof(rec));
+    uint32_t got = 0;
+    const bool ok = s_pd->ptebp_get_records(0, 0, &rec, 1, &got);
+    s_lastRet = ok ? 0 : -1;
+    s_lastErr = errno;
+    s_lastOut = got;
+    if (!ok || got == 0) return 0;
+    return (uint32_t)rec.hit_count;   // same field the drop read at +0x18
 }
 
 // push a shot direction into the private copy (12 bytes, never the game's data)

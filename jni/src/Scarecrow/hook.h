@@ -3640,16 +3640,24 @@ void UpdateHwbpSilentFast(){
             continue;
         }
 
-        /* One breakpoint owner at a time. Aim Silent and Hardware BT drive
-         * the Paradise point table through paradise_api; this tier plants
-         * its own points on its own fd. Both live in the same driver table,
-         * so whichever wrote last would wipe the other. Aim Silent and
-         * Hardware BT win, and this stands down rather than fighting. */
-        if(AimSilent || HardwareBT || BodyKill){
+        /* No stand-down needed. This tier lives on the PTE EXECUTE table
+         * (ptebp_*, 16 points, consumes no debug registers -- ptebp_get_config
+         * reports num_brps/num_wrps as zero), while Aim Silent and Hardware BT
+         * use the hardware watchpoint table (hwbp_*). Separate tables, so the
+         * three cannot evict one another and can be on together. */
+
+        /* The module owns the driver connection; hand it over before arming.
+         * Without this the backend has no transport and Arm() just reports
+         * "no paradise driver" forever. */
+        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+        if(!pd){
+            /* Kernel Mode with Paradise is required: there is no write path
+             * to fall back to, by design. */
             if(hwaim::Armed()) hwaim::SyncOverride(false);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
+        hwaim::SetDriver(pd);
 
         uintptr_t lp = 0;
         {
@@ -3678,8 +3686,10 @@ void UpdateHwbpSilentFast(){
         if(!hwaim::Armed() || (nowMs - s_lastPtrMs) > 200){
             s_lastPtrMs = nowMs;
             hwaim::ValidatePid();
-            if(!hwaim::Armed()) hwaim::Arm(0, 0, lp, aimingInfo);
-            else                hwaim::SetPointers(lp, aimingInfo);
+            if(!hwaim::Armed())
+                hwaim::Arm(g_driver ? (int)g_driver->GetPid() : 0, 0, lp, aimingInfo);
+            else
+                hwaim::SetPointers(lp, aimingInfo);
         }
 
         uintptr_t currentTarget = g_CurrentBestTarget;

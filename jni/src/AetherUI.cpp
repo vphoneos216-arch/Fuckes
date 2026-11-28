@@ -928,15 +928,12 @@ void PageAim(ImDrawList* dl) {
     // broken while they stand down.
     const bool btOn  = b.hardwareBT && *b.hardwareBT;
     const bool hwsOn = b.hwbpSilent && *b.hwbpSilent;
-    if (hwsOn && (silentOn || btOn)) {
+    if (hwsOn) {
       Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
-          "Aim Silent / Hardware BT hold the breakpoints — HWBP Silent waits", 0);
+          "Register override on the shot read. Nothing is written.", 0);
     } else if (silentOn && btOn) {
       Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
           "Aim Silent holds the aim address — Hardware BT waits", 0);
-    } else if (hwsOn) {
-      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
-          "Register override on the shot read. Nothing is written.", 0);
     } else {
       Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
           "Head / Body / Legit follow the Chest Rate setting", 0);
