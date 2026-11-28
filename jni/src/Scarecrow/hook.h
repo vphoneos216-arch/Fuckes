@@ -3631,6 +3631,10 @@ static bool hwbpSilentThreadRunning = false;
  * loop. It is the float the fire gate watches, not a pointer, so a wrong
  * value makes the gate never open — it cannot corrupt anything. */
 static const uintptr_t IX_HWBP_FIRE_TIME_OFF = 0x1854; /* LastFireBtnDownTime */
+/* Muzzle origin inside aimingInfo. Same value as hwaim::RVA_ORIGIN: the
+ * direction this tier pushes lives at +0x40 and the point it is measured
+ * from lives at +0x4C, both inside the struct the breakpoint redirects. */
+static const uintptr_t IX_HWBP_RVA_ORIGIN    = 0x4C;
 
 /* Fire gate, same shape as the drop's al::Gate: the direction is only
  * pushed while the fire button time keeps changing, so the override is
@@ -3793,7 +3797,52 @@ void UpdateHwbpSilentFast(){
             continue;
         }
 
-        Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
+        /* MUZZLE ORIGIN IS +0x4C, NOT AmmoBase.
+         *
+         * This is what was wrong. AmmoBase is the field the write-based
+         * tiers use; this one reads the origin out of the same aimingInfo
+         * struct the breakpoint redirects, at RVA_ORIGIN (+0x4C), exactly
+         * as the source does:
+         *
+         *     Vector3 startPos = Read<Vector3>(aimingInfo + 0x4c);
+         *
+         * With the wrong origin every direction was measured from the
+         * wrong point, so even a perfectly delivered override sent the
+         * round somewhere else. */
+        Vector3 startPos = Read<Vector3>(aimingInfo + IX_HWBP_RVA_ORIGIN);
+
+        /* HEADSHOT LIFT.
+         * The head hitbox centre sits above the head node, so aiming at
+         * the node clips high-body. Lift along the ENEMY'S OWN body axis
+         * (head minus chest) so crouching and prone targets stay right,
+         * and lift more with distance because the round drops: 0.10 up
+         * close, capped at 0.18.
+         *
+         * Self-gating: in Body mode the aim point already IS the chest,
+         * the axis length is ~0 and the block is skipped, so this only
+         * ever affects head aiming. */
+        {
+            const Vector3 chest = BonePos(currentTarget, BoneOffsets::Chest());
+            if(!VecZero(chest)){
+                Vector3 ax;
+                ax.X = targetPos.X - chest.X;
+                ax.Y = targetPos.Y - chest.Y;
+                ax.Z = targetPos.Z - chest.Z;
+                const float al = sqrtf(ax.X*ax.X + ax.Y*ax.Y + ax.Z*ax.Z);
+                if(al > 0.05f && al < 2.0f){
+                    const float dx = targetPos.X - startPos.X;
+                    const float dy = targetPos.Y - startPos.Y;
+                    const float dz = targetPos.Z - startPos.Z;
+                    const float dist3 = sqrtf(dx*dx + dy*dy + dz*dz);
+                    float headUp = 0.10f + dist3 * 0.0025f;
+                    if(headUp > 0.18f) headUp = 0.18f;
+                    targetPos.X += ax.X / al * headUp;
+                    targetPos.Y += ax.Y / al * headUp;
+                    targetPos.Z += ax.Z / al * headUp;
+                }
+            }
+        }
+
         Vector3 dir;
         dir.X = targetPos.X - startPos.X;
         dir.Y = targetPos.Y - startPos.Y;

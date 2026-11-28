@@ -890,14 +890,13 @@ void PageAim(ImDrawList* dl) {
   // sidebar subtitle. The Aim Point / DRAG / INJECT card that replaced
   // them is gone, along with the drag wording.
   const bool normal = b.normalMode && *b.normalMode;
-  const bool silentOn = b.aimSilent && *b.aimSilent;
 
   TxtB(X, 36.f, 15.5f, p.text, "Aim", 0);
   Txt(X + TxtWU(15.5f, "Aim") + 10.f, 42.f, 4.6f, p.textFaint, "SILENT / HW BT", 0, 1.5f);
   Txt(X, 78.f, 5.4f, p.textDim,
       "Both run on hardware breakpoints. No direct writes.", 0);
 
-  const float y0 = 100.f, y1 = 300.f, wCol = 460.f;
+  const float y0 = 100.f, y1 = 316.f, wCol = 460.f;
 
   CardBg(dl, X, y0, X + wCol, y1);
   CardHead(X + 18.f, y0 + 16.f, "Aim", "HARDWARE BREAKPOINT");
@@ -909,35 +908,26 @@ void PageAim(ImDrawList* dl) {
     const float keep = gAlpha;
     gLockInput = true;
     gAlpha = keep * 0.38f;
-    BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
-    BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
-    BindToggle(dl, "a.hwsil",  X + 18.f, y0 + 142.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
+    BindToggle(dl, "a.hwsil", X + 18.f, y0 + 58.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
+    BindToggle(dl, "a.bkill", X + 18.f, y0 + 100.f, wCol - 36.f, b.bodyKill,   "Body Kill");
+    BindSliderF(dl, "a.bkhp", X + 18.f, y0 + 144.f, wCol - 36.f, b.bodyKillHP,
+                1.f, 100.f, "Body Kill HP", "%.0f");
     gLockInput = false;
     gAlpha = keep;
 
-    Txt(X + 18.f, y0 + 184.f, 4.6f, Col(206, 86, 72, 0.96f), "DRIVER REQUIRED", 0, 1.4f);
-    Txt(X + 18.f, y0 + 202.f, 4.5f, p.textFaint,
+    Txt(X + 18.f, y0 + 200.f, 4.6f, Col(206, 86, 72, 0.96f), "DRIVER REQUIRED", 0, 1.4f);
+    Txt(X + 18.f, y0 + 218.f, 4.5f, p.textFaint,
         "Restart in Kernel Mode — breakpoints need the driver", 0);
   } else {
-    BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
-    BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
-    BindToggle(dl, "a.hwsil",  X + 18.f, y0 + 142.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
+    BindToggle(dl, "a.hwsil", X + 18.f, y0 + 58.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
+    BindToggle(dl, "a.bkill", X + 18.f, y0 + 100.f, wCol - 36.f, b.bodyKill,   "Body Kill");
+    BindSliderF(dl, "a.bkhp", X + 18.f, y0 + 144.f, wCol - 36.f, b.bodyKillHP,
+                1.f, 100.f, "Body Kill HP", "%.0f");
 
-    // All three live in one driver breakpoint table, so only one owner at
-    // a time. Say which one holds it rather than letting the others look
-    // broken while they stand down.
-    const bool btOn  = b.hardwareBT && *b.hardwareBT;
     const bool hwsOn = b.hwbpSilent && *b.hwbpSilent;
-    if (hwsOn) {
-      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
-          "Register override on the shot read. Nothing is written.", 0);
-    } else if (silentOn && btOn) {
-      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
-          "Aim Silent holds the aim address — Hardware BT waits", 0);
-    } else {
-      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
-          "Head / Body / Legit follow the Chest Rate setting", 0);
-    }
+    Txt(X + 18.f, y0 + 200.f, 4.5f, p.textFaint,
+        hwsOn ? "Register override on the shot read. Nothing is written."
+              : "Head / Body / Legit follow the Chest Rate setting", 0);
   }
 }
 
