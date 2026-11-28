@@ -62,6 +62,33 @@ static bool select_version() {
     }
 }
 
+// Asked right after driver selection, same CLI prompt style as
+// select_version()/driver_selection::prompt(): which shape the top-of-
+// screen HUD pill uses -- Bar (the existing horizontal pill) or Volume
+// (a vertical rounded slider look). Stored in cfg::hud::counter_style
+// for bar::render() to branch on; deliberately not persisted to the
+// saved config file (see cfg.hpp), so this is asked fresh every launch.
+static void select_counter_style() {
+    std::puts("\nHUD style:");
+    std::puts("  1) Bar    (horizontal pill, top-center)");
+    std::puts("  2) Volume (vertical slider, top-center)");
+    char line[64];
+    while (true) {
+        std::printf("Style [1-2]: "); std::fflush(stdout);
+        if (!std::fgets(line, sizeof(line), stdin)) { cfg::hud::counter_style = 0; return; }
+        if (!std::strchr(line, '\n') && !std::feof(stdin)) {
+            int c; while ((c = std::getchar()) != '\n' && c != EOF) {}
+            std::puts("Enter 1 or 2.");
+            continue;
+        }
+        char* p = line;
+        while (*p == ' ' || *p == '\t') ++p;
+        if (*p == '1') { cfg::hud::counter_style = 0; return; }
+        if (*p == '2') { cfg::hud::counter_style = 1; return; }
+        std::puts("Enter 1 or 2.");
+    }
+}
+
 static bool launch_target() {
     // Package is selected from the compiled profile table, never shell input.
     const std::string command=std::string("monkey -p ")+versions::selected->package+
@@ -129,6 +156,8 @@ int main() {
 
     static c_driver drv;
     driver = &drv;
+
+    select_counter_style();
 
     screen_config();
     int max_size = (displayInfo.height > displayInfo.width

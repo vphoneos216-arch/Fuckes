@@ -68,6 +68,20 @@ namespace esp {
 }
 
 // ============================================
+// Top-of-screen HUD pill (the "Dynamic Island" enemy/bot counter).
+// counter_enabled toggles just the number readout; the pill itself (and
+// its tap-to-open/close menu handle) stays visible either way, so there
+// is always a way back into the menu. counter_style picks which shape
+// renders it: 0 = Bar (the existing horizontal pill), 1 = Volume (a
+// vertical rounded slider look) -- asked for at startup, right after
+// driver selection, same as the driver prompt itself.
+// ============================================
+namespace hud {
+    inline bool counter_enabled = true;
+    inline int  counter_style   = 0; // 0 Bar, 1 Volume
+}
+
+// ============================================
 // Account info (from the InvisibleX-style login) for the Info page.
 // Populated once in main() right after g_auth.run() succeeds.
 // ============================================
@@ -165,6 +179,11 @@ inline bool save_config(const char* path = CONFIG_FILE_PATH) {
     // General Settings
     fprintf(fp, "\n[settings]\n");
     fprintf(fp, "settings_fps_choice=%d\n", cfg::settings::fps_choice);
+    fprintf(fp, "hud_counter_enabled=%d\n", cfg::hud::counter_enabled ? 1 : 0);
+    // counter_style is NOT persisted here -- it's asked fresh at startup,
+    // right after driver selection (see main.cpp), same as the driver
+    // choice itself; loading it back from a saved file would silently
+    // overwrite whatever the user just picked this run.
 
     fclose(fp);
     TB_ANDROID_LOG(ANDROID_LOG_INFO, "NEO_CFG", "[+] Saved config to %s", path);
@@ -230,6 +249,7 @@ inline bool load_config(const char* path = CONFIG_FILE_PATH) {
 
             // Settings
             else if (strcmp(key, "settings_fps_choice") == 0 || strcmp(key, "fps_choice") == 0) cfg::settings::fps_choice = atoi(val);
+            else if (strcmp(key, "hud_counter_enabled") == 0) cfg::hud::counter_enabled = (atoi(val) != 0);
         }
     }
 

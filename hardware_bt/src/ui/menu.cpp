@@ -62,8 +62,6 @@ namespace ui::menu {
 
     static GLuint g_LogoTex = 0;
     static bool   g_LogoLoaded = false;
-    static ImVec2 g_LogoPos(50.f, 200.f);
-    static bool   g_LogoPosInit = false;
 
     // KernelSRC tab state
     static int   Tab = 0;
@@ -455,59 +453,10 @@ namespace ui::menu {
         ImGui::PopStyleColor(2);
     }
 
-    static void render_floating_logo() {
-        if (bar::g_open) return;
-
-        if (!g_LogoPosInit) {
-            g_LogoPosInit = true;
-            g_LogoPos = ImVec2(50.f, 200.f);
-        }
-
-        float radius = 32.f;
-        ImVec2 center = {g_LogoPos.x + radius, g_LogoPos.y + radius};
-
-        ImGuiIO& io = ImGui::GetIO();
-        ImDrawList* dl = ImGui::GetForegroundDrawList();
-
-        static bool  dragging = false;
-        static ImVec2 drag_offset(0, 0);
-
-        ImVec2 mouse = io.MousePos;
-        float dist = std::hypot(mouse.x - center.x, mouse.y - center.y);
-        bool hovered = dist <= radius;
-
-        if (hovered && io.MouseClicked[0]) {
-            dragging = true;
-            drag_offset = {mouse.x - g_LogoPos.x, mouse.y - g_LogoPos.y};
-        }
-
-        if (dragging) {
-            if (io.MouseDown[0]) {
-                g_LogoPos.x = mouse.x - drag_offset.x;
-                g_LogoPos.y = mouse.y - drag_offset.y;
-                g_LogoPos.x = ImClamp(g_LogoPos.x, 0.f, g_sw - radius * 2.f);
-                g_LogoPos.y = ImClamp(g_LogoPos.y, 0.f, g_sh - radius * 2.f);
-                center = {g_LogoPos.x + radius, g_LogoPos.y + radius};
-            } else {
-                dragging = false;
-                if (dist <= radius) {
-                    bar::toggle();
-                }
-            }
-        }
-
-        dl->AddCircleFilled(center, radius + 3.f, IM_COL32(0, 195, 255, 60), 48);
-        dl->AddCircleFilled(center, radius, IM_COL32(14, 20, 30, 220), 48);
-        dl->AddCircle(center, radius, IM_COL32(0, 195, 255, 220), 48, 2.5f);
-
-        if (g_LogoLoaded && g_LogoTex != 0) {
-            float img_r = radius * 0.75f;
-            dl->AddImageRounded((ImTextureID)(intptr_t)g_LogoTex,
-                {center.x - img_r, center.y - img_r},
-                {center.x + img_r, center.y + img_r},
-                {0, 0}, {1, 1}, IM_COL32(255, 255, 255, 255), img_r);
-        }
-    }
+    // render_floating_logo() removed -- the draggable circular INX logo
+    // button it drew was a second, separate way to open the menu. The
+    // HUD pill (bar::render()) is now the only open/close handle; it
+    // already stretches and shows a close-this label when open.
 
     // ============================================
     // Tab Contents (client.sh features + KernelSRC UI)
@@ -736,7 +685,10 @@ namespace ui::menu {
     }
 
     void settings_wcPage() {
-        // Settings tab is just an Exit button now -- nothing else.
+        wc::Checkbox("Enemy Count (top HUD)", &cfg::hud::counter_enabled);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
         if (wc::button("Exit App", ImVec2(ImGui::GetContentRegionAvail().x, 65), 15.0f, ImVec4(0.2f, 0.0f, 0.0f, 0.1f), ImVec4(0.8f, 0.2f, 0.2f, 1.0f))) {
             exit(0);
         }
@@ -970,8 +922,6 @@ namespace ui::menu {
                 g_LogoLoaded = true;
             }
         }
-
-        render_floating_logo();
 
         // Check for special startup/server status screens
         if (controlState == CS_CRASH) {

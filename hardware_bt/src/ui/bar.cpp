@@ -1,6 +1,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "bar.hpp"
 #include "whitecloud_widgets.hpp"
+#include "cfg.hpp"
 #include "game/data.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -22,24 +23,12 @@ namespace ui::bar {
 
     void toggle() { set_open(!g_open); }
 
-    void render() {
-        if (g_game_alpha < 0.001f) return;
+    static void render_bar_style(int play_count, int bot_count) {
+        std::string play = std::to_string(play_count);
+        std::string bot  = std::to_string(bot_count);
 
         float pxx = g_sw * 0.5f;
         float island_sz = wc::island_size;
-
-        int play_count = 0;
-        int bot_count = 0;
-        {
-            std::lock_guard<std::mutex> lk(data::players_mutex);
-            for (const auto& p : data::players) {
-                if (p.isBot) bot_count++;
-                else play_count++;
-            }
-        }
-
-        std::string play = std::to_string(play_count);
-        std::string bot  = std::to_string(bot_count);
 
         wc::WidgetState& logo          = wc::wh["logo"];
         wc::WidgetState& player_pos_wc = wc::wh["player_count_pos"];
@@ -83,8 +72,10 @@ namespace ui::bar {
             200.0f, 0, 3.3f
         );
 
-        // Text Display inside Island
-        if (player_pos_wc.beg > 10.0f) {
+        // Text Display inside Island -- the number readout is gated by
+        // counter_enabled, but the pill and its close label are not, so
+        // there's always a way back into the menu.
+        if (cfg::hud::counter_enabled && player_pos_wc.beg > 10.0f) {
             float font_sz = 50.0f * island_sz;
             ImVec2 textSize_play = ImGui::GetFont()->CalcTextSizeA(font_sz, FLT_MAX, -1, play.c_str(), NULL, NULL);
             fg->AddText(NULL, font_sz,
@@ -98,7 +89,7 @@ namespace ui::bar {
                        (74.0f) * island_sz - (textSize_bot.y * 0.5f)),
                 ImColor(0, 255, 0, 240), bot.c_str());
         } else if (logo.beg > 5.0f) {
-            std::string bynh = "Click to Close";
+            std::string bynh = "InvisibleX";
             float font_sz = (logo.beg) * island_sz;
             ImVec2 textSize_bynh = ImGui::GetFont()->CalcTextSizeA(font_sz, FLT_MAX, -1, bynh.c_str(), NULL, NULL);
             fg->AddText(NULL, font_sz,
@@ -137,5 +128,109 @@ namespace ui::bar {
         ImGui::End();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(6);
+    }
+
+    // Volume style -- a vertical rounded slider (like a phone's volume
+    // popup) instead of the horizontal Bar pill: narrow and tall when
+    // closed, stacking the enemy/bot counts top-to-bottom instead of
+    // side-by-side; widens and shows "InvisibleX" when open. Same tap-
+    // to-toggle behaviour and the same counter_enabled gating as Bar.
+    static void render_volume_style(int play_count, int bot_count) {
+        std::string play = std::to_string(play_count);
+        std::string bot  = std::to_string(bot_count);
+
+        float pxx = g_sw * 0.5f;
+        float island_sz = wc::island_size;
+
+        wc::WidgetState& open_w  = wc::wh["volume_width"];
+        wc::WidgetState& open_h  = wc::wh["volume_height"];
+
+        if (g_open) {
+            open_w.end = 150.0f;
+            open_h.end = 40.0f;
+        } else {
+            open_w.end = 0.0f;
+            open_h.end = 0.0f;
+        }
+        wc::Lerp(open_w.beg, open_w.end, 0.125f);
+        wc::Lerp(open_h.beg, open_h.end, 0.125f);
+
+        float base_w = 70.0f * island_sz;
+        float base_h = 150.0f * island_sz;
+        float w = base_w + open_w.beg * island_sz;
+        float h = base_h + open_h.beg * island_sz;
+        float top_y = 35.0f * island_sz;
+
+        ImVec2 tl(pxx - w * 0.5f, top_y);
+        ImVec2 br(pxx + w * 0.5f, top_y + h);
+        float rounding = w * 0.5f;
+
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        fg->AddRectFilled(tl, br, ImColor(225, 225, 225, 255), rounding, 0);
+        fg->AddRect(tl, br, ImColor(255, 255, 255, 255), rounding, 0, 3.3f);
+
+        if (cfg::hud::counter_enabled && !g_open) {
+            float font_sz = 32.0f * island_sz;
+            ImVec2 ts_play = ImGui::GetFont()->CalcTextSizeA(font_sz, FLT_MAX, -1, play.c_str(), NULL, NULL);
+            fg->AddText(NULL, font_sz,
+                ImVec2(pxx - ts_play.x * 0.5f, tl.y + h * 0.28f - ts_play.y * 0.5f),
+                ImColor(255, 0, 0, 255), play.c_str());
+
+            ImVec2 ts_bot = ImGui::GetFont()->CalcTextSizeA(font_sz, FLT_MAX, -1, bot.c_str(), NULL, NULL);
+            fg->AddText(NULL, font_sz,
+                ImVec2(pxx - ts_bot.x * 0.5f, tl.y + h * 0.72f - ts_bot.y * 0.5f),
+                ImColor(0, 255, 0, 240), bot.c_str());
+        } else if (g_open) {
+            std::string bynh = "InvisibleX";
+            float font_sz = 22.0f * island_sz;
+            ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(font_sz, FLT_MAX, -1, bynh.c_str(), NULL, NULL);
+            fg->AddText(NULL, font_sz,
+                ImVec2(pxx - ts.x * 0.5f, tl.y + h * 0.5f - ts.y * 0.5f),
+                ImColor(30, 144, 255), bynh.c_str());
+        }
+
+        ImVec2 childWindowSize(w, h);
+        ImGui::SetNextWindowPos(tl);
+        ImGui::SetNextWindowSize(childWindowSize);
+
+        ImVec4 transparentColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, transparentColor);
+        ImGui::PushStyleColor(ImGuiCol_Border, transparentColor);
+        ImGui::PushStyleColor(ImGuiCol_BorderShadow, transparentColor);
+        ImGui::PushStyleColor(ImGuiCol_Button, transparentColor);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparentColor);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparentColor);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100.0f);
+
+        ImGui::Begin("VolumeClickEvent", NULL,
+                     ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoScrollWithMouse);
+
+        if (ImGui::Button("##volume_click_btn", childWindowSize)) {
+            toggle();
+        }
+
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(6);
+    }
+
+    void render() {
+        if (g_game_alpha < 0.001f) return;
+
+        int play_count = 0;
+        int bot_count = 0;
+        {
+            std::lock_guard<std::mutex> lk(data::players_mutex);
+            for (const auto& p : data::players) {
+                if (p.isBot) bot_count++;
+                else play_count++;
+            }
+        }
+
+        if (cfg::hud::counter_style == 1) render_volume_style(play_count, bot_count);
+        else render_bar_style(play_count, bot_count);
     }
 }
