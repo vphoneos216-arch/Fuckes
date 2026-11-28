@@ -16,8 +16,51 @@ struct Settings {
     float fov=200, range=250, lead_ms=16;
 };
 struct Point {uint64_t rva=0; bool quaternion=false;};
+
+// Every pointer the local player's own two aim-info slots have been seen
+// to hold recently, plus the slot addresses themselves.
+//
+// This is the fix for "stationary = headshot, moving = bullet doesn't
+// connect". The Y context guard used to require that the context
+// register captured at the raycast equal the pointer value read out of
+// local+0xE58 / local+0xE60 in THIS poll. The engine does not keep one
+// AimInfo instance for the whole match: it moves between the raw slot
+// and the adjusted slot, and the pointer inside a slot is replaced as
+// the player's own movement/aim state changes. So while standing still
+// the live read and the captured register agree and every shot is
+// redirected; the moment the player moves, they disagree, the guard
+// rejects the hit, and the armed write is torn down -- the bullet then
+// flies with the game's own direction, which is exactly "redirect
+// dikhta hai kabhi kabhi, hit nahi hota".
+//
+// Keeping the recently-observed values preserves exactly what the guard
+// is supposed to prove -- this hit belongs to one of OUR aim-info
+// objects and not to another entity's raycast -- without demanding it
+// be the instance that happened to be current a few microseconds ago.
+// Nothing is invented or guessed: every value in this set was read out
+// of the local player's own two slots at some point in the last few
+// polls, and the set is cleared whenever the local player changes.
+struct AimContext {
+    static constexpr unsigned kMax=10;
+    std::array<uint64_t,kMax> values{};
+    unsigned count=0;
+    void clear(){values={};count=0;}
+    void add(uint64_t value){
+        if(!value)return;
+        for(unsigned i=0;i<count;++i)if(values[i]==value)return;
+        if(count<kMax){values[count++]=value;return;}
+        for(unsigned i=1;i<kMax;++i)values[i-1]=values[i]; // drop oldest, keep newest
+        values[kMax-1]=value;
+    }
+    bool holds(uint64_t value) const {
+        if(!value)return false;
+        for(unsigned i=0;i<count;++i)if(values[i]==value)return true;
+        return false;
+    }
+};
+
 inline bool record_matches(const Point& point,uint64_t base,uint64_t pc,uint64_t local,
-                           uint64_t info,uint64_t adjusted,uint64_t x0,uint64_t x1,uint64_t x8){
+                           const AimContext& context,uint64_t x0,uint64_t x1,uint64_t x8){
     if(pc!=base+point.rva)return false;
     // HWBP X: quaternion path - x0 must belong to local player
     if(point.quaternion){
@@ -26,10 +69,9 @@ inline bool record_matches(const Point& point,uint64_t base,uint64_t pc,uint64_t
     }
     // HWBP Y: At 0x7C5405C, x0 holds the raycast helper object (NOT the player).
     // Only x1 reliably identifies our local player's AimInfo context.
-    if(point.rva==0x7C5405C)
-        return x1==local+0xE58 || x1==local+0xE60 || (info&&x1==info) || (adjusted&&x1==adjusted);
+    if(point.rva==0x7C5405C)return context.holds(x1);
     // 0x7C56530 alternate output: x8 holds the AimInfo pointer
-    return (info&&x8==info) || (adjusted&&x8==adjusted);
+    return context.holds(x8);
 }
 class Motion {
     std::array<float,3> previous_{},velocity_{};
@@ -64,16 +106,18 @@ inline bool same_plan(const Settings& a,const Settings& b) {
     return a.x==b.x && a.y==b.y && (!a.x||a.x_option==b.x_option) && (!a.y||a.y_option==b.y_option);
 }
 inline bool fresh(double now,double sample) {
-    // Tightened from 0.12s: the player-data scan thread normally
-    // resamples every ~12ms (see data.cpp), so 120ms of slack was only
-    // ever needed to tolerate a scan-thread hiccup -- but on exactly
-    // those hiccups, redirecting Bullet Track onto a position that's up
-    // to 120ms old (a full body-width or more of drift against a
-    // strafing target) is what reads as "redirects, but hits the body."
-    // 40ms stays comfortably above normal scan jitter while rejecting
-    // (and skipping the write outright, not aiming at stale data) any
-    // sample old enough to matter.
-    return std::isfinite(now)&&std::isfinite(sample)&&sample>0&&now>=sample&&now-sample<=0.04;
+    // Back to 0.12s. I tightened this to 0.04 last change and that was
+    // the wrong lever: a failed fresh() check does not "skip aiming at
+    // a stale position", it goes down target_wait() ->
+    // capture_without_writes(), which REMOVES the armed register write
+    // entirely. A removed write means the bullet flies with the game's
+    // own direction, i.e. a guaranteed miss -- strictly worse than
+    // keeping a head direction that is a few milliseconds old. Tighter
+    // thresholds therefore produce MORE misses while moving, not
+    // fewer, because the scan thread jitters most exactly when the
+    // player is moving. The real cause of the moving-vs-stationary
+    // split is the context guard below, not sample age.
+    return std::isfinite(now)&&std::isfinite(sample)&&sample>0&&now>=sample&&now-sample<=0.12;
 }
 inline std::array<float,3> predicted(std::array<float,3> world,std::array<float,3> velocity,
                                     double age,float lead_ms) {

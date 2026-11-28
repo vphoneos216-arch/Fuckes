@@ -104,7 +104,7 @@ public:
         native_bp_stage_="NB9 Add+Enable acknowledged; capture not yet observed";native_bp_error_=0;
         return true;
     }
-    bool aim_hwbp_poll(unsigned index,paradise_bp_record& record,bool& available,uint64_t& hits,int guard=-1,uint64_t first=0,uint64_t second=0) {
+    bool aim_hwbp_poll(unsigned index,paradise_bp_record& record,bool& available,uint64_t& hits,int guard=-1,const uint64_t* candidates=nullptr,unsigned candidate_count=0) {
         record={};available=false;hits=0;
         if(selected_driver_==3){uint32_t count=0;
             const bool ok=hwbp_get_records(index,0,&record,1,&count);
@@ -113,7 +113,7 @@ public:
         std::lock_guard<std::mutex> lock(paradise_lock);
         if(index>=native_points_.size()||!native_points_[index].active)return false;
         auto& point=native_points_[index];
-        if(selected_driver_==4)return twt_poll_locked(index,record,available,hits,guard,first,second);
+        if(selected_driver_==4)return twt_poll_locked(index,record,available,hits,guard,candidates,candidate_count);
         if(selected_driver_==6 && nb9_driver){
             std::array<nb9::HWBP_HIT_ITEM,16> buffer{};
             nb9::HWBP_HIT_ARGS request{};request.pid=pid;request.addr=point.address;

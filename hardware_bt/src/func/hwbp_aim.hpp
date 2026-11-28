@@ -59,6 +59,7 @@ class Controller {
     int tracking_bone_=-1;
     uint64_t tracking_local_=0;
     Settings applied_{};
+    AimContext aim_context_{};
     bp_capture::State exporter_;
     std::array<std::string,2> snapshots_{};
     std::array<std::string,2> published_snapshots_{};
@@ -109,6 +110,13 @@ class Controller {
     bool local_origin(uint64_t local,Vector3& origin,uint64_t& info,uint64_t& adjusted) {
         info=adjusted=0;
         read_pointer(local+0xE58,info);read_pointer(local+0xE60,adjusted);
+        // Record both slot addresses and whatever pointers they currently
+        // hold. The slot addresses are stable for as long as the local
+        // player pointer is; the pointer values are not, which is why the
+        // set remembers the recent ones instead of only this poll's pair
+        // (see AimContext for the full reasoning).
+        aim_context_.add(local+0xE58);aim_context_.add(local+0xE60);
+        aim_context_.add(info);aim_context_.add(adjusted);
         return info&&driver->read(info+0x4C,&origin,sizeof(origin))&&finite(origin)&&origin!=Vector3::Zero();
     }
     bool clear_point(unsigned point,paradise_bp_record record) {
@@ -166,7 +174,14 @@ class Controller {
         }
         const int pid=proc::pid;const uint64_t base=proc::lib,local=data::localPlayerAddr.load();
         status.pid=pid;status.base=base;status.local=local;
-        if(tracking_bone_!=settings.bone||tracking_local_!=local){motion_.reset();locked_=0;tracking_bone_=settings.bone;tracking_local_=local;}
+        if(tracking_bone_!=settings.bone||tracking_local_!=local){
+            motion_.reset();locked_=0;
+            // A new local player object means the remembered aim-info
+            // pointers belong to something else now -- never carry them
+            // across, or the guard would accept a foreign context.
+            if(tracking_local_!=local)aim_context_.clear();
+            tracking_bone_=settings.bone;tracking_local_=local;
+        }
         if(pid<=0||!base||!data::inMatch.load()||!bp_capture::valid_pointer(local)||cfg::aim::visible_enabled){
             pause(status,"Waiting for local player (legacy HWBP must be off)");locked_=0;motion_.reset();return;
         }
@@ -188,13 +203,27 @@ class Controller {
         // turning red sometimes and shots landing on the body instead of
         // the head.
         Vector3 origin{};uint64_t info=0,adjusted=0;
-        if(!local_origin(local,origin,info,adjusted)){target_wait(settings,pid,base,status,"Waiting for local ray origin");return;}
+        if(!local_origin(local,origin,info,adjusted)){
+            // Same reasoning as the stale-sample hold below: the engine
+            // swaps the pointer in these slots as the player's aim state
+            // changes, so a single failed read here is a transient
+            // mid-swap read, not a reason to disarm a working redirect.
+            status.text="Local ray origin unreadable this poll; previous write held";return;
+        }
         Vector3 world{},headWorld{};data::TouchFrame frame;
         const auto enemy=select(settings,world,headWorld,frame,status);
         if(!enemy){const auto reason=status.text;target_wait(settings,pid,base,status,reason.c_str());locked_=0;motion_.reset();return;}
         if(enemy!=locked_){motion_.reset();locked_=enemy;}
         const double now=seconds(std::chrono::steady_clock::now()),sample=seconds(frame.sampled);
-        if(!fresh(now,sample)){target_wait(settings,pid,base,status,"Target sample became stale");return;}
+        if(!fresh(now,sample)){
+            // Hold, do not clear. target_wait() here would strip the armed
+            // write over a transient scan-thread hiccup -- and the scan
+            // thread hiccups most while the player is moving, which is
+            // precisely when the shots were going missing. Real target
+            // loss still clears, one check above (no enemy in FOV), and
+            // leaving the match disarms the breakpoints outright.
+            status.text="Target sample stale; previous write held";return;
+        }
         const auto velocity=motion_.observe({world.x,world.y,world.z},frame.sequence,sample);
         const auto lead=predicted({world.x,world.y,world.z},velocity,now-sample,settings.lead_ms);
         const Vector3 target{lead[0],lead[1],lead[2]};
@@ -292,22 +321,51 @@ class Controller {
         for(unsigned point=0;point<count_;++point){
             paradise_bp_record record{};bool available=false;uint64_t hits=0;
             auto& text=points_[point].quaternion?status.x:status.y;
-            int guard=-1;uint64_t first=0,second=0;
+            int guard=-1;const uint64_t* candidates=nullptr;unsigned candidate_count=0;
+            uint64_t local_candidate=local;
             if(!points_[point].quaternion){
-                if(points_[point].rva==0x7C5405C){guard=1;first=local+0xE58;second=local+0xE60;}
-                else {guard=8;first=info;second=adjusted;}
+                // Y: hand the driver the same full candidate set the
+                // controller matches against, not just the two slot
+                // addresses. Previously the driver only accepted
+                // local+0xE58 / local+0xE60 here while the controller
+                // also accepted the pointer values -- so the driver was
+                // the stricter of the two and silently discarded valid
+                // hits whose context register held the pointer instead
+                // of the slot address.
+                guard=points_[point].rva==0x7C5405C?1:8;
+                candidates=aim_context_.values.data();candidate_count=aim_context_.count;
             } else {
-                guard=0;first=local;second=0;
+                guard=0;candidates=&local_candidate;candidate_count=1;
             }
-            if(!driver->aim_hwbp_poll(point,record,available,hits,guard,first,second)){pause(status,"Record read failed; writes removed");return;}
+            if(!driver->aim_hwbp_poll(point,record,available,hits,guard,candidates,candidate_count)){pause(status,"Record read failed; writes removed");return;}
             if(points_[point].quaternion)status.x_hits=hits;else status.y_hits=hits;
             if(!available){
                 if(driver->selected_backend()==6){text="Waiting for NB9 hit records";status.text="NB9 capture required before guarded register edits";}
                 continue;
             }
-            if(!record_matches(points_[point],base,record.pc,local,info,adjusted,record.x0,record.x1,record.x8)){
-                if(!clear_point(point,record)){pause(status,"Context cleanup failed");return;}
-                text=points_[point].quaternion?"Waiting for selected PC":"Waiting for local context";continue;
+            if(!record_matches(points_[point],base,record.pc,local,aim_context_,record.x0,record.x1,record.x8)){
+                // X (the visual rotation) is still torn down on a context
+                // miss -- leaving a stale rotation armed would fight the
+                // player's own camera.
+                //
+                // Y (Bullet Track) is NOT. The record being matched here
+                // is a captured snapshot that can lag the live game by up
+                // to the driver's probe interval, so a miss does not mean
+                // "our breakpoint is wrong", it usually means "no fresh
+                // matching snapshot has been fetched yet" -- which is
+                // overwhelmingly what happens while the player moves.
+                // Clearing Y's write on that signal is what made moving
+                // shots fly with the game's own direction. The armed
+                // write is a head direction refreshed every 500us; it is
+                // left in place and only ever removed on disarm or real
+                // target loss.
+                if(points_[point].quaternion){
+                    if(!clear_point(point,record)){pause(status,"Context cleanup failed");return;}
+                    text="Waiting for selected PC";
+                } else {
+                    text="Tracking (context snapshot pending; write held)";
+                }
+                continue;
             }
             // Keep report formatting out of the high-rate register-update path.
             const double observed_at=seconds(std::chrono::steady_clock::now());
@@ -338,8 +396,16 @@ class Controller {
                 PARADISE_BP_SET_MASK(&record,PARADISE_REG_Q0+spec.s[i],PARADISE_BP_OP_WRITE);
             }
             // A release during target sampling must not enable a new template.
+            // For Y this no longer removes the existing write: the already
+            // armed direction is a real head direction a few milliseconds
+            // old, which is strictly better than handing the shot back to
+            // the game's own aim. Only skip arming a NEW value from a
+            // sample we no longer trust.
             if(!fresh(seconds(std::chrono::steady_clock::now()),sample)){
-                target_wait(settings,pid,base,status,"Target sample became stale; writes removed");return;
+                if(points_[point].quaternion){
+                    target_wait(settings,pid,base,status,"Target sample became stale; writes removed");return;
+                }
+                text="Tracking (sample stale; previous write held)";continue;
             }
             // Fire Check gates Aimbot's (X) rotation write only, and is
             // always on (no menu toggle, no off state) -- see Settings.

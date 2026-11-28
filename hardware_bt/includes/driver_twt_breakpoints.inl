@@ -109,7 +109,7 @@ private:
         if(!twt_capacity_limited_){native_bp_stage_="TWT bounded capture; learned callers retained";native_bp_error_=0;}
         return true;
     }
-    bool twt_poll_locked(unsigned index,paradise_bp_record& record,bool& available,uint64_t& hits,int guard=-1,uint64_t first=0,uint64_t second=0){
+    bool twt_poll_locked(unsigned index,paradise_bp_record& record,bool& available,uint64_t& hits,int guard=-1,const uint64_t* candidates=nullptr,unsigned candidate_count=0){
         if(guard< -1||guard>30)return native_bp_fail("TWT invalid context register",EINVAL);
         if(!twt_refresh_locked())return false;
         const auto now=std::chrono::steady_clock::now();
@@ -141,11 +141,39 @@ private:
                 }
             }
             hits+=point.hits;summary.retained+=point.retained;
-            const bool context=guard<0 || (first&&point.latest.regs.x[guard]==first) || (second&&point.latest.regs.x[guard]==second);
+            bool context=guard<0;
+            if(!context&&candidates)
+                for(unsigned c=0;c<candidate_count;++c)
+                    if(candidates[c]&&point.latest.regs.x[guard]==candidates[c]){context=true;break;}
             if(point.snapshot&&context&&(!newest||point.latest.time>newest->latest.time))newest=&point;
         }
-        summary.total=hits;twt_chosen_handle_[index]=newest?newest->handle:0;
-        if(!newest)return twt_write_locked(index,nullptr,nullptr,0);
+        summary.total=hits;
+        if(!newest){
+            // No hit matching our context this poll. Do NOT clear the
+            // register template here (the old behaviour).
+            //
+            // This single line was the main reason Bullet Track worked
+            // standing still and failed while moving. The guard above is
+            // matched against point.latest, which only refreshes when a
+            // probe observes the hit count change, and probes are
+            // throttled to 250ms (see above) -- so during movement this
+            // routinely finds no "current" matching snapshot even though
+            // our breakpoint is installed and working. Clearing the
+            // template on that basis disarms the redirect for up to a
+            // quarter of a second at a time, and every bullet fired in
+            // that window flies with the game's own direction.
+            //
+            // Leaving the already-armed template in place is both safer
+            // and more correct: it is still the same single breakpoint
+            // write, still pointed at the head (the controller refreshes
+            // it every 500us while the target is valid), and it is only
+            // ever removed deliberately -- on disarm, on target loss, or
+            // by the controller's own clear_point(). twt_chosen_handle_
+            // is deliberately left untouched so the armed thread keeps
+            // its edit instead of being orphaned.
+            available=false;return true;
+        }
+        twt_chosen_handle_[index]=newest->handle;
         const auto& hit=newest->latest;
         std::memcpy(&record.x0,hit.regs.x,30*sizeof(uint64_t));record.lr=hit.regs.x[30];
         record.sp=hit.regs.sp;record.pc=hit.regs.pc;record.pstate=hit.regs.pstate;
