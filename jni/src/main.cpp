@@ -3051,6 +3051,7 @@ static void ix_apply_control_sync() {
     StartDragHeadshotThread();
     StartAimbotThread();
     StartHardwareBTThread();
+    StartHwbpSilentThread();
     // Body Kill globals synced from config — no separate thread: the
     // threshold check (BodyKillThresholdReached) runs inline inside the
     // FOV loop and UpdateSilentAimFast, both already driven by
@@ -3071,7 +3072,7 @@ void RenderMenu(){
         g_Cfg.Aimbot=g_Cfg.aimSilent=g_Cfg.hardwareBT=g_Cfg.brutalBT=g_Cfg.aimCollider=false;
         g_Cfg.bodyKill=false;
         g_Cfg.showFovCircle=false;
-        AimSilent=HardwareBT=AimLock=Aimbot=BrutalBT=false;
+        AimSilent=HardwareBT=AimLock=Aimbot=BrutalBT=HwbpSilent=false;
         showLine=showBox=showHealth=showDistance=showSkeleton=showName=false;
         Enable=false;
     }
@@ -3632,6 +3633,7 @@ int main(int argc,char* argv[]){
 
     StopEspThread();
     StopSilentAimThread();
+    StopHwbpSilentThread();
     // Body Kill has no separate thread; StopSilentAimThread above covers it.
     StopAimbotThread();
     UpdateAndSaveSettings();

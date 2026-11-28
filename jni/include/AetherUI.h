@@ -52,6 +52,10 @@ struct Bindings {
   // one line, but nothing draws them right now.
   bool*  aimSilent = nullptr;
   bool*  hardwareBT = nullptr;
+  // HWBP Silent: register-override silent aim. Its own tier, not a
+  // mode of the two above -- it plants an EXEC breakpoint instead of
+  // a write watchpoint and never writes game memory.
+  bool*  hwbpSilent = nullptr;
   bool*  bodyKill = nullptr;
   bool*  brutalBT = nullptr;
   bool*  dragHeadshot = nullptr;

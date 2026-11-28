@@ -318,6 +318,7 @@ inline void RenderSingleMenuWindow() {
 
         ab.aimSilent     = &AimSilent;
         ab.hardwareBT    = &HardwareBT;
+        ab.hwbpSilent    = &HwbpSilent;
         ab.bodyKill      = &g_Cfg.bodyKill;
         ab.brutalBT      = &g_Cfg.brutalBT;
         ab.dragHeadshot  = &g_Cfg.dragHeadshot;

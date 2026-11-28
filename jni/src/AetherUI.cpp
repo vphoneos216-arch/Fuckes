@@ -538,12 +538,12 @@ void DrawSidebar(ImDrawList* dl) {
            Col(96, 136, 226, 0.95f));
   Txt(42.f, 34.f, 10.5f, Col(255, 255, 255, 0.95f), "T", 1);
 
-  TxtB(74.f, 20.f, 15.f, p.text, "TESLA", 0, 0.4f);
+  TxtB(74.f, 20.f, 15.f, p.text, "InvisibleX", 0, 0.4f);
   // Says which mode the run is actually in, rather than claiming the
   // kernel every time.
   const bool normalEd = gBind.normalMode && *gBind.normalMode;
   Txt(74.f, 48.f, 4.6f, p.textDim,
-      normalEd ? "TESLA INTERNAL" : "KERNEL EDITION", 0, 1.5f);
+      normalEd ? "INVISIBLEX INTERNAL" : "KERNEL EDITION", 0, 1.5f);
 
   Txt(22.f, 88.f, 4.8f, p.textFaint, "NAVIGATION", 0, 1.8f);
 
@@ -573,7 +573,7 @@ void DrawSidebar(ImDrawList* dl) {
   dl->AddCircleFilled(Pr(22.f, 398.f), 2.0f * Ds(22.f, 398.f), Col(58, 208, 128, 0.95f), 12);
   Txt(28.f, 392.f, 4.8f, Col(56, 190, 120, 0.95f), "MENU READY", 0, 1.2f);
   Txt(20.f, 410.f, 4.5f, p.textFaint, "SurfaceFlinger overlay", 0);
-  Txt(20.f, 428.f, 4.2f, p.textFaint, "TESLA UI / 1.1", 0, 0.7f);
+  Txt(20.f, 428.f, 4.2f, p.textFaint, "INVISIBLEX UI / 1.1", 0, 0.7f);
 
   dl->AddLine(Pr(SIDEBAR, 0.f), Pr(SIDEBAR, PH), p.hair, 1.f);
 }
@@ -897,7 +897,7 @@ void PageAim(ImDrawList* dl) {
   Txt(X, 78.f, 5.4f, p.textDim,
       "Both run on hardware breakpoints. No direct writes.", 0);
 
-  const float y0 = 100.f, y1 = 252.f, wCol = 460.f;
+  const float y0 = 100.f, y1 = 300.f, wCol = 460.f;
 
   CardBg(dl, X, y0, X + wCol, y1);
   CardHead(X + 18.f, y0 + 16.f, "Aim", "HARDWARE BREAKPOINT");
@@ -911,24 +911,34 @@ void PageAim(ImDrawList* dl) {
     gAlpha = keep * 0.38f;
     BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
     BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
+    BindToggle(dl, "a.hwsil",  X + 18.f, y0 + 142.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
     gLockInput = false;
     gAlpha = keep;
 
-    Txt(X + 18.f, y0 + 142.f, 4.6f, Col(206, 86, 72, 0.96f), "DRIVER REQUIRED", 0, 1.4f);
-    Txt(X + 18.f, y0 + 160.f, 4.5f, p.textFaint,
+    Txt(X + 18.f, y0 + 184.f, 4.6f, Col(206, 86, 72, 0.96f), "DRIVER REQUIRED", 0, 1.4f);
+    Txt(X + 18.f, y0 + 202.f, 4.5f, p.textFaint,
         "Restart in Kernel Mode — breakpoints need the driver", 0);
   } else {
     BindToggle(dl, "a.silent", X + 18.f, y0 + 58.f, wCol - 36.f, b.aimSilent,  "Aim Silent");
     BindToggle(dl, "a.hwbt",   X + 18.f, y0 + 100.f, wCol - 36.f, b.hardwareBT, "Hardware BT");
+    BindToggle(dl, "a.hwsil",  X + 18.f, y0 + 142.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
 
-    // Both aim at the same address, so only one watchpoint group can
-    // hold it. Aim Silent wins; say so rather than letting Hardware BT
-    // look broken while it is standing down.
-    if (silentOn) {
-      Txt(X + 18.f, y0 + 142.f, 4.5f, p.textFaint,
+    // All three live in one driver breakpoint table, so only one owner at
+    // a time. Say which one holds it rather than letting the others look
+    // broken while they stand down.
+    const bool btOn  = b.hardwareBT && *b.hardwareBT;
+    const bool hwsOn = b.hwbpSilent && *b.hwbpSilent;
+    if (hwsOn && (silentOn || btOn)) {
+      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
+          "Aim Silent / Hardware BT hold the breakpoints — HWBP Silent waits", 0);
+    } else if (silentOn && btOn) {
+      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
           "Aim Silent holds the aim address — Hardware BT waits", 0);
+    } else if (hwsOn) {
+      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
+          "Register override on the shot read. Nothing is written.", 0);
     } else {
-      Txt(X + 18.f, y0 + 142.f, 4.5f, p.textFaint,
+      Txt(X + 18.f, y0 + 184.f, 4.5f, p.textFaint,
           "Head / Body / Legit follow the Chest Rate setting", 0);
     }
   }
@@ -1082,7 +1092,7 @@ void DrawPanel(ImDrawList* dl) {
   StrokeRR(dl, 1.3f, 1.3f, PW - 1.3f, PH - 1.3f, 28.f, Col(255, 255, 255, 0.20f), 1.f);
 
   // Top bar
-  Txt(SIDEBAR + 24.f, 14.f, 4.4f, p.textFaint, "TESLA / KERNEL MENU", 0, 1.7f);
+  Txt(SIDEBAR + 24.f, 14.f, 4.4f, p.textFaint, "INVISIBLEX / KERNEL MENU", 0, 1.7f);
   char fps[40];
   snprintf(fps, sizeof(fps), "%d FPS / GPU OVERLAY", (int)ImGui::GetIO().Framerate);
   Txt(858.f, 14.f, 4.2f, p.textFaint, fps, 2, 0.9f);

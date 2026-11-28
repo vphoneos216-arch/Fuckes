@@ -21,6 +21,12 @@
 #include <map>
 #include <cfloat>
 #include <cstdlib>
+// HWBP Silent backend, taken from the jni drop unchanged apart from one
+// missing <csignal> it relied on a transitive include for. It talks to
+// the Paradise driver on its own fd and plants an EXEC breakpoint on the
+// shot-direction read, then rewrites x8 to a private copy of aimingInfo.
+// Nothing in the game is ever written.
+#include "ix_hwbp_silent.h"
 
 extern int  selectedBoneIndex;
 extern int  aimBotBoneIndex;
@@ -286,6 +292,12 @@ float g_DragHSRadiusPct  = 12.f; /* [NEW] trigger radius, % of half-screen-heigh
 bool  g_ShowDragHSCircle = false; /* [NEW] mirrors DragHeadshot -- circle only drawn while the feature itself is on */
 bool  g_DragHSTriggered  = false; /* [NEW] true the instant the redirect is actually armed this frame -- drives the circle's red/gray color, same convention as fovHasTarget */
 bool  HardwareBT   = false;  /* Hardware BT — Body / Legit modes */
+/* HWBP Silent — register-override silent aim. Unlike Aim Silent and
+ * Hardware BT, which arm WRITE watchpoints on the direction address,
+ * this plants an EXEC breakpoint on the instruction that reads the
+ * direction and swaps x8 to our own copy, so the game's own code reads
+ * our value and no game memory is written at all. */
+bool  HwbpSilent   = false;
 bool  GhostHack     = false;
 bool  NoRecoil      = false;
 bool  NoReload      = false;
@@ -3574,6 +3586,171 @@ void UpdateAimLockNewThread(){
 //  HARDWARE BT THREAD (Body / Legit) — separate from Aim Silent
 // ============================================================
 static bool hwbtThreadRunning = false;
+static bool hwbpSilentThreadRunning = false;
+
+/* Build-dependent value from the jni drop this logic came from. Every
+ * other offset here is server-delivered; this one arrived hardcoded in
+ * that source and is kept in one named place rather than buried in the
+ * loop. It is the float the fire gate watches, not a pointer, so a wrong
+ * value makes the gate never open — it cannot corrupt anything. */
+static const uintptr_t IX_HWBP_FIRE_TIME_OFF = 0x1854; /* LastFireBtnDownTime */
+
+/* Fire gate, same shape as the drop's al::Gate: the direction is only
+ * pushed while the fire button time keeps changing, so the override is
+ * not latched on permanently. */
+namespace IxHwbpGate {
+    inline uint64_t NowMs() {
+        return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    struct Gate {
+        float    last  = 0.0f;
+        uint64_t tchg  = 0;
+        bool     seen  = false;
+        bool     valid = false;
+        bool     firing = false;
+        void feed(float v) {
+            const uint64_t now = NowMs();
+            if (!(v == v) || v > 1e9f || v < -1e9f) { firing = false; return; }
+            if (!seen) { seen = true; last = v; tchg = now; firing = false; return; }
+            if (v != last) { last = v; tchg = now; valid = true; }
+            firing = valid && ((now - tchg) < 450);   // tap/burst friendly
+        }
+    };
+    static Gate g_gate;
+}
+
+void UpdateHwbpSilentFast(){
+    /* The drop's SilentAimThread flow, driven by this module's own target
+     * selection (g_SA_lp / g_CurrentBestTarget / SilentAimBone) instead of
+     * its g_LocalPlayer / g_TargetBone.
+     *
+     * Breakpoint-only, like the other two: if Arm() fails the frame is
+     * skipped. There is no write path in here at all -- that is the whole
+     * point of this tier. */
+    static uint64_t s_lastPtrMs   = 0;
+    static uint64_t s_lastMirror  = 0;
+    static Vector3  s_prevDir     = {0.f, 0.f, 0.f};
+    static bool     s_havePrevDir = false;
+
+    while(hwbpSilentThreadRunning){
+        if(!ix_feat_aim() || !ix_rt_ready() || !HwbpSilent){
+            if(hwaim::Armed()) hwaim::SyncOverride(false);  // never leave it latched
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        /* One breakpoint owner at a time. Aim Silent and Hardware BT drive
+         * the Paradise point table through paradise_api; this tier plants
+         * its own points on its own fd. Both live in the same driver table,
+         * so whichever wrote last would wipe the other. Aim Silent and
+         * Hardware BT win, and this stands down rather than fighting. */
+        if(AimSilent || HardwareBT || BodyKill){
+            if(hwaim::Armed()) hwaim::SyncOverride(false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
+        uintptr_t lp = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_SA_mtx);
+            lp = g_SA_lp;
+        }
+        if(!lp){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        uintptr_t aimingInfo = Read<uintptr_t>(lp + PlayerOffsets::HitObjInfo());
+        if(!aimingInfo){
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        /* Fire gate */
+        IxHwbpGate::g_gate.feed(Read<float>(lp + IX_HWBP_FIRE_TIME_OFF));
+        const bool firing = IxHwbpGate::g_gate.firing;
+
+        /* Arm once, then refresh the pointers every 200 ms. Each of these
+         * is a driver ioctl and the ESP read path shares the same kernel
+         * lock, so following the pointer every millisecond stalls ESP. */
+        const uint64_t nowMs = IxHwbpGate::NowMs();
+        if(!hwaim::Armed() || (nowMs - s_lastPtrMs) > 200){
+            s_lastPtrMs = nowMs;
+            hwaim::ValidatePid();
+            if(!hwaim::Armed()) hwaim::Arm(0, 0, lp, aimingInfo);
+            else                hwaim::SetPointers(lp, aimingInfo);
+        }
+
+        uintptr_t currentTarget = g_CurrentBestTarget;
+        if(!firing || !hwaim::Armed() || !currentTarget){
+            hwaim::SyncOverride(false);   // stay vanilla
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        Vector3 targetPos = SilentAimBone(currentTarget);
+        if(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f){
+            hwaim::SyncOverride(false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        Vector3 startPos = Read<Vector3>(aimingInfo + PlayerOffsets::AmmoBase());
+        Vector3 dir;
+        dir.X = targetPos.X - startPos.X;
+        dir.Y = targetPos.Y - startPos.Y;
+        dir.Z = targetPos.Z - startPos.Z;
+
+        const float dm = sqrtf(dir.X*dir.X + dir.Y*dir.Y + dir.Z*dir.Z);
+        if(dm < 0.0001f){
+            hwaim::SyncOverride(false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        dir.X /= dm; dir.Y /= dm; dir.Z /= dm;
+
+        /* Mirror re-copies the game's struct into our private one, which
+         * also restores +0x40, so the direction has to be pushed again
+         * after it. */
+        if((nowMs - s_lastMirror) > 300){
+            hwaim::Mirror();
+            s_lastMirror  = nowMs;
+            s_havePrevDir = false;
+        }
+
+        /* Only write when the direction actually moved. On a locked,
+         * steady target this drops most of the driver traffic, which is
+         * what keeps the HWBP handler off the game's mmap_lock and stops
+         * ESP stuttering while firing. */
+        const bool dirChanged = !s_havePrevDir || !hwaim::IsOverride() ||
+                                fabsf(dir.X - s_prevDir.X) > 0.0008f ||
+                                fabsf(dir.Y - s_prevDir.Y) > 0.0008f ||
+                                fabsf(dir.Z - s_prevDir.Z) > 0.0008f;
+        if(dirChanged){
+            hwaim::PushDir(dir.X, dir.Y, dir.Z);   // the only value we ever change
+            s_prevDir     = dir;
+            s_havePrevDir = true;
+        }
+        hwaim::SyncOverride(true);                 // x8 -> our copy for this fire window
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    if(hwaim::Armed()) hwaim::SyncOverride(false);
+}
+
+void StartHwbpSilentThread(){
+    if(!hwbpSilentThreadRunning){
+        hwbpSilentThreadRunning = true;
+        std::thread(UpdateHwbpSilentFast).detach();
+    }
+}
+void StopHwbpSilentThread(){
+    hwbpSilentThreadRunning = false;
+    if(hwaim::Armed()) hwaim::SyncOverride(false);
+}
+
 
 void UpdateHardwareBTFast(){
     /* Hardware BT runs on hardware breakpoints only.
