@@ -27,6 +27,7 @@
 // shot-direction read, then rewrites x8 to a private copy of aimingInfo.
 // Nothing in the game is ever written.
 #include "ix_hwbp_silent.h"
+#include "ix_hwbp_aim.h"   // Aimbot + HWBPY (bullet track)
 
 extern int  selectedBoneIndex;
 extern int  aimBotBoneIndex;
@@ -3624,6 +3625,235 @@ void UpdateAimLockNewThread(){
 // ============================================================
 static bool hwbtThreadRunning = false;
 static bool hwbpSilentThreadRunning = false;
+
+// ══════════════════════════════════════════════════════════════════════
+//  AIMBOT + HWBPY  (ported from the Hardware bt source)
+// ══════════════════════════════════════════════════════════════════════
+// Both sit on EXECUTE breakpoints and rewrite SIMD registers; see
+// ix_hwbp_aim.h for the register maps, guard rules and provenance.
+// Aimbot rewrites the aim quaternion (the view turns); HWBPY rewrites
+// only the raycast direction, so the bullet tracks while the view does
+// not move -- the bullet-track feature.
+bool  IxAimbot    = false;
+bool  IxHwbpY     = false;
+int   IxAimBone   = 0;        // 0 Head, 1 Neck, 2 Chest
+int   IxAimbotOpt = 0;
+int   IxHwbpYOpt  = 0;
+bool  IxAimFireCheck = false;
+float IxAimLeadMs = 16.f;
+
+static bool hwAimThreadRunning = false;
+static std::atomic<uint64_t> g_IxAimHitsX{0}, g_IxAimHitsY{0};
+static std::atomic<bool>     g_IxAimArmed{false};
+
+static inline uintptr_t IxAimBoneOffset(int bone){
+    switch(bone){
+        case 1:  return BoneOffsets::Neck();
+        case 2:  return BoneOffsets::Chest();
+        default: return BoneOffsets::Head();
+    }
+}
+
+void UpdateHwAimFast(){
+    using namespace ixhw;
+
+    Settings applied{};
+    std::array<Point,2> points{};
+    unsigned count = 0;
+    bool     armed = false;
+    uint64_t base  = 0;
+    uint64_t lockedTarget = 0;
+    Motion   motion;
+    uint64_t seq = 0;
+
+    auto nowSec = [](){
+        return std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+
+    auto disarm = [&](paradise_driver* pd){
+        if(!armed) return;
+        if(pd) pd->hwbp_remove();
+        armed = false; count = 0;
+        g_IxAimArmed.store(false, std::memory_order_release);
+    };
+
+    while(hwAimThreadRunning){
+        paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+
+        Settings s{};
+        s.aimbot        = IxAimbot;
+        s.hwbpy         = IxHwbpY;
+        s.aimbot_option = IxAimbotOpt;
+        s.hwbpy_option  = IxHwbpYOpt;
+        s.bone          = IxAimBone;
+        s.fire_check    = IxAimFireCheck;
+        s.lead_ms       = IxAimLeadMs;
+
+        if(!ix_feat_aim() || !ix_rt_ready() || (!s.aimbot && !s.hwbpy) || !pd){
+            disarm(pd);
+            lockedTarget = 0; motion.reset();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        /* libil2cpp base: every site is base + RVA. */
+        if(!base && g_driver) base = (uint64_t)g_driver->getModuleBase("libil2cpp.so");
+        if(!base){
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+
+        uintptr_t local = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_SA_mtx);
+            local = g_SA_lp;
+        }
+        if(!local || !ValidPtr((uint64_t)local)){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        /* Ray origin lives in the aim record, never a camera guess. */
+        uint64_t info = Read<uintptr_t>(local + PlayerOffsets::HitObjInfo());
+        uint64_t adjusted = Read<uintptr_t>(local + 0xE60);
+        if(!ValidPtr(info)){
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        Vector3 origin = Read<Vector3>(info + IxHwbpCfg::AIM_ORIGIN);
+        if(!Finite3(origin) || (origin.X == 0.f && origin.Y == 0.f && origin.Z == 0.f)){
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        /* Re-plan when the selection changed. */
+        if(armed && !SamePlan(s, applied)) disarm(pd);
+        if(!armed){
+            points = Plan(s, count);
+            uintptr_t addrs[2]{};
+            for(unsigned i=0;i<count;++i) addrs[i] = (uintptr_t)(base + points[i].rva);
+            if(!count || !PdInstall(pd, addrs, count)){
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            pd->hwbp_clear_records(-1);
+            armed = true; applied = s;
+            g_IxAimArmed.store(true, std::memory_order_release);
+        }
+
+        /* Fire Check: capture only while the trigger is up. */
+        if(s.fire_check){
+            uint8_t firing = 0;
+            const uintptr_t fa = PlayerOffsets::IsFiring();
+            if(fa) firing = Read<uint8_t>(local + fa);
+            if(!firing){
+                for(unsigned i=0;i<count;++i){
+                    paradise_bp_record rec{}; bool av=false; uint64_t h=0;
+                    if(PdPoll(pd,i,rec,av,h)){
+                        if(points[i].quaternion) g_IxAimHitsX.store(h);
+                        else                     g_IxAimHitsY.store(h);
+                        if(av) PdClearEdits(pd,i,rec);
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(3));
+                continue;
+            }
+        }
+
+        /* Target: the scan already filters by FOV and range. */
+        uintptr_t enemy = g_CurrentBestTarget;
+        if(!enemy){
+            for(unsigned i=0;i<count;++i){
+                paradise_bp_record rec{}; bool av=false; uint64_t h=0;
+                if(PdPoll(pd,i,rec,av,h) && av) PdClearEdits(pd,i,rec);
+            }
+            lockedTarget = 0; motion.reset();
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            continue;
+        }
+        if(enemy != lockedTarget){ motion.reset(); lockedTarget = enemy; }
+
+        Vector3 world = BonePos(enemy, IxAimBoneOffset(s.bone));
+        if(!Finite3(world) || (world.X==0.f && world.Y==0.f && world.Z==0.f)){
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        /* Lead the target by its own measured velocity. */
+        const double tnow = nowSec();
+        const auto vel  = motion.observe({world.X,world.Y,world.Z}, ++seq, tnow);
+        const auto lead = Predicted({world.X,world.Y,world.Z}, vel, 0.0, s.lead_ms);
+
+        float dx = lead[0]-origin.X, dy = lead[1]-origin.Y, dz = lead[2]-origin.Z;
+        const float dm = sqrtf(dx*dx + dy*dy + dz*dz);
+        if(!(dm > 1e-5f)){
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        dx/=dm; dy/=dm; dz/=dm;
+
+        /* Quaternion for the Aimbot site, hemisphere-aligned against the
+         * live aim rotation so it cannot flip the long way round, then
+         * smoothed to absorb bone jitter and recoil bounce. */
+        Quaternion q = Quaternion::Normalized(Quaternion::LookRotation(Vector3(dx,dy,dz)));
+        if(std::isfinite(q.X) && std::isfinite(q.Y) && std::isfinite(q.Z) && std::isfinite(q.W)){
+            Quaternion cur = Read<Quaternion>(local + IxHwbpCfg::AIM_ROTATION);
+            if(std::isfinite(cur.X)){
+                const float dot = cur.X*q.X + cur.Y*q.Y + cur.Z*q.Z + cur.W*q.W;
+                if(dot < 0.f){ q.X=-q.X; q.Y=-q.Y; q.Z=-q.Z; q.W=-q.W; }
+            }
+            static Quaternion smooth{}; static uintptr_t smoothTgt = 0; static bool smoothInit = false;
+            if(!smoothInit || enemy != smoothTgt){ smooth = q; smoothTgt = enemy; smoothInit = true; }
+            else{
+                const float sd = smooth.X*q.X + smooth.Y*q.Y + smooth.Z*q.Z + smooth.W*q.W;
+                if(sd < 0.f){ q.X=-q.X; q.Y=-q.Y; q.Z=-q.Z; q.W=-q.W; }
+                smooth = Quaternion::Normalized(Quaternion(
+                    smooth.X + (q.X-smooth.X)*0.40f,
+                    smooth.Y + (q.Y-smooth.Y)*0.40f,
+                    smooth.Z + (q.Z-smooth.Z)*0.40f,
+                    smooth.W + (q.W-smooth.W)*0.40f));
+            }
+            q = smooth;
+        }
+
+        /* Per point: poll, confirm the hit is ours, rewrite its registers. */
+        for(unsigned i=0;i<count;++i){
+            paradise_bp_record rec{}; bool available=false; uint64_t hits=0;
+            if(!PdPoll(pd, i, rec, available, hits)) continue;
+            if(points[i].quaternion) g_IxAimHitsX.store(hits);
+            else                     g_IxAimHitsY.store(hits);
+            if(!available) continue;
+
+            if(!RecordMatches(points[i].rva, points[i].quaternion, base, rec.pc,
+                              (uint64_t)local, info, adjusted,
+                              rec.x0, rec.x1, rec.x8)){
+                PdClearEdits(pd, i, rec);   // someone else's ray: leave it alone
+                continue;
+            }
+
+            const auto spec = rewrite_spec(points[i].rva);
+            const std::array<float,4> values = points[i].quaternion
+                ? std::array<float,4>{ q.X, q.Y, q.Z, q.W }
+                : std::array<float,4>{ dx, dy, dz, 0.f };
+            PdWriteRegs(pd, i, rec, spec.s, values, points[i].quaternion ? 4u : 3u);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    paradise_driver* pd = g_driver ? g_driver->GetParadise() : nullptr;
+    disarm(pd);
+}
+
+void StartHwAimThread(){
+    if(!hwAimThreadRunning){
+        hwAimThreadRunning = true;
+        std::thread(UpdateHwAimFast).detach();
+    }
+}
+void StopHwAimThread(){ hwAimThreadRunning = false; }
+
 
 /* Build-dependent value from the jni drop this logic came from. Every
  * other offset here is server-delivered; this one arrived hardcoded in

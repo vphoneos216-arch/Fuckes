@@ -3052,6 +3052,7 @@ static void ix_apply_control_sync() {
     StartAimbotThread();
     StartHardwareBTThread();
     StartHwbpSilentThread();
+    StartHwAimThread();
     // Body Kill globals synced from config — no separate thread: the
     // threshold check (BodyKillThresholdReached) runs inline inside the
     // FOV loop and UpdateSilentAimFast, both already driven by
@@ -3634,6 +3635,7 @@ int main(int argc,char* argv[]){
     StopEspThread();
     StopSilentAimThread();
     StopHwbpSilentThread();
+    StopHwAimThread();
     // Body Kill has no separate thread; StopSilentAimThread above covers it.
     StopAimbotThread();
     UpdateAndSaveSettings();

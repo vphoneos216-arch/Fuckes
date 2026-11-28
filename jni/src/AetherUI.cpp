@@ -908,10 +908,10 @@ void PageAim(ImDrawList* dl) {
     const float keep = gAlpha;
     gLockInput = true;
     gAlpha = keep * 0.38f;
-    BindToggle(dl, "a.hwsil", X + 18.f, y0 + 58.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
-    BindToggle(dl, "a.bkill", X + 18.f, y0 + 100.f, wCol - 36.f, b.bodyKill,   "Body Kill");
-    BindSliderF(dl, "a.bkhp", X + 18.f, y0 + 144.f, wCol - 36.f, b.bodyKillHP,
-                1.f, 100.f, "Body Kill HP", "%.0f");
+    BindToggle(dl, "a.aimbot", X + 18.f, y0 + 58.f, wCol - 36.f, b.ixAimbot, "Aimbot");
+    BindToggle(dl, "a.hwbpy",  X + 18.f, y0 + 100.f, wCol - 36.f, b.ixHwbpY,  "HWBPY");
+    BindSliderI(dl, "a.bone",  X + 18.f, y0 + 144.f, wCol - 36.f, b.ixAimBone,
+                0, 2, "Target Bone", "");
     gLockInput = false;
     gAlpha = keep;
 
@@ -919,15 +919,23 @@ void PageAim(ImDrawList* dl) {
     Txt(X + 18.f, y0 + 218.f, 4.5f, p.textFaint,
         "Restart in Kernel Mode — breakpoints need the driver", 0);
   } else {
-    BindToggle(dl, "a.hwsil", X + 18.f, y0 + 58.f, wCol - 36.f, b.hwbpSilent, "HWBP Silent");
-    BindToggle(dl, "a.bkill", X + 18.f, y0 + 100.f, wCol - 36.f, b.bodyKill,   "Body Kill");
-    BindSliderF(dl, "a.bkhp", X + 18.f, y0 + 144.f, wCol - 36.f, b.bodyKillHP,
-                1.f, 100.f, "Body Kill HP", "%.0f");
+    BindToggle(dl, "a.aimbot", X + 18.f, y0 + 58.f, wCol - 36.f, b.ixAimbot, "Aimbot");
+    BindToggle(dl, "a.hwbpy",  X + 18.f, y0 + 100.f, wCol - 36.f, b.ixHwbpY,  "HWBPY");
+    BindSliderI(dl, "a.bone",  X + 18.f, y0 + 144.f, wCol - 36.f, b.ixAimBone,
+                0, 2, "Target Bone", "");
 
-    const bool hwsOn = b.hwbpSilent && *b.hwbpSilent;
-    Txt(X + 18.f, y0 + 200.f, 4.5f, p.textFaint,
-        hwsOn ? "Register override on the shot read. Nothing is written."
-              : "Head / Body / Legit follow the Chest Rate setting", 0);
+    // The slider is 0/1/2; show which bone that is.
+    const int bone = b.ixAimBone ? *b.ixAimBone : 0;
+    Txt(X + 18.f, y0 + 184.f, 4.8f, p.accent,
+        bone == 1 ? "Neck" : (bone == 2 ? "Chest" : "Head"), 0, 1.2f);
+
+    const bool abOn = b.ixAimbot && *b.ixAimbot;
+    const bool hyOn = b.ixHwbpY  && *b.ixHwbpY;
+    Txt(X + 18.f, y0 + 204.f, 4.5f, p.textFaint,
+        (abOn && hyOn) ? "Aim turns and the bullet tracks. Nothing is written."
+        : abOn         ? "Aim quaternion rewritten on hit. The view turns."
+        : hyOn         ? "Bullet tracks the target. The view does not move."
+                       : "Breakpoint register rewrite. No game memory is written.", 0);
   }
 }
 

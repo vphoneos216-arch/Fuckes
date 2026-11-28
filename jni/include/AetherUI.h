@@ -56,6 +56,14 @@ struct Bindings {
   // mode of the two above -- it plants an EXEC breakpoint instead of
   // a write watchpoint and never writes game memory.
   bool*  hwbpSilent = nullptr;
+
+  // Aimbot and HWBPY. Both are EXECUTE breakpoints that rewrite SIMD
+  // registers: Aimbot rewrites the aim quaternion so the view turns,
+  // HWBPY rewrites only the raycast direction so the bullet tracks
+  // while the view stays put. ix_hwbp_aim.h has the register maps.
+  bool*  ixAimbot  = nullptr;
+  bool*  ixHwbpY   = nullptr;
+  int*   ixAimBone = nullptr;   // 0 Head, 1 Neck, 2 Chest
   bool*  bodyKill = nullptr;
   bool*  brutalBT = nullptr;
   bool*  dragHeadshot = nullptr;
