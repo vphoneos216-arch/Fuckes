@@ -2121,6 +2121,27 @@ namespace AimHookState {
             return CommitLocked(pd);
         }
 
+        /* Re-issue hwbp_set with the SAME table.
+         *
+         * Arm() returns early when nothing changed, so after the first
+         * commit the driver is never called again. That matters because
+         * the driver installs the points on the threads that exist at
+         * ioctl time -- PARADISE_HWBP_ALL_THREADS means every thread
+         * alive now, not every thread ever. Free Fire keeps spawning
+         * workers, so once firing moves to a thread created after we
+         * armed, the watchpoint is not on it and the redirect silently
+         * stops. That is the "first few bullets work, then nothing"
+         * behaviour.
+         *
+         * Callers rate-limit this: a commit is a long driver lock. */
+        static bool ForceRecommit(paradise_driver* pd) {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            bool any = false;
+            for(int i = 0; i < SLOT_COUNT; ++i) if(g_active[i]) { any = true; break; }
+            if(!any) return false;
+            return CommitLocked(pd);
+        }
+
         static void Disarm(paradise_driver* pd, int slot) {
             std::lock_guard<std::mutex> lk(g_mtx);
             if(!g_active[slot]) return;
@@ -2930,6 +2951,22 @@ void UpdateSilentAimFast(){
                     disarm_silent();
 
                 if(pd){
+                    /* Re-install periodically so the points land on
+                     * threads Free Fire created after we first armed.
+                     * Without this the redirect dies a few shots in, as
+                     * soon as firing moves to a newer thread. Rate
+                     * limited because a commit holds the driver lock
+                     * long enough to be visible in the ESP. */
+                    {
+                        static uint64_t s_lastRecommit = 0;
+                        const uint64_t nowMs = (uint64_t)
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
+                        if(s_lastDirAddr && (nowMs - s_lastRecommit) > 2500){
+                            s_lastRecommit = nowMs;
+                            AimHookState::ParadisePoints::ForceRecommit(pd);
+                        }
+                    }
                     // Arm (idempotent once the address is unchanged) and
                     // push the override into every record captured so
                     // far. Both happen every frame: the arm call is a
@@ -3683,6 +3720,7 @@ void UpdateHwbpSilentFast(){
          * is a driver ioctl and the ESP read path shares the same kernel
          * lock, so following the pointer every millisecond stalls ESP. */
         const uint64_t nowMs = IxHwbpGate::NowMs();
+        (void)nowMs;
         if(!hwaim::Armed() || (nowMs - s_lastPtrMs) > 200){
             s_lastPtrMs = nowMs;
             hwaim::ValidatePid();
@@ -3692,15 +3730,64 @@ void UpdateHwbpSilentFast(){
                 hwaim::SetPointers(lp, aimingInfo);
         }
 
+        /* ── KEEP IT LIVE THROUGH A FULL MAGAZINE ───────────────────
+         * The game only refreshes the fire timestamp on the PRESS edge,
+         * so `firing` alone goes false part-way through a held trigger
+         * and the override would drop mid-spray -- the first rounds
+         * redirect and the rest fly vanilla.
+         *
+         * The hooked reader keeps executing for as long as the weapon is
+         * actually cycling, so its hit counter is the real "still
+         * shooting" signal. Hits() is the heaviest call here (a record
+         * dump), so it is polled at 100ms, not every loop. */
+        static uint32_t s_lastH     = 0;
+        static bool     s_hSeen     = false;
+        static uint64_t s_lastHMs   = 0;
+        static uint64_t s_lastPoll  = 0;
+        static uint64_t s_rearmMs   = 0;
+
+        if(hwaim::Armed() && (nowMs - s_lastPoll) >= 100){
+            s_lastPoll = nowMs;
+            const uint32_t h = hwaim::Hits();
+            if(!s_hSeen || h != s_lastH){
+                s_lastH = h; s_hSeen = true; s_lastHMs = nowMs;
+            } else if(firing && s_lastHMs && (nowMs - s_lastHMs) > 2500){
+                /* Trigger is down but the breakpoint stopped ticking: the
+                 * thread it was installed on is gone, because Free Fire
+                 * keeps spawning workers. Re-install the same set, or
+                 * every following shot misses. Rate limited -- a rearm is
+                 * remove + clear + set + records, the longest driver lock
+                 * this feature takes. */
+                if((nowMs - s_rearmMs) > 6000){
+                    s_rearmMs = nowMs;
+                    hwaim::Rearm();
+                    s_lastHMs = nowMs;
+                }
+            }
+        }
+
+        /* Still counted as shooting while the reader ticked recently. */
+        const bool spraying = s_lastHMs && (nowMs - s_lastHMs) < 500;
+
         uintptr_t currentTarget = g_CurrentBestTarget;
-        if(!firing || !hwaim::Armed() || !currentTarget){
+        if((!firing && !spraying) || !hwaim::Armed() || !currentTarget){
             hwaim::SyncOverride(false);   // stay vanilla
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
             continue;
         }
 
+        /* Never shoot at a remembered position: a target that died or
+         * moved would send the bullets somewhere random. Fresh lock or
+         * stay vanilla. */
+        static Vector3  s_lastTarget   = {0.f, 0.f, 0.f};
+        static uint64_t s_lastTargetMs = 0;
         Vector3 targetPos = SilentAimBone(currentTarget);
-        if(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f){
+        if(!(targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)){
+            s_lastTarget   = targetPos;
+            s_lastTargetMs = nowMs;
+        }
+        if((targetPos.X == 0.f && targetPos.Y == 0.f && targetPos.Z == 0.f)
+           || (nowMs - s_lastTargetMs) > 180){
             hwaim::SyncOverride(false);
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
@@ -3869,6 +3956,19 @@ void UpdateHardwareBTFast(){
                 disarm_bt();
 
             if(pd){
+                /* Same thread-migration problem as Aim Silent -- see
+                 * ForceRecommit. Without this Hardware BT also stops
+                 * redirecting a few shots into a magazine. */
+                {
+                    static uint64_t s_lastRecommitBt = 0;
+                    const uint64_t nowMs = (uint64_t)
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+                    if(s_lastDirAddr && (nowMs - s_lastRecommitBt) > 2500){
+                        s_lastRecommitBt = nowMs;
+                        AimHookState::ParadisePoints::ForceRecommit(pd);
+                    }
+                }
                 if(AimHookState::PdHwbpArmDir(
                        pd, AimHookState::ParadisePoints::SLOT_BT_XY, dirAddr, dir)){
                     s_lastDirAddr = dirAddr;
