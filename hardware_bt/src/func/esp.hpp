@@ -48,24 +48,6 @@ namespace func::esp {
         }
     }
 
-    inline ImU32 hp_gradient(float t) {
-        if (t < 0.f) t = 0.f;
-        if (t > 1.f) t = 1.f;
-        float r, g, b;
-        if (t < 0.5f) {
-            float k = t * 2.f;
-            r = 1.f;
-            g = 0.35f + 0.55f * k;
-            b = 0.15f;
-        } else {
-            float k = (t - 0.5f) * 2.f;
-            r = 1.f - 0.9f * k;
-            g = 0.9f;
-            b = 0.15f + 0.30f * k;
-        }
-        return IM_COL32((int)(r*255), (int)(g*255), (int)(b*255), 255);
-    }
-
     inline void draw_shadowed_text(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* txt) {
         dl->AddText({pos.x + 1.f, pos.y + 1.f}, IM_COL32(0, 0, 0, 200), txt);
         dl->AddText(pos, col, txt);
@@ -135,33 +117,13 @@ namespace func::esp {
                 p.isVisible ? col_box_visible : col_box_default);
 
             if (cfg::esp::box) {
-                if (cfg::esp::box_type == 0) {
-                    float len = (br.x - tl.x) * cfg::esp::bracket_frac;
-                    float th  = cfg::esp::box_thickness;
-                    ImU32 shadow = IM_COL32(0, 0, 0, 180);
-                    ImVec2 pts[8][2] = {
-                        {tl,                       {tl.x + len, tl.y}},
-                        {tl,                       {tl.x, tl.y + len}},
-                        {{br.x - len, tl.y},       {br.x, tl.y}},
-                        {{br.x, tl.y},             {br.x, tl.y + len}},
-                        {{tl.x, br.y - len},       {tl.x, br.y}},
-                        {{tl.x, br.y},             {tl.x + len, br.y}},
-                        {{br.x - len, br.y},       {br.x, br.y}},
-                        {{br.x, br.y - len},       {br.x, br.y}},
-                    };
-                    for (auto& s : pts) {
-                        dl->AddLine({s[0].x + 1.f, s[0].y + 1.f}, {s[1].x + 1.f, s[1].y + 1.f}, shadow, th + 1.f);
-                        dl->AddLine(s[0], s[1], col_box, th);
-                    }
-                } else if (cfg::esp::box_type == 1) {
-                    dl->AddRect(tl, br, col_box, cfg::esp::box_rounding, 0, cfg::esp::box_thickness);
-                } else {
-                    dl->AddRect({tl.x + 1, tl.y + 1}, {br.x + 1, br.y + 1},
-                                IM_COL32(0, 0, 0, 200), cfg::esp::box_rounding, 0, cfg::esp::box_thickness + 0.6f);
-                    dl->AddRect(tl, br, col_box, cfg::esp::box_rounding, 0, cfg::esp::box_thickness);
-                        const ImU32 fill = IM_COL32(0,200,240,12);
-                    dl->AddRectFilled(tl, br, fill, cfg::esp::box_rounding);
-                }
+                // hook.h's exact box style: a plain white outline rect first,
+                // then the color-coded rect on top -- both square (0
+                // rounding, 0 flags), same as InvisibleX's ESP. Replaces the
+                // corner-bracket/rounded-fill styles this project had before,
+                // which hook.h doesn't have.
+                dl->AddRect(tl, br, IM_COL32(255, 255, 255, 255), 0, 0, cfg::esp::box_thickness);
+                dl->AddRect(tl, br, col_box, 0, 0, cfg::esp::box_thickness);
             }
 
             if (cfg::esp::skeleton) {
@@ -178,19 +140,26 @@ namespace func::esp {
             }
 
             if (cfg::esp::health) {
-                float hp01 = p.maxHP > 0 ? (float)p.curHP / (float)p.maxHP : 0.f;
-                if (hp01 < 0.f) hp01 = 0.f;
-                if (hp01 > 1.f) hp01 = 1.f;
-                float bar_x_tl = tl.x - 8.f;
+                // hook.h's exact health-bar formula: displayHP is 0 when
+                // knocked, pct is displayHP/200 (fixed scale, not current/
+                // max), fill is HpColor(displayHP) in gradient mode or solid
+                // green otherwise, knocked always forces red.
+                int displayHP = p.isKnocked ? 0 : p.curHP;
+                float pct = displayHP / 200.f;
+                if (pct < 0.f) pct = 0.f;
+                if (pct > 1.f) pct = 1.f;
+                float bar_x_tl = tl.x - cfg::esp::health_bar_width - 3.f;
                 float bar_x_br = tl.x - 3.f;
-                dl->AddRectFilled({bar_x_tl - 1.f, tl.y - 1.f}, {bar_x_br + 1.f, br.y + 1.f},
-                                  IM_COL32(0, 0, 0, 220), 2.f);
-                dl->AddRectFilled({bar_x_tl, tl.y}, {bar_x_br, br.y}, IM_COL32(30, 30, 35, 220), 2.f);
-                float fill_top = br.y - (br.y - tl.y) * hp01;
-                dl->AddRectFilled({bar_x_tl, fill_top}, {bar_x_br, br.y}, hp_gradient(hp01), 2.f);
+                float fill_h = (br.y - tl.y) * pct;
+                float fill_y = br.y - fill_h;
+                dl->AddRectFilled({bar_x_tl, tl.y}, {bar_x_br, br.y},
+                                  IM_COL32(0, 0, 0, 180), cfg::esp::health_bar_rounding);
+                ImU32 fc = cfg::esp::health_color_gradient ? ix_hp_color(displayHP) : IM_COL32(0, 200, 0, 255);
+                if (p.isKnocked) fc = IM_COL32(255, 50, 50, 255);
+                dl->AddRectFilled({bar_x_tl, fill_y}, {bar_x_br, br.y}, fc, cfg::esp::health_bar_rounding);
 
                 char hpbuf[16];
-                snprintf(hpbuf, sizeof(hpbuf), "%d", p.curHP);
+                snprintf(hpbuf, sizeof(hpbuf), "%d", displayHP);
                 ImVec2 ts = ImGui::CalcTextSize(hpbuf);
                 draw_shadowed_text(dl, {bar_x_tl - ts.x - 3.f, tl.y - ts.y * 0.15f}, IM_COL32_WHITE, hpbuf);
             }

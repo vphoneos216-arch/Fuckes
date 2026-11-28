@@ -12,7 +12,6 @@ namespace cfg {
 namespace esp {
     inline bool  line         = false;
     inline bool  box          = true;
-    inline int   box_type     = 3;
     inline bool  info_bar     = true;
     inline bool  skeleton     = false;
     inline bool  health       = true;
@@ -31,10 +30,14 @@ namespace esp {
     inline ImVec4 head_dot_col   = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
 
     inline float max_range     = 250.f;
-    inline float box_rounding  = 3.f;
     inline float box_thickness = 2.0f;
-    inline float bracket_frac  = 0.28f;
     inline float fov_radius    = 250.f;
+
+    // Health bar -- matches hook.h's own fields (healthBarWidth/
+    // healthBarRounding/showHealthColorGradient) exactly.
+    inline float health_bar_width       = 5.f;
+    inline float health_bar_rounding    = 1.5f;
+    inline bool  health_color_gradient  = true;
 
     inline ImVec4 box_col      = ImVec4(0.0f, 0.90f, 1.0f, 1.0f);
     inline ImVec4 box_visible  = ImVec4(0.30f, 1.0f, 0.55f, 1.0f);
@@ -127,8 +130,10 @@ inline bool save_config(const char* path = CONFIG_FILE_PATH) {
     fprintf(fp, "esp_name=%d\n", cfg::esp::name ? 1 : 0);
     fprintf(fp, "esp_health=%d\n", cfg::esp::health ? 1 : 0);
     fprintf(fp, "esp_distance=%d\n", cfg::esp::distance ? 1 : 0);
-    fprintf(fp, "esp_box_type=%d\n", cfg::esp::box_type);
     fprintf(fp, "esp_box_thickness=%.2f\n", cfg::esp::box_thickness);
+    fprintf(fp, "esp_health_bar_width=%.2f\n", cfg::esp::health_bar_width);
+    fprintf(fp, "esp_health_bar_rounding=%.2f\n", cfg::esp::health_bar_rounding);
+    fprintf(fp, "esp_health_color_gradient=%d\n", cfg::esp::health_color_gradient ? 1 : 0);
     fprintf(fp, "esp_max_range=%.1f\n", cfg::esp::max_range);
     fprintf(fp, "esp_box_col=%.3f,%.3f,%.3f,%.3f\n", cfg::esp::box_col.x, cfg::esp::box_col.y, cfg::esp::box_col.z, cfg::esp::box_col.w);
 
@@ -181,8 +186,10 @@ inline bool load_config(const char* path = CONFIG_FILE_PATH) {
             else if (strcmp(key, "esp_name") == 0 || strcmp(key, "name") == 0) cfg::esp::name = (atoi(val) != 0);
             else if (strcmp(key, "esp_health") == 0 || strcmp(key, "health") == 0) cfg::esp::health = (atoi(val) != 0);
             else if (strcmp(key, "esp_distance") == 0 || strcmp(key, "distance") == 0) cfg::esp::distance = (atoi(val) != 0);
-            else if (strcmp(key, "esp_box_type") == 0 || strcmp(key, "box_type") == 0) cfg::esp::box_type = atoi(val);
             else if (strcmp(key, "esp_box_thickness") == 0 || strcmp(key, "box_thickness") == 0) cfg::esp::box_thickness = atof(val);
+            else if (strcmp(key, "esp_health_bar_width") == 0) cfg::esp::health_bar_width = atof(val);
+            else if (strcmp(key, "esp_health_bar_rounding") == 0) cfg::esp::health_bar_rounding = atof(val);
+            else if (strcmp(key, "esp_health_color_gradient") == 0) cfg::esp::health_color_gradient = (atoi(val) != 0);
             else if (strcmp(key, "esp_max_range") == 0 || strcmp(key, "max_range") == 0) cfg::esp::max_range = atof(val);
             else if (strcmp(key, "esp_box_col") == 0 || strcmp(key, "box_col") == 0) {
                 float r, g, b, a;

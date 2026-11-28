@@ -536,27 +536,7 @@ namespace ui::menu {
                             cfg::account::devices_used, cfg::account::devices_max);
         ImGui::EndChild();
 
-        int play_count = 0, bot_count = 0;
-        {
-            std::lock_guard<std::mutex> lk(data::players_mutex);
-            for (const auto& p : data::players) {
-                if (p.isBot) bot_count++;
-                else play_count++;
-            }
-        }
-
-        ImGui::TextColored(ImColor(0, 191, 255, 255), "NEO KERNEL  -  Version: 2x2  (By @cache_file)");
-        ImGui::TextColored(ImColor(100, 100, 110, 255), "LIB: 0x%lx  |  PID: %d", (unsigned long)proc::lib, proc::pid);
-
-        ImGui::TextColored(ImColor(255, 60, 60, 255), "Enemies: %d", play_count);
-        ImGui::SameLine(+180);
-        ImGui::TextColored(ImColor(0, 220, 0, 255), "Bots: %d", bot_count);
-
         ImGui::GetStyle().Colors[ImGuiCol_Border] = oldBorderColor;
-
-        ImGui::Text("FPS: %.1f  |  Frame Time: %.3fms", ImGui::GetIO().Framerate, ImGui::GetIO().DeltaTime * 1000.0f);
-        ImGui::Text("Resolution: %.0fx%.0f", g_sw, g_sh);
-        ImGui::TextColored(ImColor(0, 220, 0, 255), "Driver: Hardware Root BP  <Driver OK>");
     }
 
     void Home_2() {
@@ -639,12 +619,9 @@ namespace ui::menu {
     }
 
     void Render_2() {
-        wc::title("Box Type & Appearance");
-        std::vector<std::string> box_styles = {"Corner Box", "Full Box"};
-        static float box_type_f = (float)cfg::esp::box_type;
-        if (box_type_f > 1.0f) box_type_f = 0.0f;
-        wc::SlidingSelector(box_styles, box_type_f, false, 180.0f, 48.0f);
-        cfg::esp::box_type = (int)box_type_f;
+        wc::title("Box & Health Bar Appearance");
+
+        wc::Checkbox("Health Color Gradient", &cfg::esp::health_color_gradient);
 
         // Color box -- ported from InvisibleX's hook.h (BoxCol modes).
         // Mode 0 (Fixed) is the default and keeps the exact same colors
@@ -677,26 +654,14 @@ namespace ui::menu {
         const auto status = engine.status();
         bool changed = false;
 
+        // Opt A/Opt B pickers removed from the UI (pure declutter); the
+        // underlying settings.x_option/y_option fields are untouched and
+        // keep whatever they were last set to (default: Opt A / RVA set
+        // A), so the breakpoint engine's behavior doesn't change.
         changed |= wc::Checkbox("Aimbot", &settings.x);
-        ImGui::SameLine();
-        std::vector<std::string> x_opts = {"Opt A", "Opt B"};
-        float x_opt_f = (float)settings.x_option;
-        wc::SlidingSelector(x_opts, x_opt_f, false, 90.0f, 38.0f);
-        if ((int)x_opt_f != settings.x_option) {
-            settings.x_option = (int)x_opt_f;
-            changed = true;
-        }
         ImGui::TextDisabled("  Status Aimbot: %s", status.x.c_str());
 
         changed |= wc::Checkbox("Bullet Track", &settings.y);
-        ImGui::SameLine();
-        std::vector<std::string> y_opts = {"Opt A", "Opt B"};
-        float y_opt_f = (float)settings.y_option;
-        wc::SlidingSelector(y_opts, y_opt_f, false, 90.0f, 38.0f);
-        if ((int)y_opt_f != settings.y_option) {
-            settings.y_option = (int)y_opt_f;
-            changed = true;
-        }
         ImGui::TextDisabled("  Status Bullet Track: %s", status.y.c_str());
 
         changed |= wc::Checkbox("Fire Check", &settings.fire_check);
@@ -767,107 +732,11 @@ namespace ui::menu {
 
     }
 
-    void settings_wc_1() {
-        wc::title("Thermal Pacing (FPS Limit)");
-        std::vector<std::string> fps_choices = {"60 FPS", "90 FPS", "120 FPS", "Max"};
-        float fps_f = (float)cfg::settings::fps_choice;
-        wc::SlidingSelector(fps_choices, fps_f, false, 140.0f, 45.0f);
-        cfg::settings::fps_choice = (int)fps_f;
-
-        static float s_cfg_status_timer = 0.f;
-        static std::string s_cfg_status_msg = "";
-        if (s_cfg_status_timer > 0.0f) {
-            s_cfg_status_timer -= ImGui::GetIO().DeltaTime;
-            ImGui::TextColored(ImColor(0, 200, 0, 255), "%s", s_cfg_status_msg.c_str());
-        }
-
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 20);
-        if (wc::button("Save Config", ImVec2(ImGui::GetContentRegionAvail().x, 65), 15.0f, ImVec4(0, 0, 0, 0), ImVec4(0.25f, 0.25f, 0.25f, 1.0f))) {
-            if (cfg::save_config()) {
-                s_cfg_status_msg = "[+] Config saved to /data/local/tmp/neoFF.c";
-                s_cfg_status_timer = 3.5f;
-            } else {
-                s_cfg_status_msg = "[-] Failed to save config!";
-                s_cfg_status_timer = 3.5f;
-            }
-        }
-        ImGui::Spacing();
-        if (wc::button("Load Config", ImVec2(ImGui::GetContentRegionAvail().x, 65), 15.0f, ImVec4(0, 0, 0, 0), ImVec4(0.25f, 0.25f, 0.25f, 1.0f))) {
-            if (cfg::load_config()) {
-                s_cfg_status_msg = "[+] Config loaded from /data/local/tmp/neoFF.c";
-                s_cfg_status_timer = 3.5f;
-            } else {
-                s_cfg_status_msg = "[-] Failed to load config!";
-                s_cfg_status_timer = 3.5f;
-            }
-        }
-        ImGui::Spacing();
+    void settings_wcPage() {
+        // Settings tab is just an Exit button now -- nothing else.
         if (wc::button("Exit App", ImVec2(ImGui::GetContentRegionAvail().x, 65), 15.0f, ImVec4(0.2f, 0.0f, 0.0f, 0.1f), ImVec4(0.8f, 0.2f, 0.2f, 1.0f))) {
             exit(0);
         }
-    }
-
-    void settings_wc_2() {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 5);
-        ImGui::Spacing();
-        ImGui::BeginChild("Palette Child", ImVec2(0, 160), true);
-        {
-            wc::PaletteButton("Box Color", cfg::esp::box_col, 1);
-            ImGui::SameLine(+265);
-            wc::PaletteButton("Visible Box", cfg::esp::box_visible, 2);
-            ImGui::SameLine(+520);
-            wc::PaletteButton("FOV Circle", cfg::aim::fov_col, 3);
-            ImGui::EndChild();
-        }
-
-        if (wc::currentSelectedVec4) {
-            ImGui::TextColored(ImColor(0, 0, 0), "RGB Channel Intensity");
-            wc::RGBSliderFloat1("Red Intensity", &wc::R_col, 0.0f, 255.0f, "%.0f");
-            wc::RGBSliderFloat("Green Intensity", &wc::G_col, 0.0f, 255.0f, "%.0f");
-            wc::RGBSliderFloat("Blue Intensity", &wc::B_col, 0.0f, 255.0f, "%.0f");
-            wc::SliderFloat("Alpha", &wc::A_col, 0.0f, 255.0f, "%.0f");
-
-            wc::currentSelectedVec4->x = wc::R_col / 255.0f;
-            wc::currentSelectedVec4->y = wc::G_col / 255.0f;
-            wc::currentSelectedVec4->z = wc::B_col / 255.0f;
-            wc::currentSelectedVec4->w = wc::A_col / 255.0f;
-        }
-    }
-
-    void settings_wc_3() {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 5);
-        wc::SliderFloat("Global Animation Speed", &wc::anim_speed, 0.1f, 3.0f, "%.1f");
-        wc::SliderFloat("Dynamic Island Scale", &wc::island_size, 0.5f, 2.0f, "%.2f");
-    }
-
-    void settings_wc_4() {
-        wc::title("Device & Kernel Info");
-        ImGui::Text("Screen Resolution: %.0fx%.0f", g_sw, g_sh);
-        ImGui::Text("Renderer: OpenGL ES 3.0 / EGL");
-        ImGui::Text("Driver Type: Root BP Controller");
-    }
-
-    void settings_wc_5() {
-        wc::title("KernelSRC Status");
-        ImGui::TextColored(ImColor(0, 191, 255, 255), "Hardware BT + KernelSRC UI Unified Client");
-        ImGui::Text("Version: 2.0 Hybrid");
-        ImGui::Text("Status: All systems operational");
-    }
-
-    void settings_wcPage() {
-        std::vector<std::string> settings_pages = {"General Settings", "Color Settings", "Animation Settings", "Misc Settings", "Update Panel"};
-        wc::SlidingSelector(settings_pages, setting_tab, false, 180.0f, 50.0f);
-
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
-        ImGui::BeginChild("Settings SubContent", ImVec2(0, 0), false);
-        switch ((int)setting_tab) {
-            case 0: settings_wc_1(); break;
-            case 1: settings_wc_2(); break;
-            case 2: settings_wc_3(); break;
-            case 3: settings_wc_4(); break;
-            case 4: settings_wc_5(); break;
-        }
-        ImGui::EndChild();
     }
 
     // ============================================
@@ -949,10 +818,10 @@ namespace ui::menu {
             if (wc::button("Home", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 0;
             ImGui::Separator();
 
-            if (wc::button("Visuals", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 1;
+            if (wc::button("ESP", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 1;
             ImGui::Separator();
 
-            if (wc::button("Aimbot", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 2;
+            if (wc::button("Aim", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 2;
             ImGui::Separator();
 
             if (wc::button("Settings", ImVec2(ImGui::GetContentRegionAvail().x, 81))) Tab = 4;
@@ -963,14 +832,13 @@ namespace ui::menu {
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
 
             switch (Tab) {
-                case 0: { // Home
+                case 0: { // Home -- single page, not two side-by-side panels
                     ImGui::SetCursorPos(ImVec2(aevrage_now + 30, 15));
-                    ImGui::BeginChild("Home Row 1 Col 1", ImVec2(aevrage_now * 3, window_y - 30.0f), true);
+                    ImGui::BeginChild("Home Page", ImVec2(aevrage_now * 5 + 15, window_y - 30.0f), true);
                     Home_1();
-                    ImGui::EndChild();
-
-                    ImGui::SetCursorPos(ImVec2(aevrage_now * 4 + 45, 15));
-                    ImGui::BeginChild("Home Row 1 Col 2", ImVec2(aevrage_now * 2, window_y - 30.0f), true);
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
                     Home_2();
                     ImGui::EndChild();
                     break;
